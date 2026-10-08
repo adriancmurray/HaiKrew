@@ -1,6 +1,7 @@
 /**
  * Tool guards, run on `tool.call`: a squeeze-pattern Bash command is denied with a pointer to
- * `haikrew squeeze`, and a large text file read without a line range is denied with an outline.
+ * `haikrew squeeze`, a large text file read without a line range is denied with an outline, and a Bash
+ * command that skips git hooks is denied.
  * Deny-and-redirect, never allow, so the user's permission rules still judge any redirected command.
  */
 import type { Input, Next } from "./api.ts";
@@ -9,6 +10,8 @@ import type { Input, Next } from "./api.ts";
 export type SqueezeSettings = { enabled: boolean; patterns: string[]; max_lines: number; wrap_prefix: string };
 /** The `read_guard` section of settings. */
 export type ReadGuardSettings = { enabled: boolean; max_lines: number };
+/** The `checks` section of settings. */
+export type ChecksSettings = { guard_hooks: boolean; seam_check: boolean };
 
 // Leading `cd X &&` or `VAR=value ` segments, stripped repeatedly before pattern matching.
 const LEAD = /^\s*(?:cd\s+\S+\s*&&\s*|[A-Za-z_]\w*=\S*\s+)/;
@@ -16,6 +19,8 @@ const LEAD = /^\s*(?:cd\s+\S+\s*&&\s*|[A-Za-z_]\w*=\S*\s+)/;
 const ALREADY = /^(?:(?:python3?|node)\s+)?["']?\S*haikrew(?:\.mjs)?["']?\s+squeeze\b/;
 const DEF = /^\s*(?:(?:pub|async|export|static|default)\s+)*(?:def|class|fn|func|struct|impl|enum|interface|type|export)\b|^#{1,6}\s/;
 const OUTLINE_MAX = 60;
+// A git invocation that skips hooks: --no-verify as its own word, or core.hooksPath set by -c or config.
+const HOOK_BYPASS = /(^|\s)--no-verify(\s|$)|core\.hooksPath=|-c\s+core\.hooksPath\b/;
 
 /**
  * Bash: deny a squeeze-pattern command and name `node "<root>/bin/haikrew.mjs" squeeze --max-lines <n> [--wrap "<prefix>"] -- <command>`.
@@ -29,6 +34,17 @@ export function squeeze(cfg: SqueezeSettings, e: Input, root: string, next: Next
   const wrap = cfg.wrap_prefix ? ` --wrap "${cfg.wrap_prefix}"` : "";
   return {
     deny: `Run it through squeeze instead: node "${root}/bin/haikrew.mjs" squeeze --max-lines ${cfg.max_lines}${wrap} -- ${command}`,
+  };
+}
+
+/**
+ * Bash: deny a command that skips git hooks, with the way out: fix the hook's report, or turn the guard off.
+ */
+export function hookGuard(cfg: ChecksSettings, e: Input, next: Next): unknown {
+  if (!cfg.guard_hooks || !HOOK_BYPASS.test(String(e.command))) return next(e);
+  return {
+    deny: "HaiKrew refuses commands that skip git hooks (--no-verify, core.hooksPath). Fix what the hook reports " +
+      "and run the command without the bypass, or turn off checks.guard_hooks in /haikrew settings.",
   };
 }
 
