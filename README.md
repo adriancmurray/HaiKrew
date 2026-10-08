@@ -24,7 +24,7 @@ A subagent launched without a `model` inherits the main model, so every default 
 
 ## What HaiKrew changes and touches
 
-- **`agent.spawn`**: sets the model when the caller named none. Refuses Opus subagents unless `gate.allow_opus` is on. Refuses nested spawns when `gate.allow_nested` is off. Why: cost control is the plugin's purpose, and every rule is a setting you control in `/haikrew`.
+- **`agent.spawn`**: sets the model when the caller named none (or, with `gate.rules_override` on, when a rule matches), choosing from `gate.rules` first, then the default. Refuses Opus subagents unless `gate.allow_opus` is on. Refuses nested spawns when `gate.allow_nested` is off. Why: cost control is the plugin's purpose, and every rule is a setting you control in `/haikrew`.
 - **`tool.call`** on Bash: refuses a command that matches a squeeze pattern, with a message suggesting the `haikrew squeeze` command instead.
 - **`tool.call`** on Read: refuses a whole-file read of a file longer than `read_guard.max_lines`, and returns an outline so the caller can ask for a range.
 - **`classic.SubagentStop`**: reads the finished subagent's transcript at the path Claude Code provides, to compute ledger fields.
@@ -71,6 +71,8 @@ Settings are kept in the mod store (`$.store`, key `settings`), not in a file. E
 | `gate.pinned_types` | `["haiku-coder"]` | Agent types whose own definition sets the model; the gate leaves them alone. |
 | `gate.allow_nested` | `true` | Let a subagent start agents of its own. |
 | `gate.nested_model` | `"haiku"` | Model given to an agent a subagent starts without naming one. |
+| `gate.rules` | `["job:review=sonnet", "job:research=haiku", "type:Explore=haiku"]` | Ordered rules, first match wins: `job:<tag>`, `type:<agent type>` or `desc:<words>`, then `=haiku`, `=sonnet` or `=opus`. |
+| `gate.rules_override` | `false` | Let rules replace a model the caller named. |
 | `squeeze.enabled` | `true` | Redirect matching commands. |
 | `squeeze.patterns` | 7 regexes (cargo, swift, xcodebuild, pytest, npm/pnpm/yarn/bun, go, make) | Regexes matched against the start of a Bash command. |
 | `squeeze.max_lines` | `20` | Most lines a summary prints. Passed to the CLI as `--max-lines`. |
@@ -82,6 +84,8 @@ Settings are kept in the mod store (`$.store`, key `settings`), not in a file. E
 | `ledger.yearly_after_months` | `12` | Monthly averages older than this fold into yearly ones. |
 | `patterns.max_files` | `20` | Most pattern files allowed. Used by `patterns check` (or `--max-files`). |
 | `patterns.max_lines` | `40` | Most lines per pattern file. Used by `patterns check` (or `--max-lines`). |
+
+Example: `"rules": ["job:review=sonnet", "desc:migration=sonnet"]` runs a spec headed `HAIKREW job=review` on Sonnet, and any task whose description mentions "migration" on Sonnet too. A rule that picks Opus is refused unless `gate.allow_opus` is on.
 
 ## How the crew works
 

@@ -23,6 +23,7 @@ type Member = {
   lastTarget: string;
   endedAt: number | null;
   verdict: string;
+  rule: string;
 };
 
 /** One agent from `$.agent.list()`: only the fields the roster reads. */
@@ -34,6 +35,8 @@ export type Row = {
   depth: number;
   name: string;
   model: string;
+  /** The selector of the gate rule that chose the model, e.g. "job:review"; absent when no rule did. */
+  rule?: string;
   task: string;
   state: "working" | "done" | "failed";
   elapsedMs: number;
@@ -56,18 +59,22 @@ function member(id: string, now: number): Member {
   if (!m) {
     m = {
       id, model: "", subagentType: "", description: "", parentId: null, startedAt: now,
-      calls: 0, lastTool: "", lastTarget: "", endedAt: null, verdict: "",
+      calls: 0, lastTool: "", lastTarget: "", endedAt: null, verdict: "", rule: "",
     };
     members.set(id, m);
   }
   return m;
 }
 
-/** Remember a spawn the gate let through. `input` is what the gate passed on; `reply` is what the subagent started as. */
-export function noteSpawn(input: Input, reply: unknown, now: number): void {
+/**
+ * Remember a spawn the gate let through. `input` is what the gate passed on; `reply` is what the subagent started as;
+ * `rule` is the gate rule text that chose the model, if one did.
+ */
+export function noteSpawn(input: Input, reply: unknown, now: number, rule?: string): void {
   if (!isObject(reply) || typeof reply.agentId !== "string" || !reply.agentId) return;
   const m = member(reply.agentId, now);
   m.model = String(reply.model ?? input.model ?? "");
+  m.rule = rule ? rule.split("=")[0] : "";
   m.subagentType = String(input.subagentType ?? "");
   m.description = String(input.description ?? "");
   m.parentId = input.parentAgentId ? String(input.parentAgentId) : null;
@@ -153,6 +160,7 @@ function toRow(m: Member, depth: number, now: number): Row {
     depth,
     name: m.subagentType || "agent",
     model: m.model || "unknown",
+    rule: m.rule || undefined,
     task: m.description,
     state,
     elapsedMs: (m.endedAt ?? now) - m.startedAt,
@@ -167,9 +175,13 @@ export function fmtElapsed(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/** One roster line cut to `cols`: indent, status dot, name, model, elapsed, calls, then the task and last tool. */
+/**
+ * One roster line cut to `cols`: indent, status dot, name, model, the rule that chose it (when one did), elapsed,
+ * calls, then the task and last tool.
+ */
 export function rowLine(r: Row, cols: number): string {
-  const head = `${"  ".repeat(r.depth)}● ${r.name.slice(0, 14).padEnd(14)} ${modelFamily(r.model).slice(0, 7).padEnd(7)} ` +
+  const via = r.rule ? ` ${r.rule.slice(0, 10)}` : "";
+  const head = `${"  ".repeat(r.depth)}● ${r.name.slice(0, 14).padEnd(14)} ${modelFamily(r.model).slice(0, 7).padEnd(7)}${via} ` +
     `${fmtElapsed(r.elapsedMs).padStart(5)} ${String(r.calls).padStart(3)}  `;
   const tail = [r.task, r.last].filter(Boolean).join(" · ");
   return (head + tail).slice(0, cols);

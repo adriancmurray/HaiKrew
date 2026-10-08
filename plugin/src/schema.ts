@@ -8,7 +8,7 @@ export type Field =
   | { type: "int"; default: number; min: number; max: number; help: string }
   | { type: "str"; default: string; help: string }
   | { type: "enum"; default: string; choices: string[]; help: string }
-  | { type: "list"; default: string[]; help: string };
+  | { type: "list"; default: string[]; help: string; pattern?: string };
 export type Section = { title: string; help: string; fields: Record<string, Field> };
 export type Settings = Record<string, Record<string, Value>>;
 
@@ -28,6 +28,12 @@ export const SCHEMA: Record<string, Section> = {
         help: "Let a subagent start agents of its own (Claude Code allows up to three levels by default)." },
       nested_model: { type: "enum", choices: ["haiku", "sonnet", "opus"], default: "haiku",
         help: "Model given to an agent that a subagent starts without naming one." },
+      rules: { type: "list", default: ["job:review=sonnet", "job:research=haiku", "type:Explore=haiku"],
+        pattern: "^(job|type|desc):[^=]+=(haiku|sonnet|opus)$",
+        help: "Ordered rules, first match wins: job:<tag>, type:<agent type> or desc:<words>, then =haiku|sonnet|opus. " +
+          "job matches the HAIKREW job= tag on the prompt's first line; desc matches words in the task description, ignoring case." },
+      rules_override: { type: "bool", default: false,
+        help: "Let rules replace a model the caller named." },
     },
   },
   squeeze: {
@@ -95,8 +101,13 @@ export function validate(section: string, key: string, value: unknown): string |
       return value >= f.min && value <= f.max ? null : `must be between ${f.min} and ${f.max}`;
     case "str": return typeof value === "string" ? null : "expected text";
     case "enum": return f.choices.includes(value as string) ? null : `must be one of ${f.choices.join(", ")}`;
-    case "list":
-      return Array.isArray(value) && value.every((v) => typeof v === "string") ? null : "expected a list of text values";
+    case "list": {
+      if (!Array.isArray(value) || !value.every((v) => typeof v === "string")) return "expected a list of text values";
+      if (!f.pattern) return null;
+      const pattern = new RegExp(f.pattern);
+      const bad = value.find((v) => !pattern.test(v));
+      return bad === undefined ? null : `entry "${bad}" does not match ${f.pattern}`;
+    }
   }
 }
 

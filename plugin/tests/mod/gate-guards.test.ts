@@ -1,11 +1,11 @@
 /** Mod tests for the agent gate and the tool guards: plain functions, called with a fake next and fake $. */
 import { expect, test } from "claude-code/testing";
-import { gate } from "../../src/mod/gate.ts";
+import { gate, jobTag, resolveModel } from "../../src/mod/gate.ts";
 import type { GateSettings } from "../../src/mod/gate.ts";
 import { readGuard, squeeze } from "../../src/mod/guards.ts";
 import type { ReadGuardSettings, SqueezeSettings } from "../../src/mod/guards.ts";
 import type { Input } from "../../src/mod/api.ts";
-import { defaults } from "../../src/schema.ts";
+import { defaults, validate } from "../../src/schema.ts";
 
 const passThrough = (e: Input) => ({ next: e });
 const ROOT = "/plugins/haikrew";
@@ -77,4 +77,57 @@ test("read guard denies a 700-line read without a range, and allows a ranged or 
   expect(readGuard(cfg, { file_path: "/w/big.rs", offset: 1, limit: 50 }, text, passThrough))
     .toEqual({ next: { file_path: "/w/big.rs", offset: 1, limit: 50 } });
   expect(readGuard(cfg, { file_path: "/w/gone.rs" }, null, passThrough)).toEqual({ next: { file_path: "/w/gone.rs" } });
+});
+
+test("gate rules match by job tag, agent type and description words, ignoring case", () => {
+  const cfg = section<GateSettings>("gate");
+  const review = { subagentType: "general", prompt: "HAIKREW job=review lang=ts\nbody" };
+  expect(gate(cfg, review, passThrough)).toEqual({ next: { ...review, model: "sonnet" } });
+  const explore = { subagentType: "Explore", prompt: "find it" };
+  expect(gate(cfg, explore, passThrough)).toEqual({ next: { ...explore, model: "haiku" } });
+  const cfgDesc = { ...cfg, rules: ["desc:Migration Plan=sonnet"] };
+  const desc = { subagentType: "general", description: "write the migration plan now" };
+  expect(gate(cfgDesc, desc, passThrough)).toEqual({ next: { ...desc, model: "sonnet" } });
+  expect(jobTag("HAIKREW job=research lang=ts")).toBe("research");
+  expect(jobTag("not a header\nHAIKREW job=review")).toBe("");
+});
+
+test("gate uses the first matching rule", () => {
+  const cfg = { ...section<GateSettings>("gate"), rules: ["type:general=opus", "job:review=sonnet"] };
+  const task = { subagentType: "general", prompt: "HAIKREW job=review lang=ts" };
+  expect((resolveModel(cfg, task).deny ?? "")).toMatch(/rule type:general=opus/);
+  const cfgSonnet = { ...cfg, rules: ["job:review=sonnet", "type:general=haiku"] };
+  expect(resolveModel(cfgSonnet, task)).toEqual({ model: "sonnet", rule: "job:review=sonnet" });
+});
+
+test("gate keeps a named model unless rules_override is on", () => {
+  const cfg = section<GateSettings>("gate");
+  const named = { subagentType: "Explore", model: "sonnet" };
+  expect(gate(cfg, named, passThrough)).toEqual({ next: named });
+  const override = { ...cfg, rules_override: true };
+  expect(gate(override, named, passThrough)).toEqual({ next: { ...named, model: "haiku" } });
+});
+
+test("gate denies a rule that chooses opus unless allow_opus is on, and names the rule", () => {
+  const cfg = { ...section<GateSettings>("gate"), rules: ["type:Explore=opus"] };
+  const denied = gate(cfg, { subagentType: "Explore" }, passThrough) as { deny: string };
+  expect(denied.deny).toMatch(/Opus/);
+  expect(denied.deny).toMatch(/rule type:Explore=opus/);
+  expect(gate({ ...cfg, allow_opus: true }, { subagentType: "Explore" }, passThrough))
+    .toEqual({ next: { subagentType: "Explore", model: "opus" } });
+});
+
+test("gate uses rules before nested_model for nested agents", () => {
+  const cfg = { ...section<GateSettings>("gate"), nested_model: "sonnet" };
+  expect(gate(cfg, { subagentType: "Explore", parentAgentId: "a1" }, passThrough))
+    .toEqual({ next: { subagentType: "Explore", parentAgentId: "a1", model: "haiku" } });
+  expect(gate(cfg, { subagentType: "general", parentAgentId: "a1" }, passThrough))
+    .toEqual({ next: { subagentType: "general", parentAgentId: "a1", model: "sonnet" } });
+});
+
+test("schema rejects a rule that is not job, type or desc with a model", () => {
+  expect(validate("gate", "rules", ["job:review=sonnet"])).toBeNull();
+  expect(validate("gate", "rules", ["review=sonnet"])).toMatch(/does not match/);
+  expect(validate("gate", "rules", ["job:review=gpt"])).toMatch(/does not match/);
+  expect(validate("gate", "rules", ["job:review"])).toMatch(/does not match/);
 });

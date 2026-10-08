@@ -6,7 +6,7 @@
  */
 import { settingsFrom } from "../src/mod/config.ts";
 import type { Api } from "../src/mod/api.ts";
-import { gate } from "../src/mod/gate.ts";
+import { gate, resolveModel } from "../src/mod/gate.ts";
 import type { GateSettings } from "../src/mod/gate.ts";
 import { readGuard, squeeze } from "../src/mod/guards.ts";
 import type { ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
@@ -19,9 +19,10 @@ import type { Settings } from "../src/schema.ts";
 export function register(on) {
   on("agent.spawn", async ($, e, next) => {
     const cfg = await loadSettings($);
-    return gate(cfg.gate as unknown as GateSettings, e, async (passed) => {
+    const gateCfg = cfg.gate as unknown as GateSettings;
+    return gate(gateCfg, e, async (passed) => {
       const reply = await next(passed);
-      noteSpawn(passed, reply, Date.now());
+      noteSpawn(passed, reply, Date.now(), resolveModel(gateCfg, e).rule);
       return reply;
     });
   });
