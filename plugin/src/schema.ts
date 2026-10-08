@@ -8,9 +8,14 @@ export type Field =
   | { type: "int"; default: number; min: number; max: number; help: string }
   | { type: "str"; default: string; help: string }
   | { type: "enum"; default: string; choices: string[]; help: string }
-  | { type: "list"; default: string[]; help: string; pattern?: string };
+  | { type: "list"; default: string[]; help: string; pattern?: string; sep?: string };
 export type Section = { title: string; help: string; fields: Record<string, Field> };
 export type Settings = Record<string, Record<string, Value>>;
+
+/** One selector term: job:<tag>, type:<agent type>, desc:<words>, lang:<tag> or cwd:<glob>. Terms join with "+". */
+const TERM = "(job|type|desc|lang|cwd):[^=+]+";
+const TERM_NOSPACE = "(job|type|desc|lang|cwd):[^\\s+]+";
+const EFFORT = "(low|medium|high|xhigh|max)";
 
 export const SCHEMA: Record<string, Section> = {
   gate: {
@@ -30,11 +35,18 @@ export const SCHEMA: Record<string, Section> = {
       nested_model: { type: "enum", choices: ["haiku", "sonnet", "opus"], default: "haiku",
         help: "Model given to an agent that a subagent starts without naming one." },
       rules: { type: "list", default: ["job:review=sonnet", "job:research=haiku", "type:Explore=haiku"],
-        pattern: "^(job|type|desc):[^=]+=(haiku|sonnet|opus)$",
-        help: "Ordered rules, first match wins: job:<tag>, type:<agent type> or desc:<words>, then =haiku|sonnet|opus. " +
-          "job matches the HAIKREW job= tag on the prompt's first line; desc matches words in the task description, ignoring case." },
+        pattern: `^${TERM}(\\+${TERM})*=(haiku|sonnet|opus)(@${EFFORT})?$`,
+        help: "Ordered rules, first match wins: selectors joined by +, then =haiku|sonnet|opus, optionally @low|medium|high|xhigh|max. " +
+          "Selectors: job:<tag> and lang:<tag> (the HAIKREW job= and lang= tags on the prompt's first line), type:<agent type>, " +
+          "desc:<words> (in the task description, ignoring case), cwd:<glob> (the session folder or a folder above it; ~ is your home)." },
       rules_override: { type: "bool", default: false,
         help: "Let rules replace a model the caller named." },
+      default_effort: { type: "list", default: [], pattern: `^(haiku|sonnet|opus)=${EFFORT}$`,
+        help: "Effort for subagents on a model when no rule sets one, e.g. sonnet=high. Empty: leave effort as it is. " +
+          "Applies to subagents only, never to the main conversation." },
+      instructions: { type: "list", default: [], sep: "|", pattern: `^${TERM_NOSPACE}(\\+${TERM_NOSPACE})*: .+$`,
+        help: "Text added to the prompt of matching subagents, entries separated by |: <selectors>: <text>, " +
+          "e.g. cwd:~/projects/*: never disable git hooks. Same selectors as rules. Empty: prompts are not changed." },
     },
   },
   squeeze: {
@@ -58,6 +70,17 @@ export const SCHEMA: Record<string, Section> = {
     fields: {
       enabled: { type: "bool", default: true, help: "Turn the guard on or off." },
       max_lines: { type: "int", default: 600, min: 100, max: 20000, help: "Files longer than this need an offset/limit." },
+    },
+  },
+  checks: {
+    title: "Checks",
+    help: "Deterministic guards around agent work. No model calls.",
+    fields: {
+      guard_hooks: { type: "bool", default: true,
+        help: "Refuse Bash commands that skip git hooks (--no-verify, core.hooksPath overrides), with a reason." },
+      seam_check: { type: "bool", default: false,
+        help: "When the last of 2+ parallel agents in one folder finishes, also send the main conversation a prompt to run " +
+          "the full verify. Off: the reminder is only logged." },
     },
   },
   ledger: {
