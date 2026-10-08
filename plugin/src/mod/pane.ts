@@ -210,7 +210,7 @@ function fieldControl($: Api, ui: Ui, id: string, section: string, key: string, 
   }
   const shown = field.type === "list" ? (current as string[]).join(`${listSep(field)} `) : String(current);
   return ui.Input({
-    key: id, label: key, placeholder: field.type === "list" ? "comma, separated" : "", submitLabel: "Save",
+    key: id, label: key, placeholder: field.type === "list" ? `items separated by ${listSep(field)}` : "", submitLabel: "Save",
     value: view.drafts[id] ?? shown,
     onInput: (text: string) => {
       view.drafts[id] = text;
@@ -238,8 +238,7 @@ export function parseText(field: Field, text: string): unknown {
 
 /** The separator between a list field's items: its `sep` when the schema sets one, else a comma. */
 function listSep(field: Field): string {
-  // ponytail: Field has no `sep` yet, so this reads a property the schema does not declare and yields ",".
-  return (field as { sep?: string }).sep ?? ",";
+  return field.type === "list" ? field.sep ?? "," : ",";
 }
 
 const LEDGER_WIDTHS = [10, 12, 8, 6, 16, 6, 10, 10, 8];

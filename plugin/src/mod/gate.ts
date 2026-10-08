@@ -82,8 +82,7 @@ export function resolveModel(cfg: GateSettings, e: Input, cwd = ""): Choice {
 export function effortFor(cfg: GateSettings, choice: Choice, model: string): string | undefined {
   if (!cfg.enabled) return undefined;
   if (choice.effort) return choice.effort;
-  // ponytail: a settings file from before default_effort existed has no entries, so fall back to none.
-  for (const entry of cfg.default_effort ?? []) {
+  for (const entry of cfg.default_effort) {
     const eq = entry.lastIndexOf("=");
     if (model.includes(entry.slice(0, eq))) return entry.slice(eq + 1);
   }
@@ -99,8 +98,7 @@ export function gate(cfg: GateSettings, e: Input, next: Next, cwd = ""): unknown
   if (choice.deny) return { deny: choice.deny };
   let passed = choice.model ? { ...e, model: choice.model } : e;
   if (cfg.enabled && !e.fork) {
-    // ponytail: a settings file from before the instructions field existed has none, so fall back to none.
-    const texts = instructionsFor(cfg.instructions ?? [], ctxFrom(e, cwd));
+    const texts = instructionsFor(cfg.instructions, ctxFrom(e, cwd));
     if (texts.length > 0) passed = { ...passed, prompt: withInstructions(String(e.prompt ?? ""), texts) };
   }
   return next(passed);

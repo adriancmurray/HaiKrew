@@ -1,15 +1,18 @@
 /**
  * HaiKrew mod entry point. Claude Code calls register(on) once when the mod loads.
- * agent.spawn gates subagent models, tool.call squeezes noisy Bash and guards large Reads, and the
- * SubagentStop hook records each finished subagent in the ledger. Pure logic lives in src/mod;
+ * agent.spawn gates subagent models and adds settings instructions, turn.step applies a subagent's effort,
+ * tool.call guards git-hook bypasses, squeezes noisy Bash and guards large Reads, and the SubagentStop hook records
+ * each finished subagent in the ledger and flags the end of a parallel batch. Pure logic lives in src/mod;
  * this file is the only place that touches `$`, because the mod validator forbids passing `$` across imports.
  */
 import { settingsFrom } from "../src/mod/config.ts";
 import type { Api } from "../src/mod/api.ts";
-import { gate, resolveModel } from "../src/mod/gate.ts";
+import { effortFor, gate, resolveModel } from "../src/mod/gate.ts";
 import type { GateSettings } from "../src/mod/gate.ts";
-import { readGuard, squeeze } from "../src/mod/guards.ts";
-import type { ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
+import { hookGuard, readGuard, squeeze } from "../src/mod/guards.ts";
+import type { ChecksSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
+import { noteEffort, stepEffort } from "../src/mod/effort.ts";
+import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
 import { noteSpawn, noteStop, noteToolCall } from "../src/mod/crew.ts";
 import { addRun, readState, runFromStop } from "../src/mod/ledger.ts";
 import { registerPane } from "../src/mod/pane.ts";
@@ -20,11 +23,24 @@ export function register(on) {
   on("agent.spawn", async ($, e, next) => {
     const cfg = await loadSettings($);
     const gateCfg = cfg.gate as unknown as GateSettings;
+    const cwd = await sessionCwd($);
+    const choice = resolveModel(gateCfg, e, cwd);
     return gate(gateCfg, e, async (passed) => {
       const reply = await next(passed);
-      noteSpawn(passed, reply, Date.now(), resolveModel(gateCfg, e).rule);
+      noteSpawn(passed, reply, Date.now(), choice.rule);
+      const id = typeof reply?.agentId === "string" ? reply.agentId : "";
+      if (id) {
+        const effort = effortFor(gateCfg, choice, String(reply.model ?? passed.model ?? ""));
+        if (effort) noteEffort(id, effort);
+        noteSeamStart(id, cwd);
+      }
       return reply;
-    });
+    }, cwd);
+  });
+
+  // Subagent steps only: stepEffort leaves the main loop (no agentId) and untracked agents unchanged.
+  on("turn.step", async function* (_$, e, next) {
+    return yield* next(stepEffort(e));
   });
 
   on("tool.call", async (_$, e, next) => {
@@ -34,7 +50,8 @@ export function register(on) {
 
   on("tool.call", { tool: "Bash" }, async ($, e, next) => {
     const cfg = await loadSettings($);
-    return squeeze(cfg.squeeze as unknown as SqueezeSettings, e, $.plugin.root, next);
+    return hookGuard(cfg.checks as unknown as ChecksSettings, e,
+      (passed) => squeeze(cfg.squeeze as unknown as SqueezeSettings, passed, $.plugin.root, next));
   });
 
   on("tool.call", { tool: "Read" }, async ($, e, next) => {
@@ -52,10 +69,24 @@ export function register(on) {
       // The ledger never blocks a subagent from finishing.
     }
     noteStop(String(e.agent_id ?? ""), String(e.agent_type ?? ""), verdict, Date.now());
+    const seam = noteSeamStop(String(e.agent_id ?? ""));
+    if (seam) {
+      $.ui.log(seam);
+      if ((await loadSettings($)).checks.seam_check) void $.prompt.submit({ text: seam });
+    }
     return next(e);
   });
 
   registerPane(on);
+}
+
+/** The session's folder, or "" when Claude Code cannot say. */
+async function sessionCwd($): Promise<string> {
+  try {
+    return await $.session.cwd();
+  } catch {
+    return "";
+  }
 }
 
 /** Settings from the mod store, merged over defaults. */

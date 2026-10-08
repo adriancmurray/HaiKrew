@@ -307,14 +307,14 @@ export function suggestions(state: LedgerState, rules: string[]): Suggestion[] {
     const lang = String(r.lang);
     const fam = family(String(r.model));
     const next = fam === "haiku" ? "sonnet" : fam === "sonnet" ? "opus" : "";
-    if (n < SUGGEST_MIN_RUNS || Number(r.pass_rate) >= SUGGEST_PASS_BELOW || job === "" || next === "") continue;
-    const selector = `job:${job}` + (lang ? `+lang:${lang}` : "");
-    if (rules.some((rule) => rule.startsWith(selector))) continue;
+    if (n < SUGGEST_MIN_RUNS || Number(r.pass_rate) >= SUGGEST_PASS_BELOW || job === "" || job === "unknown" || next === "") continue;
+    const selector = `job:${job}` + (lang && lang !== "unknown" ? `+lang:${lang}` : "");
+    if (rules.some((rule) => rule.slice(0, rule.lastIndexOf("=")) === selector)) continue;
     const pct = Math.round(Number(r.pass_rate) * 100);
     const rule = `${selector}=${next}`;
     out.push({
       rule,
-      text: `${job} ${lang ? `${lang} ` : ""}on ${capitalize(fam)}: ${n} runs, ${pct}% pass; suggest ${rule}`,
+      text: `${job} ${lang && lang !== "unknown" ? `${lang} ` : ""}on ${capitalize(fam)}: ${n} runs, ${pct}% pass; suggest ${rule}`,
     });
   }
   return out;
