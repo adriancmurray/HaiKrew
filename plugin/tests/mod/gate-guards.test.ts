@@ -131,3 +131,11 @@ test("schema rejects a rule that is not job, type or desc with a model", () => {
   expect(validate("gate", "rules", ["job:review=gpt"])).toMatch(/does not match/);
   expect(validate("gate", "rules", ["job:review"])).toMatch(/does not match/);
 });
+
+test("rules_override keeps a named model when no rule matches", () => {
+  const cfg = { ...section<GateSettings>("gate"), rules_override: true, rules: ["job:review=sonnet"] };
+  expect(gate(cfg, { subagentType: "general", model: "haiku", prompt: "HAIKREW job=implement" }, passThrough))
+    .toEqual({ next: { subagentType: "general", model: "haiku", prompt: "HAIKREW job=implement" } });
+  expect(gate(cfg, { subagentType: "general", model: "haiku", prompt: "HAIKREW job=review" }, passThrough))
+    .toEqual({ next: { subagentType: "general", model: "sonnet", prompt: "HAIKREW job=review" } });
+});

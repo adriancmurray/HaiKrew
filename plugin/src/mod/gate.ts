@@ -67,10 +67,11 @@ export function resolveModel(cfg: GateSettings, e: Input): Choice {
   }
   if (cfg.pinned_types.includes(String(e.subagentType))) return {};
   const named = Boolean(e.model);
-  if (named && !cfg.rules_override) {
+  const hit = named && !cfg.rules_override ? undefined : matchRule(cfg.rules, e);
+  // A caller-named model stands unless a rule matched and rules_override lets it replace the name.
+  if (named && !hit) {
     return String(e.model).includes("opus") && !cfg.allow_opus ? { deny: opusDenial(undefined) } : {};
   }
-  const hit = matchRule(cfg.rules, e);
   const model = hit?.model ?? (nested ? cfg.nested_model : cfg.default_model);
   if (model.includes("opus") && !cfg.allow_opus) return { deny: opusDenial(hit?.rule) };
   return { model, rule: hit?.rule };
