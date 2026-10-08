@@ -20,7 +20,7 @@ export function settingsFrom(stored: unknown): Settings {
   return out;
 }
 
-/** Error messages for {section: {key: value}} changes the schema rejects. Empty when all are valid. */
+/** Error messages for {section: {field: value}} changes the schema rejects. Empty when all are valid. */
 export function checkChanges(changes: Record<string, Record<string, unknown>>): string[] {
   const errors: string[] = [];
   for (const [section, values] of Object.entries(changes)) {

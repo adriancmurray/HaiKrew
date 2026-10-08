@@ -17,7 +17,7 @@ export type ChecksSettings = { guard_hooks: boolean; seam_check: boolean };
 const LEAD = /^\s*(?:cd\s+\S+\s*&&\s*|[A-Za-z_]\w*=\S*\s+)/;
 // A command that already runs through haikrew squeeze, bare or via python3/node on the bin path.
 const ALREADY = /^(?:(?:python3?|node)\s+)?["']?\S*haikrew(?:\.mjs)?["']?\s+squeeze\b/;
-const DEF = /^\s*(?:(?:pub|async|export|static|default)\s+)*(?:def|class|fn|func|struct|impl|enum|interface|type|export)\b|^#{1,6}\s/;
+const DEF = /^\s*(?:(?:pub|async|export|static|default)\s+)*(?:def|class|fn|func|struct|impl|enum|interface|type|export)\b|^#+\s/; // a Markdown heading line
 const OUTLINE_MAX = 60;
 // A git invocation that skips hooks: --no-verify as its own word, or core.hooksPath set by -c or config.
 const HOOK_BYPASS = /(^|\s)--no-verify(\s|$)|core\.hooksPath=|-c\s+core\.hooksPath\b/;
