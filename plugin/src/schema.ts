@@ -17,7 +17,8 @@ export const SCHEMA: Record<string, Section> = {
     title: "Agent model gate",
     help: "Applies to every subagent launch (the Agent tool).",
     fields: {
-      enabled: { type: "bool", default: true, help: "Turn the gate on or off." },
+      enabled: { type: "bool", default: false,
+        help: "Turn the gate on. Off by default: until you turn it on, agent launches pass through unchanged." },
       default_model: { type: "enum", choices: ["haiku", "sonnet", "opus"], default: "haiku",
         help: "Model given to an agent launched without one." },
       allow_opus: { type: "bool", default: false,

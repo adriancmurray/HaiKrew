@@ -8,11 +8,11 @@ import { fileURLToPath } from "node:url";
 import { defaults, validate } from "./schema.ts";
 import { listMarkdown, splitLines } from "./squeeze.ts";
 
-const USAGE = "usage: haikrew squeeze [--max-lines N] [--wrap PREFIX] -- <cmd...> | verify | stats [--days N] | " +
+const USAGE = "usage: haikrew squeeze [--max-lines N] [--wrap PREFIX] -- <cmd...> | verify | " +
   "patterns check [--max-files N] [--max-lines N]";
 const PATTERNS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "patterns");
 
-/** Dispatch argv to squeeze/verify/stats/patterns. Resolves to the exit code. */
+/** Dispatch argv to squeeze/verify/patterns. Resolves to the exit code. */
 export async function main(argv: string[]): Promise<number> {
   if (argv.length === 0) return usage();
   const [cmd, ...rest] = argv;
@@ -26,18 +26,8 @@ export async function main(argv: string[]): Promise<number> {
     const { verify } = await import("./squeeze.ts");
     return verify(process.cwd());
   }
-  if (cmd === "stats") return stats(rest);
   if (cmd === "patterns" && rest[0] === "check") return patternsCheck(rest.slice(1));
   return usage();
-}
-
-/** Token use per model over the last N days (default 7), printed as JSON. */
-async function stats(rest: string[]): Promise<number> {
-  const flags = parseIntFlags(rest, { days: 7 });
-  if (!flags) return badArgs("stats");
-  const { totals } = await import("./stats.ts");
-  process.stdout.write(JSON.stringify(await totals(flags.days), null, 2) + "\n");
-  return 0;
 }
 
 /** Count the pattern files and their lines against the caps (schema defaults, or the flags). Exit 1 on any violation. */

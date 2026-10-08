@@ -1,6 +1,6 @@
 {
   "name": "haikrew",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Token-efficient agent crews for Claude Code: cheap models write, the main model specs and verifies, deterministic hooks keep output small, and a ledger learns which model suits which job.",
   "author": {
     "name": "Adrian Murray"

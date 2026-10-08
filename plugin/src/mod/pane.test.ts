@@ -57,7 +57,7 @@ test("toggling a bool saves it", async (ctx: any, on: any) => {
   const m = await open(ctx);
   await m.press({ key: "tab-settings" });
   await m.press({ key: "gate.enabled" });
-  expect((h.store.get("settings") as { gate: { enabled: boolean } }).gate.enabled).toBe(false);
+  expect((h.store.get("settings") as { gate: { enabled: boolean } }).gate.enabled).toBe(true);
 });
 
 test("an invalid int shows its error and does not save", async (ctx: any, on: any) => {

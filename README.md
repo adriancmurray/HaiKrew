@@ -12,26 +12,31 @@ A subagent launched without a `model` inherits the main model, so every default 
 
 ## What's inside
 
-- **Model gate** (`agent.spawn`): sets a model on every subagent launch that lacks one, and refuses Opus unless allowed.
+- **Model gate** (`agent.spawn`): off until you turn it on in `/haikrew` Settings. When on, it sets a model on every subagent launch that lacks one, and refuses Opus unless allowed.
 - **Squeeze** (`tool.call` on Bash): runs noisy commands such as `cargo test` or `xcodebuild` through `haikrew squeeze`, which prints a short verdict and keeps the full log on disk.
 - **Read guard** (`tool.call` on Read): a large file read without a line range returns an outline and asks for a range.
 - **Ledger** (`classic.SubagentStop`): one row per finished subagent (model, job, language, time, tokens, verdict). The newest 200 rows are kept in full; older rows fold into monthly averages, and monthly averages older than 12 months fold into yearly ones.
-- **`/haikrew` pane**: three tabs. Settings, Ledger, and Tokens.
+- **`/haikrew` pane**: four tabs. Crew, Settings, Ledger, and Tokens.
 - **`haiku-coder` agent**: implements a tightly written spec.
 - **`haiku-scout` agent**: answers one research question with a short cited brief.
 - **`crew-overseer` skill**: the overseer workflow: write the spec, dispatch Haiku, verify.
-- **CLI** (`bin/haikrew.mjs`): `squeeze`, `verify`, `stats`, `patterns check`.
+- **CLI** (`bin/haikrew.mjs`): `squeeze`, `verify`, `patterns check`.
 
 ## What HaiKrew changes and touches
 
-- **`agent.spawn`**: sets the model when the caller named none (or, with `gate.rules_override` on, when a rule matches), choosing from `gate.rules` first, then the default. Refuses Opus subagents unless `gate.allow_opus` is on. Refuses nested spawns when `gate.allow_nested` is off. Why: cost control is the plugin's purpose, and every rule is a setting you control in `/haikrew`.
+- **`agent.spawn`** (every subagent launch passes through this hook): does nothing while `gate.enabled` is off, which is the default; the launch goes on exactly as requested. Once you turn the gate on, it sets the model when the caller named none (or, with `gate.rules_override` on, when a rule matches), choosing from `gate.rules` first, then the default. Refuses Opus subagents unless `gate.allow_opus` is on. Refuses nested spawns when `gate.allow_nested` is off. Why: cost control is the plugin's purpose, and every rule is a setting you control in `/haikrew`. It never changes Claude Code's permission mode or answers a permission prompt; a refusal comes back to the caller with the reason and the setting that caused it.
+- **`tool.call`** (all tools): notes the tool name and time for the Crew tab's live roster, then passes the call on unchanged.
 - **`tool.call`** on Bash: refuses a command that matches a squeeze pattern, with a message suggesting the `haikrew squeeze` command instead.
 - **`tool.call`** on Read: refuses a whole-file read of a file longer than `read_guard.max_lines`, and returns an outline so the caller can ask for a range.
+- **`session.start`**: registers the `/haikrew` command.
+- **`command.run`** for `/haikrew` (`command.run` is also the name of the call that runs a command): opens the HaiKrew pane and returns "HaiKrew pane opened."; other commands pass through untouched.
+- **`ui.render`** and **`ui.close`**: draw the HaiKrew pane and stop its animation when it closes; other panes pass through untouched.
 - **`classic.SubagentStop`**: reads the finished subagent's transcript at the path Claude Code provides, to compute ledger fields.
 - **Storage**: the mod uses `$.store` only, for settings and the ledger. The mod writes no files.
 - **Network**: none.
 - **Programs started by the mod**: none. The squeeze command is only suggested to Claude, which runs it through its normal permission checks. When Claude runs `haikrew squeeze`, the CLI writes the full log under `~/.local/share/haikrew/logs`.
-- **Credentials**: none read.
+- **Session usage**: the Tokens tab shows this session's context size, rate-limit use and cost from Claude Code's `$.session.usage()`, on screen only. Nothing is stored or sent.
+- **Credentials**: none read. No environment variables, keychain, or files under `~/.claude` are read by the mod or the CLI.
 
 ## Layout
 
@@ -65,7 +70,7 @@ Settings are kept in the mod store (`$.store`, key `settings`), not in a file. E
 
 | Key | Default | What it does |
 |---|---|---|
-| `gate.enabled` | `true` | Turn the gate on or off. |
+| `gate.enabled` | `false` | Turn the gate on. Off by default: until you turn it on, agent launches pass through unchanged. |
 | `gate.default_model` | `"haiku"` | Model given to an agent launched without one. |
 | `gate.allow_opus` | `false` | Allow subagents to run on Opus at all. Off: an Opus request is refused with a reason. |
 | `gate.pinned_types` | `["haiku-coder"]` | Agent types whose own definition sets the model; the gate leaves them alone. |
@@ -95,9 +100,8 @@ Example: `"rules": ["job:review=sonnet", "desc:migration=sonnet"]` runs a spec h
 
 ## Limitations
 
-- The `agent.spawn` field names come from the published Claude Code mod types. They have not been exercised against a live Claude Code session yet.
-- The mod parts (gate, guards, ledger, pane) run only in Claude Code. The CLI (`squeeze`, `verify`, `stats`, `patterns check`) runs anywhere Node 22.18 or later runs.
-- `haikrew stats` reads local transcripts only.
+- The gate has had one live check (an agent launched with no model ran on Haiku). Per-task rules have not been watched with real agents mid-run.
+- The mod parts (gate, guards, ledger, pane) run only in Claude Code. The CLI (`squeeze`, `verify`, `patterns check`) runs anywhere Node 22.18 or later runs.
 - The squeeze hook matches the start of a command with a regex.
 - The read guard and squeeze are heuristics. They can truncate output a caller needed; the full log stays on disk for squeezed runs.
 

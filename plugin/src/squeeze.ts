@@ -8,8 +8,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { defaults } from "./schema.ts";
 
-/** Where full logs go. HAIKREW_DATA overrides the default under ~/.local/share. */
-const DATA = process.env.HAIKREW_DATA ?? join(homedir(), ".local", "share", "haikrew");
+/** Where full logs go. */
+const DATA = join(homedir(), ".local", "share", "haikrew");
 const SQUEEZE_DEFAULTS = defaults().squeeze;
 
 /** How one squeezed run is printed and launched. Defaults come from the schema when the CLI gets no flags. */

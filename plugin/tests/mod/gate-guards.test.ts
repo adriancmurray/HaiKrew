@@ -12,8 +12,16 @@ const ROOT = "/plugins/haikrew";
 
 /** One settings section at its schema default. */
 function section<T>(name: string): T {
-  return defaults()[name] as unknown as T;
+  const values = defaults()[name];
+  // The gate ships off; these tests exercise it turned on.
+  return (name === "gate" ? { ...values, enabled: true } : values) as unknown as T;
 }
+
+test("gate ships off: a fresh install passes an agent launch through unchanged", () => {
+  const cfg = defaults().gate as unknown as GateSettings;
+  expect(gate(cfg, { subagentType: "general", prompt: "x", model: "opus" }, passThrough))
+    .toEqual({ next: { subagentType: "general", prompt: "x", model: "opus" } });
+});
 
 test("gate gives an agent with no model the default model", () => {
   const cfg = section<GateSettings>("gate");

@@ -1,5 +1,6 @@
 {
   "name": "haikrew",
   "owner": { "name": "Adrian Murray" },
+  "metadata": { "description": "HaiKrew: token-efficient agent crews for Claude Code. Cheap models write, the main model specs and verifies." },
   "plugins": [{ "name": "haikrew", "source": "./plugin", "description": "Token-efficient agent crews for Claude Code." }]
 }
