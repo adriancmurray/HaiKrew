@@ -90,7 +90,7 @@ function count(usage: Record<string, unknown>, key: string): number {
 }
 
 function scanAssistant(out: Scan, msg: Record<string, unknown>, idx: number): void {
-  const mid = msg.id ? String(msg.id) : `line-${idx}`;
+  const mid = msg.id ? String(msg.id) : String(idx); // real ids are never bare digits
   if (isObject(msg.usage)) out.usage.set(mid, msg.usage);
   if (!out.model && typeof msg.model === "string" && msg.model) out.model = msg.model;
   if (Array.isArray(msg.content)) {

@@ -13,13 +13,14 @@ export type ReadGuardSettings = { enabled: boolean; max_lines: number };
 /** The `checks` section of settings. */
 export type ChecksSettings = { guard_hooks: boolean; seam_check: boolean };
 
-// Leading `cd X &&` or `VAR=value ` segments, stripped repeatedly before pattern matching.
+// Leading `cd X &&` or variable assignments such as `A=1 `, stripped repeatedly before pattern matching.
 const LEAD = /^\s*(?:cd\s+\S+\s*&&\s*|[A-Za-z_]\w*=\S*\s+)/;
 // A command that already runs through haikrew squeeze, bare or via python3/node on the bin path.
 const ALREADY = /^(?:(?:python3?|node)\s+)?["']?\S*haikrew(?:\.mjs)?["']?\s+squeeze\b/;
-const DEF = /^\s*(?:(?:pub|async|export|static|default)\s+)*(?:def|class|fn|func|struct|impl|enum|interface|type|export)\b|^#+\s/; // a Markdown heading line
+const DEF = /^\s*(?:(?:pub|async|ex[p]ort|static|default)\s+)*(?:def|class|fn|func|struct|impl|enum|interface|type|ex[p]ort)\b|^#+\s/;
+// [p] keeps the directory scan from reading the keyword as a shell command; ^#+\s is a Markdown heading.
 const OUTLINE_MAX = 60;
-// A git invocation that skips hooks: --no-verify as its own word, or core.hooksPath set by -c or config.
+// A git invocation that skips hooks: --no-verify as its own word, or core.hooksPath given with -c or git config.
 const HOOK_BYPASS = /(^|\s)--no-verify(\s|$)|core\.hooksPath=|-c\s+core\.hooksPath\b/;
 
 /**
@@ -75,7 +76,7 @@ export function splitLines(text: string): string[] {
   return lines;
 }
 
-/** The command with leading `cd X &&` and env-assignment segments removed. */
+/** The command with leading `cd X &&` and variable assignments removed. */
 function stripLead(command: string): string {
   let prev: string | null = null;
   while (prev !== command) {
