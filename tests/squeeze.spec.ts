@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, describe, it } from "node:test";
 
 const data = mkdtempSync(join(tmpdir(), "haikrew-data-"));
-process.env.HOME = data; // homedir() follows HOME, so logs land under data/.local/share/haikrew
+process.env.TMPDIR = data; // tmpdir() follows TMPDIR, so logs land under data/haikrew
 after(() => {
   rmSync(data, { recursive: true, force: true });
 });
@@ -115,7 +115,7 @@ describe("run and verify", () => {
     assert.equal(code, 0);
     assert.match(out, /exit 0/);
     assert.match(out, /VERDICT: PASS/);
-    const logs = join(data, ".local", "share", "haikrew", "logs");
+    const logs = join(data, "haikrew", "logs");
     assert.ok(readdirSync(logs).some((f) => readFileSync(join(logs, f), "utf8") === "hi\n"));
   });
 

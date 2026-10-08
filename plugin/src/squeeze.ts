@@ -4,12 +4,12 @@
  */
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { defaults } from "./schema.ts";
 
-/** Where full logs go. */
-const DATA = join(homedir(), ".local", "share", "haikrew");
+/** Where full logs go: the system temp folder, so nothing is read from or written to the home folder. */
+const DATA = join(tmpdir(), "haikrew");
 const SQUEEZE_DEFAULTS = defaults().squeeze;
 
 /** How one squeezed run is printed and launched. Defaults come from the schema when the CLI gets no flags. */
