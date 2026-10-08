@@ -1,6 +1,6 @@
 /** Mod tests for the ledger: transcript parsing, condensing and the summary, on inline transcript text. */
 import { expect, test } from "claude-code/testing";
-import { addRun, condense, parseTranscriptText, summary } from "../../src/mod/ledger.ts";
+import { addRun, condense, parseTranscriptText, summary, tokenTotals } from "../../src/mod/ledger.ts";
 import type { LedgerState, Run } from "../../src/mod/ledger.ts";
 import { defaults } from "../../src/schema.ts";
 import type { Settings } from "../../src/schema.ts";
@@ -73,4 +73,13 @@ test("addRun replaces an earlier record for the same agent", () => {
   state = addRun(state, { ...base, agent_id: "a1", model: "claude-haiku-5-5", tokens_out: 417 } as never, settings);
   expect(state.runs.length).toBe(1);
   expect(state.runs[0].model).toBe("claude-haiku-5-5");
+});
+
+test("tokenTotals sums tokens and runs per model across runs", () => {
+  const settings = defaults() as never;
+  const base = { ts: "2026-10-08T09:00:00.000Z", session: "s", agent_type: "haiku-coder", job: "build", lang: "rust",
+    duration_s: 1, cache_read: 0, tool_calls: 0, attempts: 1, verdict: "pass", quality: 1 };
+  let state = addRun({ runs: [], buckets: [] }, { ...base, agent_id: "a1", model: "claude-haiku-5-5", tokens_in: 100, tokens_out: 10 } as never, settings);
+  state = addRun(state, { ...base, agent_id: "a2", model: "claude-haiku-5-5", tokens_in: 100, tokens_out: 5 } as never, settings);
+  expect(tokenTotals(state)).toEqual({ "claude-haiku-5-5": { tokens_in: 200, tokens_out: 15, runs: 2 } });
 });

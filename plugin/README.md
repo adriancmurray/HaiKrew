@@ -1,7 +1,5 @@
 # HaiKrew
 
-![HaiKrew: a crew of small orange robots under a pixel-art title](assets/header.gif)
-
 HaiKrew is a Claude Code mod (plugin) for token-efficient agent crews. The main model plans and reviews; cheaper Haiku subagents write code and do research; deterministic hooks gate which model a subagent runs on and trim noisy command output before it reaches the context.
 
 Unofficial community plugin; not affiliated with Anthropic.
@@ -32,10 +30,6 @@ A subagent launched without a `model` inherits the main model, so every default 
 - **Network**: none.
 - **Programs started by the mod**: none. The squeeze command is only suggested to Claude, which runs it through its normal permission checks. When Claude runs `haikrew squeeze`, the CLI writes the full log under `~/.local/share/haikrew/logs`.
 - **Credentials**: none read.
-
-## Layout
-
-The plugin bundle is in `plugin/` (manifest, hooks, mod source, CLI, agents, skills). The repository root holds this README, the license, assets, scripts, tests, and the marketplace manifest.
 
 ## Requirements
 
@@ -99,4 +93,4 @@ Settings are kept in the mod store (`$.store`, key `settings`), not in a file. E
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See the `LICENSE` file at the repository root.

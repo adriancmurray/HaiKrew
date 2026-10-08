@@ -1,11 +1,13 @@
 {
   "name": "haikrew",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Token-efficient agent crews for Claude Code: cheap models write, the main model specs and verifies, deterministic hooks keep output small, and a ledger learns which model suits which job.",
   "author": {
     "name": "Adrian Murray"
   },
   "license": "MIT",
   "homepage": "https://github.com/adriancmurray/HaiKrew",
-  "repository": "https://github.com/adriancmurray/HaiKrew"
+  "repository": "https://github.com/adriancmurray/HaiKrew",
+  "keywords": ["agents", "haiku", "tokens", "subagents", "mod"],
+  "icon": "./.claude-plugin/icon.png"
 }

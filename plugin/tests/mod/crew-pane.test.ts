@@ -2,11 +2,9 @@
 import { expect, test } from "claude-code/testing";
 import { resetCrew } from "../../src/mod/crew.ts";
 
-const HOME = "/virtual/haikrew";
 
 /** Answers the host reads the pane makes. Nothing touches the disk. */
 function host(on: any): void {
-  on("env.get", async (_$: unknown, e: { name: string }) => ({ value: e.name === "HAIKREW_HOME" ? HOME : undefined }));
   on("fs.read", async () => ({ deny: "no such file" }));
   on("store.get", async () => ({ value: undefined }));
   on("ui.open", async () => ({ value: null }));

@@ -1,4 +1,4 @@
-/** Tests for src/stats.ts: per-model token totals over a day window, from fake transcript trees. */
+/** Tests for plugin/src/stats.ts: per-model token totals over a day window, from fake transcript trees. */
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,11 +6,10 @@ import { dirname, join } from "node:path";
 import { after, beforeEach, describe, test } from "node:test";
 
 const TMP = mkdtempSync(join(tmpdir(), "haikrew-stats-test-"));
-process.env.HAIKREW_HOME = join(TMP, "home");
 process.env.HAIKREW_DATA = join(TMP, "data");
 process.env.HAIKREW_TRANSCRIPTS = join(TMP, "projects");
 
-const stats = await import("../src/stats.ts");
+const stats = await import("../plugin/src/stats.ts");
 const ROOT = join(TMP, "projects");
 
 const iso = (daysAgo: number) => new Date(Date.now() - daysAgo * 86_400_000).toISOString();

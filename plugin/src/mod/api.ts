@@ -7,13 +7,9 @@ export type Input = Record<string, unknown>;
 /** Passes an event on to the next mod or to Claude Code, returning that reply. */
 export type Next = (e: Input) => unknown;
 
-/** The mods API methods the hooks module uses: the environment, files, the store and the plugin root. */
+/** The mods API methods the hooks module uses: reading a transcript file, the store and the plugin root. */
 export type Api = {
-  env: { get(name: string): Promise<string | undefined> };
-  fs: {
-    read(path: string): Promise<string>;
-    write(path: string, text: string): Promise<void>;
-  };
+  fs: { read(path: string): Promise<string> };
   store: {
     get(key: string): Promise<unknown>;
     set(key: string, value: unknown): Promise<void>;

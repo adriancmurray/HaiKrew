@@ -4,10 +4,10 @@
  */
 import { SCHEMA, validate } from "../schema.ts";
 import type { Field, Settings } from "../schema.ts";
-import { checkChanges, mergeChanges, parseSettings, settingsFile } from "./config.ts";
+import { checkChanges, mergeChanges, settingsFrom } from "./config.ts";
 import { rowLine, snapshot } from "./crew.ts";
 import type { LiveAgent } from "./crew.ts";
-import { readState, summary } from "./ledger.ts";
+import { readState, summary, tokenTotals } from "./ledger.ts";
 import type { KeyStats, Run } from "./ledger.ts";
 import { packCells, scene, sceneSvg, SCENE_ROWS } from "./sprites.ts";
 
@@ -24,9 +24,6 @@ let stopTimer: (() => void) | null = null;
 type Ui = Record<string, (...args: unknown[]) => unknown>;
 type Api = Record<string, any>;
 
-/** Per-model totals as `haikrew stats` prints them. */
-type Week = Record<string, { input: number; output: number; cache_read: number; cache_write: number; messages: number }>;
-
 
 /** A Text element. Mods read its content from `children` inside the props, so the content goes there. */
 function txt(ui: Ui, props: Record<string, unknown>, content: unknown): unknown {
@@ -38,11 +35,9 @@ const view: {
   section: string;
   drafts: Record<string, string>;
   errors: Record<string, string>;
-  week: Week | null;
-  weekError: string | null;
   frame: number;
   cols: number;
-} = { tab: "crew", section: "gate", drafts: {}, errors: {}, week: null, weekError: null, frame: 0, cols: 80 };
+} = { tab: "crew", section: "gate", drafts: {}, errors: {}, frame: 0, cols: 80 };
 
 /** Claude Code calls this once when the mod loads. Adds the /haikrew command at session start and draws its pane. */
 export function registerPane(on: (...args: unknown[]) => void): void {
@@ -142,26 +137,17 @@ function halt(): void {
   stopTimer = null;
 }
 
-/** Settings from settings.json merged over defaults. A missing file or invalid JSON keeps defaults. */
+/** Settings from the mod store merged over defaults. Invalid stored values keep their defaults. */
 async function loadSettings($: Api): Promise<Settings> {
-  const home = await $.env.get("HAIKREW_HOME");
-  const path = settingsFile(home, await $.env.get("HOME"));
-  let text: string | null;
-  try {
-    text = await $.fs.read(path);
-  } catch {
-    text = null;
-  }
-  return parseSettings(text);
+  return settingsFrom(await $.store.get("settings"));
 }
 
-/** Validate and write {section: {key: value}}. Returns the errors; writes only when there are none. */
+/** Validate and store {section: {key: value}}. Returns the errors; stores only when there are none. */
 async function saveSettings($: Api, changes: Record<string, Record<string, unknown>>): Promise<string[]> {
   const errors = checkChanges(changes);
   if (errors.length) return errors;
   const next = mergeChanges(await loadSettings($), changes);
-  const home = await $.env.get("HAIKREW_HOME");
-  await $.fs.write(settingsFile(home, await $.env.get("HOME")), JSON.stringify(next, null, 2) + "\n");
+  await $.store.set("settings", next);
   return [];
 }
 
@@ -250,7 +236,7 @@ export function parseText(field: Field, text: string): unknown {
 }
 
 const LEDGER_WIDTHS = [10, 12, 8, 6, 16, 6, 10, 10, 8];
-const WEEK_WIDTHS = [10, 12, 12, 12, 12, 10];
+const TOKEN_WIDTHS = [12, 14, 14, 8];
 
 /** One fixed-width line: each cell cut or padded to its width, joined by a space. */
 export function row(cells: string[], widths: number[]): string {
@@ -308,9 +294,8 @@ async function tokensTab($: Api, ui: Ui, cols: number): Promise<unknown[]> {
     rows.push(txt(ui, {}, `${limit.kind}: ${Number(limit.percentUsed ?? 0)}% used, resets ${resetText(limit.resetsAt)}`));
   }
   if (typeof usage.cost === "number") rows.push(txt(ui, {}, `Cost: $${usage.cost.toFixed(2)}`));
-  rows.push(ui.Button({ key: "week", label: "Last 7 days", plain: true, onPress: () => loadWeek($) }));
-  if (view.weekError) rows.push(txt(ui, { color: "red" }, view.weekError));
-  if (view.week) rows.push(...weekRows(ui, view.week, cols));
+  rows.push(txt(ui, { bold: true }, "Subagent tokens by model (ledger)"));
+  rows.push(...ledgerTokenRows(ui, tokenTotals(readState(await $.store.get("ledger"))), cols));
   return rows;
 }
 
@@ -322,31 +307,14 @@ export function resetText(value: unknown): string {
   return new Date(ms).toISOString().slice(0, 16).replace("T", " ");
 }
 
-/** Runs `haikrew stats --days 7` and keeps its per-model totals, or the first stderr line on failure. */
-async function loadWeek($: Api): Promise<void> {
-  try {
-    const result: Api = await $.process.run(["node", `${$.plugin.root}/bin/haikrew.mjs`, "stats", "--days", "7"]);
-    if (result.exitCode) {
-      view.weekError = String(result.stderr || "stats failed").trim().split("\n")[0];
-      view.week = null;
-    } else {
-      view.week = JSON.parse(String(result.stdout)) as Week;
-      view.weekError = null;
-    }
-  } catch (err) {
-    view.weekError = err instanceof Error ? err.message : String(err);
-    view.week = null;
-  }
-  $.ui.invalidate("ui.render");
-}
-
-function weekRows(ui: Ui, week: Week, cols: number): unknown[] {
-  const models = Object.keys(week).sort();
-  if (models.length === 0) return [txt(ui, { dimColor: true }, "No token use in the last 7 days.")];
-  const head = row(["Model", "Input", "Output", "Cache read", "Cache write", "Messages"], WEEK_WIDTHS);
+/** One line per model with tokens in, tokens out and runs, or a note when the ledger is empty. */
+function ledgerTokenRows(ui: Ui, totals: Record<string, { tokens_in: number; tokens_out: number; runs: number }>, cols: number): unknown[] {
+  const models = Object.keys(totals).sort();
+  if (models.length === 0) return [txt(ui, { dimColor: true }, "No subagent runs recorded yet.")];
+  const head = row(["Model", "Tok in", "Tok out", "Runs"], TOKEN_WIDTHS);
   const lines = models.map((m) => {
-    const t = week[m];
-    return row([m, thousands(t.input), thousands(t.output), thousands(t.cache_read), thousands(t.cache_write), thousands(t.messages)], WEEK_WIDTHS);
+    const t = totals[m];
+    return row([m, thousands(t.tokens_in), thousands(t.tokens_out), thousands(t.runs)], TOKEN_WIDTHS);
   });
   return [head, ...lines].map((l, i) => txt(ui, { bold: i === 0 }, l.slice(0, cols)));
 }

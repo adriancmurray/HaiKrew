@@ -5,10 +5,11 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { get } from "./settings.ts";
+import { defaults, validate } from "./schema.ts";
 import { listMarkdown, splitLines } from "./squeeze.ts";
 
-const USAGE = "usage: haikrew squeeze -- <cmd...> | verify | stats [--days N] | patterns check";
+const USAGE = "usage: haikrew squeeze [--max-lines N] [--wrap PREFIX] -- <cmd...> | verify | stats [--days N] | " +
+  "patterns check [--max-files N] [--max-lines N]";
 const PATTERNS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "patterns");
 
 /** Dispatch argv to squeeze/verify/stats/patterns. Resolves to the exit code. */
@@ -16,17 +17,17 @@ export async function main(argv: string[]): Promise<number> {
   if (argv.length === 0) return usage();
   const [cmd, ...rest] = argv;
   if (cmd === "squeeze") {
-    const args = rest[0] === "--" ? rest.slice(1) : rest;
-    if (args.length === 0) return usage();
+    const parsed = parseSqueezeArgs(rest);
+    if (!parsed) return badArgs("squeeze");
     const { run } = await import("./squeeze.ts");
-    return run(args);
+    return run(parsed.argv, { maxLines: parsed.maxLines, wrap: parsed.wrap });
   }
   if (cmd === "verify") {
     const { verify } = await import("./squeeze.ts");
     return verify(process.cwd());
   }
   if (cmd === "stats") return stats(rest);
-  if (cmd === "patterns" && rest.length === 1 && rest[0] === "check") return patternsCheck();
+  if (cmd === "patterns" && rest[0] === "check") return patternsCheck(rest.slice(1));
   return usage();
 }
 
@@ -39,10 +40,13 @@ async function stats(rest: string[]): Promise<number> {
   return 0;
 }
 
-/** Count the pattern files and their lines against patterns.* caps. Exit 1 on any violation. */
-function patternsCheck(): number {
-  const maxFiles = get<number>("patterns", "max_files");
-  const maxLines = get<number>("patterns", "max_lines");
+/** Count the pattern files and their lines against the caps (schema defaults, or the flags). Exit 1 on any violation. */
+function patternsCheck(rest: string[]): number {
+  const flags = parseIntFlags(rest, { "max-files": defaults().patterns.max_files as number,
+    "max-lines": defaults().patterns.max_lines as number });
+  if (!flags) return badArgs("patterns check");
+  const maxFiles = flags["max-files"];
+  const maxLines = flags["max-lines"];
   const files = listMarkdown(PATTERNS_DIR);
   const problems: string[] = [];
   if (files.length > maxFiles) problems.push(`${files.length} pattern files, most allowed is ${maxFiles}`);
@@ -56,11 +60,37 @@ function patternsCheck(): number {
   return 0;
 }
 
+/**
+ * Parse squeeze's `--max-lines N` and `--wrap PREFIX` flags up to an optional `--`, then the command. Values are
+ * checked against the schema. Null when a flag is unknown, a value is invalid, or no command follows.
+ */
+function parseSqueezeArgs(rest: string[]): { maxLines: number; wrap: string; argv: string[] } | null {
+  let maxLines = defaults().squeeze.max_lines as number;
+  let wrap = defaults().squeeze.wrap_prefix as string;
+  let i = 0;
+  while (i < rest.length && rest[i] !== "--") {
+    const value = rest[i + 1];
+    if (value === undefined) return null;
+    if (rest[i] === "--max-lines") {
+      if (!/^\d+$/.test(value) || validate("squeeze", "max_lines", Number(value)) !== null) return null;
+      maxLines = Number(value);
+    } else if (rest[i] === "--wrap") {
+      wrap = value;
+    } else {
+      return null;
+    }
+    i += 2;
+  }
+  if (rest[i] === "--") i++;
+  const argv = rest.slice(i);
+  return argv.length === 0 ? null : { maxLines, wrap, argv };
+}
+
 /** Parse `--name N` or `--name=N` integer flags over defaults. Null when a flag is unknown or not an integer. */
 function parseIntFlags(rest: string[], defaults: Record<string, number>): Record<string, number> | null {
   const out = { ...defaults };
   for (let i = 0; i < rest.length; i++) {
-    const match = /^--([a-z]+)(?:=(.*))?$/.exec(rest[i]);
+    const match = /^--([a-z-]+)(?:=(.*))?$/.exec(rest[i]);
     if (!match || !Object.hasOwn(out, match[1])) return null;
     const raw = match[2] ?? rest[++i];
     if (raw === undefined || !/^-?\d+$/.test(raw)) return null;

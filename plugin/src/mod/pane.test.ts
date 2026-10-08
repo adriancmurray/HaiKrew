@@ -1,22 +1,16 @@
 /** Pane checks: the command opens the pane, each tab draws, a bool saves, a bad int is refused, the empty ledger shows. */
 import { test, expect } from "claude-code/testing";
 
-const HOME = "/virtual/haikrew";
-const SETTINGS = `${HOME}/settings.json`;
+type Host = { store: Map<string, unknown>; opened: string[] };
 
-type Host = { files: Map<string, string>; store: Map<string, unknown>; opened: string[] };
-
-/** Answers the host events the pane reads and writes, from in-memory state. Nothing touches the disk. */
+/** Answers the host events the pane reads and writes, from in-memory state. Settings live in the mod store. */
 function host(on: any): Host {
-  const h: Host = { files: new Map(), store: new Map(), opened: [] };
-  on("env.get", async (_$: unknown, e: { name: string }) => ({ value: e.name === "HAIKREW_HOME" ? HOME : undefined }));
-  on("fs.read", async (_$: unknown, e: { path: string }) =>
-    h.files.has(e.path) ? { value: h.files.get(e.path) } : { deny: "no such file" });
-  on("fs.write", async (_$: unknown, e: { path: string; text: string }) => {
-    h.files.set(e.path, e.text);
+  const h: Host = { store: new Map(), opened: [] };
+  on("store.get", async (_$: unknown, e: { key: string }) => ({ value: h.store.get(e.key) }));
+  on("store.set", async (_$: unknown, e: { key: string; value: unknown }) => {
+    h.store.set(e.key, e.value);
     return { value: undefined };
   });
-  on("store.get", async (_$: unknown, e: { key: string }) => ({ value: h.store.get(e.key) }));
   on("ui.open", async (_$: unknown, e: { id: string }) => {
     h.opened.push(e.id);
     return { value: null };
@@ -63,7 +57,7 @@ test("toggling a bool saves it", async (ctx: any, on: any) => {
   const m = await open(ctx);
   await m.press({ key: "tab-settings" });
   await m.press({ key: "gate.enabled" });
-  expect(JSON.parse(h.files.get(SETTINGS) ?? "{}").gate.enabled).toBe(false);
+  expect((h.store.get("settings") as { gate: { enabled: boolean } }).gate.enabled).toBe(false);
 });
 
 test("an invalid int shows its error and does not save", async (ctx: any, on: any) => {
@@ -73,5 +67,5 @@ test("an invalid int shows its error and does not save", async (ctx: any, on: an
   await m.select({ key: "section", value: "read_guard" });
   await m.input({ key: "read_guard.max_lines", text: "5", submit: true });
   expect(await drawnText(m)).toContain("must be between 100 and 20000");
-  expect(h.files.has(SETTINGS)).toBe(false);
+  expect(h.store.has("settings")).toBe(false);
 });

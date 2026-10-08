@@ -1,27 +1,15 @@
 /**
- * HaiKrew settings for the mod, as pure functions over the settings.json text. The hooks module reads and
- * writes the file through the mods API (hooks/register.ts), since `$` may not be passed across imports.
+ * HaiKrew settings for the mod, as pure functions over the stored settings object. The mod keeps settings only in
+ * $.store under the key "settings"; the hooks module and the pane read and write it through the mods API.
  * Values come from schema.ts, so the mod and the CLI agree on defaults and limits.
  */
 import { defaults, validate } from "../schema.ts";
 import type { Settings, Value } from "../schema.ts";
 import { isObject } from "./api.ts";
 
-/** settings.json under $HAIKREW_HOME, else ~/.config/haikrew under HOME. */
-export function settingsFile(haikrewHome: string | undefined, home: string | undefined): string {
-  const dir = haikrewHome || `${home ?? ""}/.config/haikrew`;
-  return `${dir}/settings.json`;
-}
-
-/** Settings from settings.json text merged over defaults. Null, unparseable text, and invalid values keep defaults. */
-export function parseSettings(text: string | null): Settings {
+/** Settings from the stored object merged over defaults. Null and invalid values keep defaults. */
+export function settingsFrom(stored: unknown): Settings {
   const out = defaults();
-  let stored: unknown;
-  try {
-    stored = JSON.parse(text ?? "");
-  } catch {
-    return out;
-  }
   if (!isObject(stored)) return out;
   for (const [section, values] of Object.entries(stored)) {
     if (!isObject(values)) continue;

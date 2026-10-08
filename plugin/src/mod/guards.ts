@@ -6,7 +6,7 @@
 import type { Input, Next } from "./api.ts";
 
 /** The `squeeze` section of settings. */
-export type SqueezeSettings = { enabled: boolean; patterns: string[] };
+export type SqueezeSettings = { enabled: boolean; patterns: string[]; max_lines: number; wrap_prefix: string };
 /** The `read_guard` section of settings. */
 export type ReadGuardSettings = { enabled: boolean; max_lines: number };
 
@@ -17,15 +17,18 @@ const ALREADY = /^(?:(?:python3?|node)\s+)?["']?\S*haikrew(?:\.mjs)?["']?\s+sque
 const DEF = /^\s*(?:(?:pub|async|export|static|default)\s+)*(?:def|class|fn|func|struct|impl|enum|interface|type|export)\b|^#{1,6}\s/;
 const OUTLINE_MAX = 60;
 
-/** Bash: deny a squeeze-pattern command and name `node "<root>/bin/haikrew.mjs" squeeze -- <command>`. */
+/**
+ * Bash: deny a squeeze-pattern command and name `node "<root>/bin/haikrew.mjs" squeeze --max-lines <n> [--wrap "<prefix>"] -- <command>`.
+ */
 export function squeeze(cfg: SqueezeSettings, e: Input, root: string, next: Next): unknown {
   const command = String(e.command || "");
   const core = stripLead(command);
   if (!cfg.enabled || ALREADY.test(core) || !cfg.patterns.some((p) => new RegExp(`^(?:${p})`).test(core))) {
     return next(e);
   }
+  const wrap = cfg.wrap_prefix ? ` --wrap "${cfg.wrap_prefix}"` : "";
   return {
-    deny: `Run it through squeeze instead: node "${root}/bin/haikrew.mjs" squeeze -- ${command}`,
+    deny: `Run it through squeeze instead: node "${root}/bin/haikrew.mjs" squeeze --max-lines ${cfg.max_lines}${wrap} -- ${command}`,
   };
 }
 

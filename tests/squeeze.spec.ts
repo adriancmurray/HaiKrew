@@ -5,17 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 
-const home = mkdtempSync(join(tmpdir(), "haikrew-home-"));
 const data = mkdtempSync(join(tmpdir(), "haikrew-data-"));
-process.env.HAIKREW_HOME = home;
 process.env.HAIKREW_DATA = data;
 after(() => {
-  rmSync(home, { recursive: true, force: true });
   rmSync(data, { recursive: true, force: true });
 });
 
-const settings = await import("../src/settings.ts");
-const squeeze = await import("../src/squeeze.ts");
+const squeeze = await import("../plugin/src/squeeze.ts");
 
 const CARGO_LOG = `error[E0425]: cannot find value \`x\` in this scope
  --> src/lib.rs:4:5
@@ -133,7 +129,7 @@ describe("run and verify", () => {
   it("caps output lines", () => {
     const { out } = capture(() =>
       squeeze.run([process.execPath, "-e", "for (let i = 0; i < 100; i++) console.log('line', i)"]));
-    assert.ok(out.trimEnd().split("\n").length <= settings.get<number>("squeeze", "max_lines"));
+    assert.ok(out.trimEnd().split("\n").length <= squeeze.SQUEEZE_OPTIONS.maxLines);
   });
 
   it("verify runs the repo script", () => {

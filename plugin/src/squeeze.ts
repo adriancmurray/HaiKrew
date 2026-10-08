@@ -1,11 +1,24 @@
 /**
  * Run a command and print a short verdict instead of its full output.
- * Output is captured, the full log goes to DATA/logs, and at most squeeze.max_lines lines are printed.
+ * Output is captured, the full log goes to DATA/logs, and at most maxLines lines are printed.
  */
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { DATA, get } from "./settings.ts";
+import { defaults } from "./schema.ts";
+
+/** Where full logs go. HAIKREW_DATA overrides the default under ~/.local/share. */
+const DATA = process.env.HAIKREW_DATA ?? join(homedir(), ".local", "share", "haikrew");
+const SQUEEZE_DEFAULTS = defaults().squeeze;
+
+/** How one squeezed run is printed and launched. Defaults come from the schema when the CLI gets no flags. */
+export type SqueezeOptions = { maxLines: number; wrap: string; cwd?: string };
+/** Options with the schema defaults for squeeze.max_lines and squeeze.wrap_prefix. */
+export const SQUEEZE_OPTIONS: SqueezeOptions = {
+  maxLines: SQUEEZE_DEFAULTS.max_lines as number,
+  wrap: SQUEEZE_DEFAULTS.wrap_prefix as string,
+};
 
 const ERR_LIMIT = 8;
 const CARGO_ERR_LIMIT = 5;
@@ -31,15 +44,15 @@ export function splitLines(text: string): string[] {
 }
 
 /**
- * Run argv (prefixed by squeeze.wrap_prefix if set) with output captured, write the log, and print
+ * Run argv (prefixed by opts.wrap if set) with output captured, write the log, and print
  * `squeeze: <cmd> -> exit <code> in <seconds>s (log: <path>)`, a summary, then a VERDICT line.
  * Returns the command's exit code.
  */
-export function run(argv: string[], cwd?: string): number {
-  const maxLines = get<number>("squeeze", "max_lines");
-  const cmd = [...shellSplit(get<string>("squeeze", "wrap_prefix")), ...argv];
+export function run(argv: string[], opts: SqueezeOptions = SQUEEZE_OPTIONS): number {
+  const maxLines = opts.maxLines;
+  const cmd = [...shellSplit(opts.wrap), ...argv];
   const started = performance.now();
-  const proc = spawnSync(cmd[0], cmd.slice(1), { cwd, encoding: "utf8", stdio: ["inherit", "pipe", "pipe"] });
+  const proc = spawnSync(cmd[0], cmd.slice(1), { cwd: opts.cwd, encoding: "utf8", stdio: ["inherit", "pipe", "pipe"] });
   const elapsed = (performance.now() - started) / 1000;
   let code: number;
   let output: string;
@@ -65,13 +78,13 @@ export function run(argv: string[], cwd?: string): number {
 export function verify(cwd: string): number {
   const root = repoRoot(cwd);
   const script = join(root, ".haikrew", "verify");
-  if (isFile(script) && isExecutable(script)) return run([script], root);
+  if (isFile(script) && isExecutable(script)) return run([script], { ...SQUEEZE_OPTIONS, cwd: root });
   const argv = infer(root);
   if (argv === null) {
     process.stdout.write(`verify: no .haikrew/verify and no known project type in ${root}\n`);
     return 2;
   }
-  return run(argv, root);
+  return run(argv, { ...SQUEEZE_OPTIONS, cwd: root });
 }
 
 /** Summarizers in priority order, each paired with the command matcher that selects it. */

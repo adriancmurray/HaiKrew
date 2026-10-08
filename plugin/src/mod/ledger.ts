@@ -253,6 +253,20 @@ export function summary(state: LedgerState): { recent: Run[]; by_key: KeyStats[]
   return { recent, by_key: rows.map(keyStats) };
 }
 
+/** Tokens in, tokens out and run count per model, summed over the kept runs and the monthly and yearly buckets. */
+export function tokenTotals(state: LedgerState): Record<string, { tokens_in: number; tokens_out: number; runs: number }> {
+  const out: Record<string, { tokens_in: number; tokens_out: number; runs: number }> = {};
+  const add = (model: string, tokensIn: number, tokensOut: number, runs: number): void => {
+    const t = (out[model] ??= { tokens_in: 0, tokens_out: 0, runs: 0 });
+    t.tokens_in += tokensIn;
+    t.tokens_out += tokensOut;
+    t.runs += runs;
+  };
+  for (const run of state.runs) add(run.model, run.tokens_in, run.tokens_out, 1);
+  for (const b of state.buckets) add(b.model, b.sum_tokens_in, b.sum_tokens_out, b.n);
+  return out;
+}
+
 function cmp(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }

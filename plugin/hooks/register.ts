@@ -1,10 +1,10 @@
 /**
  * HaiKrew mod entry point. Claude Code calls register(on) once when the mod loads.
  * agent.spawn gates subagent models, tool.call squeezes noisy Bash and guards large Reads, and the
- * SubagentStop settings hook records each finished subagent in the ledger. Pure logic lives in src/mod;
+ * SubagentStop hook records each finished subagent in the ledger. Pure logic lives in src/mod;
  * this file is the only place that touches `$`, because the mod validator forbids passing `$` across imports.
  */
-import { checkChanges, mergeChanges, parseSettings, settingsFile } from "../src/mod/config.ts";
+import { settingsFrom } from "../src/mod/config.ts";
 import type { Api } from "../src/mod/api.ts";
 import { gate } from "../src/mod/gate.ts";
 import type { GateSettings } from "../src/mod/gate.ts";
@@ -57,22 +57,9 @@ export function register(on) {
   registerPane(on);
 }
 
-/** Settings from settings.json, defaults where the file is missing. */
+/** Settings from the mod store, merged over defaults. */
 async function loadSettings($: Api): Promise<Settings> {
-  return parseSettings(await readFile($, await settingsPath($)));
-}
-
-/** Validate and write {section: {key: value}} changes. Returns the errors; writes only when there are none. */
-export async function saveSettings($: Api, changes: Record<string, Record<string, unknown>>): Promise<string[]> {
-  const errors = checkChanges(changes);
-  if (errors.length) return errors;
-  const next = mergeChanges(await loadSettings($), changes);
-  await $.fs.write(await settingsPath($), JSON.stringify(next, null, 2) + "\n");
-  return [];
-}
-
-async function settingsPath($: Api): Promise<string> {
-  return settingsFile(await $.env.get("HAIKREW_HOME"), await $.env.get("HOME"));
+  return settingsFrom(await $.store.get("settings"));
 }
 
 /** A file's text, or null when it cannot be read (missing, or over the 4 MiB limit). */
