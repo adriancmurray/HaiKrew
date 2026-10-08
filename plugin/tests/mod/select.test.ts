@@ -3,7 +3,7 @@ import { expect, test } from "claude-code/testing";
 import { ctxFrom, globMatch, instructionsFor, parseRule, selectorMatch, tag, withInstructions } from "../../src/mod/select.ts";
 import type { SelectCtx } from "../../src/mod/select.ts";
 
-const HOME_CWD = "/Users/adrian/work/app/src";
+const HOME_CWD = "/Users/someone/work/app/src";
 
 /** A context with the given fields and empty defaults. */
 function ctx(over: Partial<SelectCtx>): SelectCtx {
@@ -14,16 +14,16 @@ test("globMatch expands ~ to the home folder and matches a folder or its ancesto
   expect(globMatch("~/work/*", HOME_CWD)).toBe(true);
   expect(globMatch("~/work/app", HOME_CWD)).toBe(true);
   expect(globMatch("~/work/src", HOME_CWD)).toBe(false);
-  expect(globMatch("~/work/app", "/Users/adrian/work/app")).toBe(true);
-  expect(globMatch("/Users/adrian/work/**", HOME_CWD)).toBe(true);
+  expect(globMatch("~/work/app", "/Users/someone/work/app")).toBe(true);
+  expect(globMatch("/Users/someone/work/**", HOME_CWD)).toBe(true);
 });
 
 test("globMatch: * stays within one folder, and ? is one character", () => {
-  expect(globMatch("/Users/adrian/*", HOME_CWD)).toBe(true);
-  expect(globMatch("/Users/*", "/Users/adrian")).toBe(true);
-  expect(globMatch("/Users/adrian/*", "/Users/adrian")).toBe(false);
-  expect(globMatch("/Users/adria?", "/Users/adrian")).toBe(true);
-  expect(globMatch("/Users/adri?", "/Users/adrian")).toBe(false);
+  expect(globMatch("/Users/someone/*", HOME_CWD)).toBe(true);
+  expect(globMatch("/Users/*", "/Users/someone")).toBe(true);
+  expect(globMatch("/Users/someone/*", "/Users/someone")).toBe(false);
+  expect(globMatch("/Users/someon?", "/Users/someone")).toBe(true);
+  expect(globMatch("/Users/someo?", "/Users/someone")).toBe(false);
 });
 
 test("globMatch never matches a ~ glob when the folder has no home", () => {

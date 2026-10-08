@@ -146,8 +146,8 @@ test("gate rules match a combined job and language selector, and a cwd folder", 
   const tsReview = { subagentType: "general", prompt: "HAIKREW job=review lang=ts\nbody" };
   expect(resolveModel(cfg, tsReview)).toEqual({ model: "sonnet", rule: "job:review+lang:ts=sonnet" });
   const swiftReview = { subagentType: "general", prompt: "HAIKREW job=review lang=swift" };
-  expect(resolveModel(cfg, swiftReview, "/Users/adrian/work/app/src").deny).toMatch(/cwd:~\/work\/\*=opus/);
-  expect(resolveModel({ ...cfg, allow_opus: true }, swiftReview, "/Users/adrian/work/app"))
+  expect(resolveModel(cfg, swiftReview, "/Users/someone/work/app/src").deny).toMatch(/cwd:~\/work\/\*=opus/);
+  expect(resolveModel({ ...cfg, allow_opus: true }, swiftReview, "/Users/someone/work/app"))
     .toEqual({ model: "opus", rule: "cwd:~/work/*=opus" });
 });
 
