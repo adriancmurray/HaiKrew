@@ -1,7 +1,8 @@
 /** Mod tests for the agent gate and the tool guards: plain functions, called with a fake next and fake $. */
 import { expect, test } from "claude-code/testing";
-import { gate, jobTag, resolveModel } from "../../src/mod/gate.ts";
+import { effortFor, gate, jobTag, resolveModel } from "../../src/mod/gate.ts";
 import type { GateSettings } from "../../src/mod/gate.ts";
+import { noteEffort, resetEffort, stepEffort } from "../../src/mod/effort.ts";
 import { readGuard, squeeze } from "../../src/mod/guards.ts";
 import type { ReadGuardSettings, SqueezeSettings } from "../../src/mod/guards.ts";
 import type { Input } from "../../src/mod/api.ts";
@@ -138,6 +139,50 @@ test("schema rejects a rule that is not job, type or desc with a model", () => {
   expect(validate("gate", "rules", ["review=sonnet"])).toMatch(/does not match/);
   expect(validate("gate", "rules", ["job:review=gpt"])).toMatch(/does not match/);
   expect(validate("gate", "rules", ["job:review"])).toMatch(/does not match/);
+});
+
+test("gate rules match a combined job and language selector, and a cwd folder", () => {
+  const cfg = { ...section<GateSettings>("gate"), rules: ["job:review+lang:ts=sonnet", "cwd:~/work/*=opus"] };
+  const tsReview = { subagentType: "general", prompt: "HAIKREW job=review lang=ts\nbody" };
+  expect(resolveModel(cfg, tsReview)).toEqual({ model: "sonnet", rule: "job:review+lang:ts=sonnet" });
+  const swiftReview = { subagentType: "general", prompt: "HAIKREW job=review lang=swift" };
+  expect(resolveModel(cfg, swiftReview, "/Users/adrian/work/app/src").deny).toMatch(/cwd:~\/work\/\*=opus/);
+  expect(resolveModel({ ...cfg, allow_opus: true }, swiftReview, "/Users/adrian/work/app"))
+    .toEqual({ model: "opus", rule: "cwd:~/work/*=opus" });
+});
+
+test("gate passes a rule's @effort along and gives instructions to pinned types, not forks", () => {
+  const cfg = {
+    ...section<GateSettings>("gate"),
+    rules: ["job:review=sonnet@high"],
+    instructions: ["job:review: Cite file:line.", "type:haiku-coder: Keep it small."],
+  };
+  const review = { subagentType: "general", prompt: "HAIKREW job=review lang=ts\nbody" };
+  expect(resolveModel(cfg, review)).toEqual({ model: "sonnet", rule: "job:review=sonnet@high", effort: "high" });
+  expect(gate(cfg, review, passThrough))
+    .toEqual({ next: { ...review, model: "sonnet", prompt: review.prompt + "\n\nInstructions from HaiKrew settings:\n- Cite file:line." } });
+  const pinned = gate(cfg, { subagentType: "haiku-coder", prompt: "task" }, passThrough) as { next: Input };
+  expect(pinned.next).toEqual({ subagentType: "haiku-coder", prompt: "task\n\nInstructions from HaiKrew settings:\n- Keep it small." });
+  const fork = { subagentType: "general", prompt: "task", fork: true };
+  expect(gate(cfg, { ...fork, model: "sonnet" }, passThrough)).toEqual({ next: { ...fork, model: "sonnet" } });
+});
+
+test("effortFor prefers the rule's effort, then a default_effort entry, and is undefined when off", () => {
+  const cfg = { ...section<GateSettings>("gate"), default_effort: ["sonnet=high"] };
+  expect(effortFor(cfg, { model: "sonnet", effort: "low" }, "claude-sonnet-5-5")).toBe("low");
+  expect(effortFor(cfg, { model: "claude-sonnet-5-5" }, "claude-sonnet-5-5")).toBe("high");
+  expect(effortFor(cfg, { model: "haiku" }, "haiku")).toBeUndefined();
+  expect(effortFor({ ...cfg, enabled: false }, { model: "sonnet", effort: "low" }, "sonnet")).toBeUndefined();
+});
+
+test("stepEffort sets the tracked effort only on a subagent step that already has an effort field", () => {
+  resetEffort();
+  noteEffort("a1", "high");
+  expect(stepEffort({ agentId: "a1", effort: "low", tool: "Read" })).toEqual({ agentId: "a1", effort: "high", tool: "Read" });
+  expect(stepEffort({ agentId: "a1", tool: "Read" })).toEqual({ agentId: "a1", tool: "Read" });
+  expect(stepEffort({ tool: "Read", effort: "low" })).toEqual({ tool: "Read", effort: "low" });
+  expect(stepEffort({ agentId: "a2", effort: "low" })).toEqual({ agentId: "a2", effort: "low" });
+  resetEffort();
 });
 
 test("rules_override keeps a named model when no rule matches", () => {
