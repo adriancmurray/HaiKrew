@@ -1,0 +1,6 @@
+#!/bin/sh
+# HaiKrew's own check: the node:test suites under tests/, then the mod tests under tests/mod/ and the mod's
+# own test files, run by the Claude Code test kit. The node suites are *.spec.ts so the kit does not load them.
+CC="${HAIKREW_CLAUDE:-claude}"   # Claude Code 2.1.287+ for `plugin test`; override with HAIKREW_CLAUDE
+node --test tests/*.spec.ts || exit 1
+exec "$CC" plugin test .

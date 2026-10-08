@@ -1,0 +1,5 @@
+{
+  "name": "haikrew",
+  "owner": { "name": "Adrian Murray" },
+  "plugins": [{ "name": "haikrew", "source": "./", "description": "Token-efficient agent crews for Claude Code." }]
+}
