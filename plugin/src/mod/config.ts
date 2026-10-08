@@ -1,6 +1,6 @@
 /**
  * HaiKrew settings for the mod, as pure functions over the stored settings object. The mod keeps settings only in
- * $.store under the key "settings"; the hooks module and the pane read and write it through the mods API.
+ * $.store under the name "settings"; the hooks module and the pane read and write it through the mods API.
  * Values come from schema.ts, so the mod and the CLI agree on defaults and limits.
  */
 import { defaults, validate } from "../schema.ts";
@@ -13,8 +13,8 @@ export function settingsFrom(stored: unknown): Settings {
   if (!isObject(stored)) return out;
   for (const [section, values] of Object.entries(stored)) {
     if (!isObject(values)) continue;
-    for (const [key, value] of Object.entries(values)) {
-      if (validate(section, key, value) === null) out[section][key] = value as Value;
+    for (const [field, value] of Object.entries(values)) {
+      if (validate(section, field, value) === null) out[section][field] = value as Value;
     }
   }
   return out;
@@ -24,9 +24,9 @@ export function settingsFrom(stored: unknown): Settings {
 export function checkChanges(changes: Record<string, Record<string, unknown>>): string[] {
   const errors: string[] = [];
   for (const [section, values] of Object.entries(changes)) {
-    for (const [key, value] of Object.entries(values ?? {})) {
-      const error = validate(section, key, value);
-      if (error) errors.push(`${section}.${key}: ${error}`);
+    for (const [field, value] of Object.entries(values ?? {})) {
+      const error = validate(section, field, value);
+      if (error) errors.push(`${section}.${field}: ${error}`);
     }
   }
   return errors;
