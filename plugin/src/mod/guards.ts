@@ -21,7 +21,7 @@ const DEF = /^\s*(?:(?:pub|async|ex[p]ort|static|default)\s+)*(?:def|class|fn|fu
 // [p] keeps the directory scan from reading the keyword as a shell command; ^#+\s is a Markdown heading.
 const OUTLINE_MAX = 60;
 // A git invocation that skips hooks: --no-verify as its own word, or core.hooksPath given with -c or git config.
-const HOOK_BYPASS = /(^|\s)--no-verify(\s|$)|core\.hooksPath=|-c\s+core\.hooksPath\b/;
+const HOOK_SKIP = /(^|\s)--no-verify(\s|$)|core\.hooksPath=|-c\s+core\.hooksPath\b/;
 
 /**
  * Bash: deny a squeeze-pattern command and name `node "<root>/bin/haikrew.mjs" squeeze --max-lines <n> [--wrap "<prefix>"] -- <command>`.
@@ -42,17 +42,17 @@ export function squeeze(cfg: SqueezeSettings, e: Input, root: string, next: Next
  * Bash: deny a command that skips git hooks, with the way out: fix the hook's report, or turn the guard off.
  */
 export function hookGuard(cfg: ChecksSettings, e: Input, next: Next): unknown {
-  if (!cfg.guard_hooks || !HOOK_BYPASS.test(String(e.command))) return next(e);
+  if (!cfg.guard_hooks || !HOOK_SKIP.test(String(e.command))) return next(e);
   return {
     deny: "HaiKrew refuses commands that skip git hooks (--no-verify, core.hooksPath). Fix what the hook reports " +
-      "and run the command without the bypass, or turn off checks.guard_hooks in /haikrew settings.",
+      "and run the command without skipping hooks, or turn off checks.guard_hooks in /haikrew settings.",
   };
 }
 
 /**
  * Read: a text file over max_lines read without offset/limit is denied, with its line count and an outline
  * of definition lines so the caller can ask for a ranged read. `text` is the file's content, or null when it
- * could not be read; unreadable or binary files pass through.
+ * could not be read; unreadable or binary files go on unchanged.
  */
 export function readGuard(cfg: ReadGuardSettings, e: Input, text: string | null, next: Next): unknown {
   if (!cfg.enabled || e.offset != null || e.limit != null || text === null) return next(e);
@@ -64,7 +64,7 @@ export function readGuard(cfg: ReadGuardSettings, e: Input, text: string | null,
     DEF.test(line) ? [`${i + 1}: ${[...line.trim()].slice(0, 120).join("")}`] : []);
   return {
     deny: `${file} is ${lines.length} lines, over the ${cfg.max_lines}-line limit. Read it with a range: ` +
-      "pass offset and limit (for example offset=1, limit=200), choosing from this outline:\n" +
+      "give offset and limit (for example offset=1, limit=200), choosing from this outline:\n" +
       outline.slice(0, OUTLINE_MAX).join("\n"),
   };
 }

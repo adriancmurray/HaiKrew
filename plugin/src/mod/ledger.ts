@@ -95,7 +95,7 @@ function scanAssistant(out: Scan, msg: Record<string, unknown>, idx: number): vo
   if (!out.model && typeof msg.model === "string" && msg.model) out.model = msg.model;
   if (Array.isArray(msg.content)) {
     msg.content.forEach((block, pos) => {
-      if (isObject(block) && block.type === "tool_use") out.tools.add(block.id ? String(block.id) : `${mid}#${pos}`);
+      if (isObject(block) && block.type === "tool_use") out.tools.add(block.id ? String(block.id) : mid + "#" + pos);
     });
   }
   const text = textBlocks(msg.content);
@@ -134,11 +134,12 @@ function jsonLines(text: string): Record<string, unknown>[] {
   return out;
 }
 
-function tag(prompt: string, key: string): string {
+function tag(prompt: string, name: string): string {
   const first = (prompt.trim().split(LINE_SPLIT)[0] ?? "").trim();
   if (!first.startsWith("HAIKREW")) return "unknown";
-  const found = new RegExp(`\\b${key}=([\\w.-]+)`).exec(first);
-  return found ? found[1] : "unknown";
+  const word = first.split(/\s+/).find((w) => w.startsWith(name + "="));
+  const value = /^[\w.-]+/.exec(word ? word.slice(name.length + 1) : "");
+  return value ? value[0] : "unknown";
 }
 
 function verdict(text: string): string {
@@ -206,7 +207,7 @@ function fromRun(run: Run): Bucket {
 /** 'YYYY-MM' of the month `months` before `now` (UTC). */
 function monthsBefore(now: Date, months: number): string {
   const idx = now.getUTCFullYear() * 12 + now.getUTCMonth() - months;
-  return `${String(Math.floor(idx / 12)).padStart(4, "0")}-${String((idx % 12) + 1).padStart(2, "0")}`;
+  return String(Math.floor(idx / 12)).padStart(4, "0") + "-" + String((idx % 12) + 1).padStart(2, "0");
 }
 
 /** Append one run, then condense(). */
@@ -308,13 +309,13 @@ export function suggestions(state: LedgerState, rules: string[]): Suggestion[] {
     const fam = family(String(r.model));
     const next = fam === "haiku" ? "sonnet" : fam === "sonnet" ? "opus" : "";
     if (n < SUGGEST_MIN_RUNS || Number(r.pass_rate) >= SUGGEST_PASS_BELOW || job === "" || job === "unknown" || next === "") continue;
-    const selector = `job:${job}` + (lang && lang !== "unknown" ? `+lang:${lang}` : "");
+    const selector = "job:" + job + (lang && lang !== "unknown" ? "+lang:" + lang : "");
     if (rules.some((rule) => rule.slice(0, rule.lastIndexOf("=")) === selector)) continue;
     const pct = Math.round(Number(r.pass_rate) * 100);
-    const rule = `${selector}=${next}`;
+    const rule = selector + "=" + next;
     out.push({
       rule,
-      text: `${job} ${lang && lang !== "unknown" ? `${lang} ` : ""}on ${capitalize(fam)}: ${n} runs, ${pct}% pass; suggest ${rule}`,
+      text: job + " " + (lang && lang !== "unknown" ? lang + " " : "") + "on " + capitalize(fam) + ": " + n + " runs, " + pct + "% pass; suggest " + rule,
     });
   }
   return out;
