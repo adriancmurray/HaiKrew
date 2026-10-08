@@ -1,7 +1,7 @@
 /** Mod tests for the ledger: transcript parsing, condensing and the summary, on inline transcript text. */
 import { expect, test } from "claude-code/testing";
-import { addRun, condense, parseTranscriptText, summary, tokenTotals } from "../../src/mod/ledger.ts";
-import type { LedgerState, Run } from "../../src/mod/ledger.ts";
+import { addRun, condense, parseTranscriptText, suggestions, summary, tokenTotals } from "../../src/mod/ledger.ts";
+import type { Bucket, LedgerState, Run } from "../../src/mod/ledger.ts";
 import { defaults } from "../../src/schema.ts";
 import type { Settings } from "../../src/schema.ts";
 
@@ -82,4 +82,43 @@ test("tokenTotals sums tokens and runs per model across runs", () => {
   let state = addRun({ runs: [], buckets: [] }, { ...base, agent_id: "a1", model: "claude-haiku-5-5", tokens_in: 100, tokens_out: 10 } as never, settings);
   state = addRun(state, { ...base, agent_id: "a2", model: "claude-haiku-5-5", tokens_in: 100, tokens_out: 5 } as never, settings);
   expect(tokenTotals(state)).toEqual({ "claude-haiku-5-5": { tokens_in: 200, tokens_out: 15, runs: 2 } });
+});
+
+const group = (model: string, n: number, passes: number, lang = "rust"): Bucket => ({
+  period: "2026-10", model, agent_type: "haiku-coder", job: "implement", lang, n, sum_quality: 0, sumsq_quality: 0,
+  sum_tokens_in: 0, sum_tokens_out: 0, sum_duration: 0, passes,
+});
+const only = (...buckets: Bucket[]): LedgerState => ({ runs: [], buckets });
+
+test("suggestions need four runs and a pass rate under 60%", () => {
+  expect(suggestions(only(group("claude-haiku-5-5", 3, 0)), [])).toEqual([]);
+  expect(suggestions(only(group("claude-haiku-5-5", 4, 3)), [])).toEqual([]);
+  expect(suggestions(only(group("claude-haiku-5-5", 4, 2)), []).map((s) => s.rule))
+    .toEqual(["job:implement+lang:rust=sonnet"]);
+});
+
+test("a sonnet group suggests opus and an opus group suggests nothing", () => {
+  expect(suggestions(only(group("claude-sonnet-5", 4, 0)), []).map((s) => s.rule)).toEqual(["job:implement+lang:rust=opus"]);
+  expect(suggestions(only(group("claude-opus-5", 4, 0)), [])).toEqual([]);
+});
+
+test("an existing rule that starts with the selector suppresses the suggestion", () => {
+  expect(suggestions(only(group("claude-haiku-5-5", 4, 0)), ["job:implement+lang:rust=haiku"])).toEqual([]);
+  expect(suggestions(only(group("claude-haiku-5-5", 4, 0)), ["job:review=sonnet"])).toHaveLength(1);
+});
+
+test("suggestion text is exact and omits the lang word when lang is empty", () => {
+  expect(suggestions(only(group("claude-haiku-5-5", 4, 2)), [])).toEqual([{
+    rule: "job:implement+lang:rust=sonnet",
+    text: "implement rust on Haiku: 4 runs, 50% pass; suggest job:implement+lang:rust=sonnet",
+  }]);
+  expect(suggestions(only(group("claude-haiku-5-5", 4, 2, "")), [])[0].text)
+    .toBe("implement on Haiku: 4 runs, 50% pass; suggest job:implement=sonnet");
+});
+
+test("suggestions never change the state they read", () => {
+  const state = only(group("claude-haiku-5-5", 4, 0));
+  const before = JSON.stringify(state);
+  suggestions(state, []);
+  expect(JSON.stringify(state)).toBe(before);
 });

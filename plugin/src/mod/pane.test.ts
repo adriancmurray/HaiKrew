@@ -69,3 +69,19 @@ test("an invalid int shows its error and does not save", async (ctx: any, on: an
   expect(await drawnText(m)).toContain("must be between 100 and 20000");
   expect(h.store.has("settings")).toBe(false);
 });
+
+test("a suggested rule is added only on the second press", async (ctx: any, on: any) => {
+  const h = host(on);
+  const failing = { period: "2026-10", model: "claude-haiku-5-5", agent_type: "haiku-coder", job: "implement",
+    lang: "rust", n: 4, sum_quality: 0, sumsq_quality: 0, sum_tokens_in: 0, sum_tokens_out: 0, sum_duration: 0, passes: 0 };
+  h.store.set("ledger", { runs: [], buckets: [failing] });
+  const m = await open(ctx);
+  await m.press({ key: "tab-ledger" });
+  expect(await drawnText(m)).toContain("implement rust on Haiku: 4 runs, 0% pass; suggest job:implement+lang:rust=sonnet");
+  await m.press({ key: "suggest-0" });
+  expect(await drawnText(m)).toContain("Press again to add job:implement+lang:rust=sonnet");
+  expect(h.store.has("settings")).toBe(false);
+  await m.press({ key: "suggest-0" });
+  const rules = (h.store.get("settings") as { gate: { rules: string[] } }).gate.rules;
+  expect(rules[0]).toBe("job:implement+lang:rust=sonnet");
+});

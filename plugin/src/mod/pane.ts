@@ -7,8 +7,8 @@ import type { Field, Settings } from "../schema.ts";
 import { checkChanges, mergeChanges, settingsFrom } from "./config.ts";
 import { rowLine, snapshot } from "./crew.ts";
 import type { LiveAgent } from "./crew.ts";
-import { readState, summary, tokenTotals } from "./ledger.ts";
-import type { KeyStats, Run } from "./ledger.ts";
+import { readState, summary, suggestions, tokenTotals } from "./ledger.ts";
+import type { KeyStats, Run, Suggestion } from "./ledger.ts";
 import { packCells, scene, sceneSvg, SCENE_ROWS } from "./sprites.ts";
 
 const PANE = "haikrew";
@@ -37,7 +37,8 @@ const view: {
   errors: Record<string, string>;
   frame: number;
   cols: number;
-} = { tab: "crew", section: "gate", drafts: {}, errors: {}, frame: 0, cols: 80 };
+  armed: string;
+} = { tab: "crew", section: "gate", drafts: {}, errors: {}, frame: 0, cols: 80, armed: "" };
 
 /** Claude Code calls this once when the mod loads. Adds the /haikrew command at session start and draws its pane. */
 export function registerPane(on: (...args: unknown[]) => void): void {
@@ -207,7 +208,7 @@ function fieldControl($: Api, ui: Ui, id: string, section: string, key: string, 
       onSelect: (v: string) => apply($, id, section, key, v),
     });
   }
-  const shown = field.type === "list" ? (current as string[]).join(", ") : String(current);
+  const shown = field.type === "list" ? (current as string[]).join(`${listSep(field)} `) : String(current);
   return ui.Input({
     key: id, label: key, placeholder: field.type === "list" ? "comma, separated" : "", submitLabel: "Save",
     value: view.drafts[id] ?? shown,
@@ -231,8 +232,14 @@ function fieldControl($: Api, ui: Ui, id: string, section: string, key: string, 
 /** The typed value of an Input's text: a whole number for int (NaN when blank), items for list, else the text. */
 export function parseText(field: Field, text: string): unknown {
   if (field.type === "int") return text.trim() === "" ? NaN : Number(text.trim());
-  if (field.type === "list") return text.split(",").map((s) => s.trim()).filter((s) => s !== "");
+  if (field.type === "list") return text.split(listSep(field)).map((s) => s.trim()).filter((s) => s !== "");
   return text;
+}
+
+/** The separator between a list field's items: its `sep` when the schema sets one, else a comma. */
+function listSep(field: Field): string {
+  // ponytail: Field has no `sep` yet, so this reads a property the schema does not declare and yields ",".
+  return (field as { sep?: string }).sep ?? ",";
 }
 
 const LEDGER_WIDTHS = [10, 12, 8, 6, 16, 6, 10, 10, 8];
@@ -255,19 +262,51 @@ export function thousands(value: number): string {
 }
 
 async function ledgerTab($: Api, ui: Ui, cols: number): Promise<unknown[]> {
-  const { recent, by_key } = summary(readState(await $.store.get("ledger")));
+  const state = readState(await $.store.get("ledger"));
+  const { recent, by_key } = summary(state);
   if (recent.length === 0 && by_key.length === 0) {
     return [txt(ui, { dimColor: true }, "No agent runs recorded yet. Runs are added when a subagent finishes.")];
   }
+  const rules = (await loadSettings($)).gate.rules as string[];
   const header = row(["Model", "Job", "Lang", "N", "Quality", "Pass", "Tok in", "Tok out", "Secs"], LEDGER_WIDTHS);
   const lines = [header, ...by_key.map(ledgerRow)].map((l) => l.slice(0, cols));
   const runs = recent.slice(0, 10).map((run) => runLine(run).slice(0, cols));
   return [
     txt(ui, { bold: true }, "By model, job and language"),
     ...lines.map((l, i) => txt(ui, { bold: i === 0, dimColor: i === 0 }, l)),
+    ...suggestionRows($, ui, suggestions(state, rules), cols),
     txt(ui, { bold: true }, "Recent runs"),
     ...runs.map((l) => txt(ui, {}, l)),
   ];
+}
+
+/** A Suggestions heading, then each suggestion's line and its Add rule button. Nothing is added until pressed twice. */
+function suggestionRows($: Api, ui: Ui, list: Suggestion[], cols: number): unknown[] {
+  if (list.length === 0) return [];
+  return [
+    txt(ui, { bold: true }, "Suggestions"),
+    ...list.flatMap((s, i) => [
+      txt(ui, {}, s.text.slice(0, cols)),
+      ui.Button({
+        key: `suggest-${i}`, plain: true,
+        label: view.armed === s.rule ? `Press again to add ${s.rule}` : "Add rule",
+        onPress: () => addSuggestion($, s.rule),
+      }),
+    ]),
+  ];
+}
+
+/** The first press arms the rule; a second press on the same armed rule puts it first in the gate rules. */
+async function addSuggestion($: Api, rule: string): Promise<void> {
+  if (view.armed !== rule) {
+    view.armed = rule;
+    $.ui.invalidate("ui.render");
+    return;
+  }
+  const current = (await loadSettings($)).gate.rules as string[];
+  view.armed = "";
+  await saveSettings($, { gate: { rules: [rule, ...current] } });
+  $.ui.invalidate("ui.render");
 }
 
 function ledgerRow(r: KeyStats): string {

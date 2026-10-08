@@ -286,6 +286,44 @@ function keyStats(b: Bucket): KeyStats {
   };
 }
 
+/** A gate rule the pane offers to add, with the line that explains it. */
+export type Suggestion = { rule: string; text: string };
+
+const SUGGEST_MIN_RUNS = 4;
+const SUGGEST_PASS_BELOW = 0.6;
+
+/** 'haiku', 'sonnet' or 'opus' when the model name contains one, else ''. */
+function family(model: string): string {
+  return ["haiku", "sonnet", "opus"].find((f) => model.toLowerCase().includes(f)) ?? "";
+}
+
+/** Rules that move a group up one model when it passes poorly: Haiku to Sonnet, Sonnet to Opus. Groups with fewer
+ * than four runs are not judged. A rule is skipped when a current rule already starts with its selector. Writes nothing. */
+export function suggestions(state: LedgerState, rules: string[]): Suggestion[] {
+  const out: Suggestion[] = [];
+  for (const r of summary(state).by_key) {
+    const n = Number(r.n);
+    const job = String(r.job);
+    const lang = String(r.lang);
+    const fam = family(String(r.model));
+    const next = fam === "haiku" ? "sonnet" : fam === "sonnet" ? "opus" : "";
+    if (n < SUGGEST_MIN_RUNS || Number(r.pass_rate) >= SUGGEST_PASS_BELOW || job === "" || next === "") continue;
+    const selector = `job:${job}` + (lang ? `+lang:${lang}` : "");
+    if (rules.some((rule) => rule.startsWith(selector))) continue;
+    const pct = Math.round(Number(r.pass_rate) * 100);
+    const rule = `${selector}=${next}`;
+    out.push({
+      rule,
+      text: `${job} ${lang ? `${lang} ` : ""}on ${capitalize(fam)}: ${n} runs, ${pct}% pass; suggest ${rule}`,
+    });
+  }
+  return out;
+}
+
+function capitalize(word: string): string {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
 /** The stored ledger state, or an empty one when the stored value is not a ledger. */
 export function readState(value: unknown): LedgerState {
   if (isObject(value) && Array.isArray(value.runs) && Array.isArray(value.buckets)) {
