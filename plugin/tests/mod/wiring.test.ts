@@ -66,3 +66,24 @@ test("with the gate on, the main conversation's CLAUDE.md text carries the deleg
   await ctx.prompt.context({ blocks: [{ name: "claudeMd", text: "Mine." }], agentId: "w1" });
   expect(seen.context.blocks[0].text).toBe("Mine.");
 });
+
+test("every agent tool answers with text, the shape a tool.call result must have", async (ctx: any, on: any) => {
+  const stored: Record<string, any> = { settings: { agents: { control: "change" }, gate: { rules: ["job:review=sonnet"] } } };
+  on("store.get", async (_$: any, e: any) => ({ value: stored[e.key] }));
+  on("store.set", async (_$: any, e: any) => { stored[e.key] = e.value; return { value: undefined }; });
+  on("ui.toast", async () => ({ value: undefined }));
+  on("ui.invalidate", async () => ({ value: undefined }));
+  const calls: [string, Record<string, unknown>][] = [
+    ["status", {}],
+    ["set_setting", { section: "gate", key: "default_model", value: "sonnet" }],
+    ["add_rule", { conditions: [{ kind: "job", value: "docs" }], model: "haiku" }],
+    ["remove_rule", { rule: "job:review=sonnet" }],
+  ];
+  for (const [name, input] of calls) {
+    const out = await ctx.tool.call({ tool: `mcp__haikrew__${name}`, ...input });
+    const result = out?.result ?? out;
+    expect(typeof result).toBe("string");
+  }
+  expect(JSON.parse((await ctx.tool.call({ tool: "mcp__haikrew__status" })).result ?? "{}").settings.gate.default_model).toBe("sonnet");
+  expect(stored.settings.gate.rules).toEqual(["job:docs=haiku"]);
+});

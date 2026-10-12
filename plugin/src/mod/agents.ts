@@ -15,7 +15,7 @@ import type { LedgerState } from "./ledger.ts";
 import { buildRule, KINDS, MODELS, EFFORTS, ruleSentence } from "./rules.ts";
 
 type Api = Record<string, any>;
-type Answer = { ok: true; result: unknown; change?: string; settings?: Settings } | { ok: false; reason: string };
+type Answer = { ok: true; change: string; settings: Settings } | { ok: false; reason: string };
 
 const KIND_KEYS = KINDS.map((k) => k.key);
 
@@ -96,7 +96,7 @@ function change(settings: Settings, changes: Record<string, Record<string, unkno
   const errors = checkChanges(changes);
   if (errors.length) return { ok: false, reason: errors.join("; ") };
   const next = mergeChanges(settingsFrom(settings), changes);
-  return { ok: true, result: { done: what }, change: what, settings: next };
+  return { ok: true, change: what, settings: next };
 }
 
 /** The answer to one change tool's input, from the current settings. Pure. */
@@ -139,14 +139,15 @@ export function registerAgentTools(on: (...args: unknown[]) => void, plugin: str
       if (refusal) return { deny: refusal };
       if (spec.name === "status") {
         const working = snapshot([], Date.now()).working;
-        return { result: statusReport(settings, readState(await $.store.get("ledger")), working) };
+        // A tool.call result is text or content blocks, never a bare object: the report goes out as JSON text.
+        return { result: JSON.stringify(statusReport(settings, readState(await $.store.get("ledger")), working), null, 2) };
       }
       const reply = answer(spec.name, e, settings);
       if (!reply.ok) return { deny: reply.reason };
       await $.store.set("settings", reply.settings);
       $.ui.toast(`HaiKrew: an agent ${reply.change}`);
       $.ui.invalidate("ui.render");
-      return { result: reply.result };
+      return { result: `Done: ${reply.change}.` };
     });
   }
 }
