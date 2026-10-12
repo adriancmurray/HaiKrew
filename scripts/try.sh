@@ -6,6 +6,7 @@
 # There is no separate development copy.
 #
 # Usage: scripts/try.sh            (from a worktree or the main checkout, with the work committed)
+#        scripts/try.sh --keep-version   (as scripts/release.sh calls it: install the version as committed)
 set -eu
 
 here=$(git rev-parse --show-toplevel)
@@ -28,15 +29,19 @@ tail -1 "$log"
 if ! node --test tests/squeeze.spec.ts > "$log" 2>&1; then tail -20 "$log"; exit 1; fi
 rm -f "$log"
 
-# The next dev version: 0.6.2 -> 0.6.3-dev.1, 0.6.3-dev.1 -> 0.6.3-dev.2. scripts/release.sh sets the final one.
+# The next dev version: 0.6.2 -> 0.6.3-dev.1, 0.6.3-dev.1 -> 0.6.3-dev.2. scripts/release.sh sets the final one
+# and passes --keep-version, so a release installs and pushes exactly the version it set.
 manifest=plugin/.claude-plugin/plugin.json
 current=$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' "$manifest")
-case $current in
-  *-dev.*) next="${current%-dev.*}-dev.$((${current##*-dev.} + 1))" ;;
-  *) next=$(echo "$current" | awk -F. '{print $1 "." $2 "." $3 + 1}')-dev.1 ;;
-esac
-sed -i '' "s/\"version\": \"$current\"/\"version\": \"$next\"/" "$manifest"
-git commit -q -m "try $next" -- "$manifest"
+next=$current
+if [ "${1:-}" != "--keep-version" ]; then
+  case $current in
+    *-dev.*) next="${current%-dev.*}-dev.$((${current##*-dev.} + 1))" ;;
+    *) next=$(echo "$current" | awk -F. '{print $1 "." $2 "." $3 + 1}')-dev.1 ;;
+  esac
+  sed -i '' "s/\"version\": \"$current\"/\"version\": \"$next\"/" "$manifest"
+  git commit -q -m "try $next" -- "$manifest"
+fi
 
 if [ "$here" != "$main" ]; then
   if [ -n "$(git -C "$main" status --porcelain)" ]; then echo "the main checkout has local changes: $main" >&2; exit 1; fi

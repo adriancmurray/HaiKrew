@@ -24,6 +24,6 @@ if git grep --cached -nE "$private" -- plugin README.md scripts .claude-plugin '
 fi
 git diff --cached --check
 git commit -q -F "$message"
-"$here/scripts/try.sh"
+"$here/scripts/try.sh" --keep-version
 git -C "$main" push -q origin main
 echo "released $(git -C "$main" log --oneline -1 origin/main)"
