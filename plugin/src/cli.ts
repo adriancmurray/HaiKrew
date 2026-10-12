@@ -2,15 +2,16 @@
  * Argument dispatch for bin/haikrew.mjs. Each subcommand calls one module function.
  * Hooks, the ledger and the panel run inside the Claude Code mod (hooks/register.ts), not here.
  */
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { defaults, validate } from "./schema.ts";
 import { listMarkdown, splitLines } from "./squeeze.ts";
 
 const USAGE = "usage: haikrew squeeze [--max-lines N] [--wrap PREFIX] -- <cmd...> | verify | " +
-  "patterns check [--max-files N] [--max-lines N]";
-const PATTERNS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "patterns");
+  "patterns check [--dir PATH] [--max-files N] [--max-lines N]";
+/** The `patterns check` caps when no flag overrides them. */
+const PATTERNS_MAX_FILES = 20;
+const PATTERNS_MAX_LINES = 40;
 
 /** Dispatch argv to squeeze/verify/patterns. Resolves to the exit code. */
 export async function main(argv: string[]): Promise<number> {
@@ -30,18 +31,25 @@ export async function main(argv: string[]): Promise<number> {
   return usage();
 }
 
-/** Count the pattern files and their lines against the caps (schema defaults, or the flags). Exit 1 on any violation. */
+/**
+ * Count the pattern files in --dir (default ./patterns in the working directory) and their lines against the caps.
+ * Exit 2 when the folder is missing or is not a directory, 1 on any violation, 0 otherwise.
+ */
 function patternsCheck(rest: string[]): number {
-  const flags = parseIntFlags(rest, { "max-files": defaults().patterns.max_files as number,
-    "max-lines": defaults().patterns.max_lines as number });
+  const flags = parseFlags(rest, { dir: "patterns", "max-files": PATTERNS_MAX_FILES, "max-lines": PATTERNS_MAX_LINES });
   if (!flags) return badArgs("patterns check");
-  const maxFiles = flags["max-files"];
-  const maxLines = flags["max-lines"];
-  const files = listMarkdown(PATTERNS_DIR);
+  const dir = resolve(process.cwd(), flags.dir as string);
+  if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+    process.stderr.write(`patterns: no patterns folder at ${dir} (pass --dir)\n`);
+    return 2;
+  }
+  const maxFiles = flags["max-files"] as number;
+  const maxLines = flags["max-lines"] as number;
+  const files = listMarkdown(dir);
   const problems: string[] = [];
   if (files.length > maxFiles) problems.push(`${files.length} pattern files, most allowed is ${maxFiles}`);
   for (const file of files) {
-    const lines = splitLines(readFileSync(join(PATTERNS_DIR, file), "utf8")).length;
+    const lines = splitLines(readFileSync(join(dir, file), "utf8")).length;
     if (lines > maxLines) problems.push(`${file}: ${lines} lines, most allowed is ${maxLines}`);
   }
   for (const problem of problems) process.stdout.write(`violation: ${problem}\n`);
@@ -76,15 +84,23 @@ function parseSqueezeArgs(rest: string[]): { maxLines: number; wrap: string; arg
   return argv.length === 0 ? null : { maxLines, wrap, argv };
 }
 
-/** Parse `--name N` or `--name=N` integer flags over defaults. Null when a flag is unknown or not an integer. */
-function parseIntFlags(rest: string[], defaults: Record<string, number>): Record<string, number> | null {
-  const out = { ...defaults };
+/**
+ * Parse `--name VALUE` or `--name=VALUE` flags over fallbacks. A number fallback takes a whole number, a text
+ * fallback takes any non-empty text. Null when a flag is unknown, missing its value, or the value is bad.
+ */
+function parseFlags(rest: string[], fallbacks: Record<string, number | string>): Record<string, number | string> | null {
+  const out = { ...fallbacks };
   for (let i = 0; i < rest.length; i++) {
     const match = /^--([a-z-]+)(?:=(.*))?$/.exec(rest[i]);
     if (!match || !Object.hasOwn(out, match[1])) return null;
     const raw = match[2] ?? rest[++i];
-    if (raw === undefined || !/^-?\d+$/.test(raw)) return null;
-    out[match[1]] = Number(raw);
+    if (!raw) return null;
+    if (typeof fallbacks[match[1]] === "number") {
+      if (!/^-?\d+$/.test(raw)) return null;
+      out[match[1]] = Number(raw);
+    } else {
+      out[match[1]] = raw;
+    }
   }
   return out;
 }

@@ -114,9 +114,10 @@ export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: 
       ui.Box({ position: "absolute", top: -top, left: cardLeft(left) - left, width: Math.min(cardWidth, orbLeft - cardLeft(left)), height: CARD_ROWS,
         display: "none", hover: { display: "flex" }, flexDirection: "column", paddingX: 1, backgroundColor: dark ? "#2b2a27" : "#f1efe8",
         children: [
-          hrow(ui, { columnGap: 1, justifyContent: "space-between" }, [
+          // The transcript button comes first, as a small icon, so a long first line can never push it out of the card.
+          hrow(ui, { columnGap: 1, alignItems: "center" }, [
+            row ? ui.Button({ key: `band-transcript-${spot.id}`, label: "≡", variant: "secondary", onPress: () => opts.openAgent(row) }) : null,
             hrow(ui, { flexShrink: 1 }, [txt(ui, { bold: true, wrap: "truncate-end" }, lines[0])]),
-            row ? ui.Button({ key: `band-transcript-${spot.id}`, label: "Transcript ↗", variant: "secondary", onPress: () => opts.openAgent(row) }) : null,
           ].filter((x) => x !== null)),
           txt(ui, { dimColor: true, wrap: "truncate-end" }, lines[1]),
         ] }),
@@ -186,9 +187,10 @@ const ACTIVITY_WORDS: Record<Activity, string> = {
 function rowCard(r: Row | undefined, message: string | undefined): [string, string] {
   if (!r) return ["", ""];
   const doing = r.over ? "past its token limit" : ACTIVITY_WORDS[activityOf(r)];
-  const head = [r.name, r.model && r.model !== "unknown" ? modelName(r.model) : "", doing, fmtElapsed(r.elapsedMs),
-    r.tokens ? `${compact(r.tokens)} tokens` : ""];
-  const body = r.state === "working" && message ? `“${message}”` : r.task;
+  // Line one stays short (who and what); time, tokens and the latest line go on line two.
+  const head = [r.name, r.model && r.model !== "unknown" ? modelName(r.model) : "", doing];
+  const said = r.state === "working" && message ? `“${message}”` : r.task;
+  const body = [fmtElapsed(r.elapsedMs), r.tokens ? `${compact(r.tokens)} tokens` : "", said].filter(Boolean).join(" · ");
   return [head.filter(Boolean).join(" · "), body || " "];
 }
 

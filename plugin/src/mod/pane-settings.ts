@@ -28,7 +28,7 @@ export const GROUPS = [
   { id: "routing", label: "Routing", sections: ["gate"] },
   { id: "guards", label: "Guards", sections: ["squeeze", "read_guard", "checks"] },
   { id: "widget", label: "Prompt widget", sections: ["band"] },
-  { id: "general", label: "General", sections: ["pane", "agents", "ledger", "patterns"] },
+  { id: "general", label: "General", sections: ["pane", "agents", "ledger"] },
 ] as const;
 
 export function settingsTab(ui: Ui, act: Actions, settings: Settings, cols: number): unknown[] {

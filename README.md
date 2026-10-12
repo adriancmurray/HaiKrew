@@ -75,6 +75,14 @@ Install from GitHub:
 
 The marketplace is named `haikrew` and lists one plugin, `haikrew`, whose source is `./plugin` in `.claude-plugin/marketplace.json`.
 
+## CLI
+
+`bin/haikrew.mjs` runs anywhere Node 22.18 or later runs:
+
+- `squeeze [--max-lines N] [--wrap PREFIX] -- <cmd...>`: runs a command, prints a short verdict and keeps the full log on disk.
+- `verify`: runs `.haikrew/verify` if present, or an inferred build and test, and prints one `VERDICT:` line.
+- `patterns check [--dir PATH] [--max-files N] [--max-lines N]`: counts the `.md` files in a patterns folder and their lines. The folder is `--dir`, resolved against the current directory, or `./patterns` by default. The caps default to 20 files and 40 lines. Exit 0 within caps, 1 with one `violation:` line per problem, 2 when the folder is missing or is not a directory (`patterns: no patterns folder at <path> (pass --dir)` on stderr). An empty folder passes.
+
 ## Settings
 
 Settings are kept in the mod store (`$.store`, key `settings`), not in a file, and apply to every session. Edit them in `/haikrew`: rules and instructions are built there as sentences from dropdowns and buttons, default effort is a row of buttons per model, and the squeeze patterns are named switches; the stored values keep the formats below. Defaults come from `plugin/src/schema.ts`. Values are validated on save.
@@ -105,8 +113,6 @@ Settings are kept in the mod store (`$.store`, key `settings`), not in a file, a
 | `ledger.enabled` | `true` | Record finished subagents. |
 | `ledger.raw_limit` | `200` | Newest rows kept in full; older rows fold into monthly averages. |
 | `ledger.yearly_after_months` | `12` | Monthly averages older than this fold into yearly ones. |
-| `patterns.max_files` | `20` | Most pattern files allowed. Used by `patterns check` (or `--max-files`). |
-| `patterns.max_lines` | `40` | Most lines per pattern file. Used by `patterns check` (or `--max-lines`). |
 | `pane.open_on_start` | `false` | Open the `/haikrew` pane by itself whenever a session starts. |
 | `pane.time_style` | `"relative"` | How limit resets and past runs are shown: `relative` (in 2 h 14 min, 3 h ago), `clock` (at 6:00 PM, your time zone) or `both`. |
 | `band.show` | `true` | In the desktop app, show the animated crew in the band above the prompt. |

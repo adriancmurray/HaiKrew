@@ -110,14 +110,6 @@ export const SCHEMA: Record<string, Section> = {
         help: "Monthly averages older than this fold into yearly ones." },
     },
   },
-  patterns: {
-    title: "Patterns",
-    help: "Short reusable implementation patterns agents read. Capped so they stay lean.",
-    fields: {
-      max_files: { label: "Most files", type: "int", default: 20, min: 1, max: 200, help: "Most pattern files allowed." },
-      max_lines: { label: "Lines per file", type: "int", default: 40, min: 5, max: 400, help: "Most lines per pattern file." },
-    },
-  },
   agents: {
     title: "Agent control",
     help: "Let Claude and its agents use HaiKrew's tools: read status and the ledger, and, if allowed, change settings and rules. " +
