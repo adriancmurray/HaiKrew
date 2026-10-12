@@ -48,7 +48,7 @@ export function groupSummary(id: string, s: Settings): string {
   const onOff = (v: unknown): string => (v ? "on" : "off");
   if (id === "routing") {
     const n = (s.gate.rules as string[]).length;
-    return `Gate ${onOff(s.gate.enabled)} · agents start on ${title(String(s.gate.default_model))} · ${n} ${n === 1 ? "rule" : "rules"}`;
+    return `Gate ${onOff(s.gate.enabled)}${s.gate.enabled && s.gate.delegate ? " · crew preferred" : ""} · agents start on ${title(String(s.gate.default_model))} · ${n} ${n === 1 ? "rule" : "rules"}`;
   }
   if (id === "guards") return `Output squeeze ${onOff(s.squeeze.enabled)} · big-file guard ${onOff(s.read_guard.enabled)} · git hook guard ${onOff(s.checks.guard_hooks)}`;
   return `Ledger ${onOff(s.ledger.enabled)} · agent tools ${s.agents.control === "off" ? "off" : s.agents.control === "read" ? "look only" : "look and change"}`;

@@ -54,3 +54,15 @@ test("a git hook bypass is refused before it runs", async (ctx: any, on: any) =>
   const out = await ctx.tool.call({ tool: "Bash", command: "git commit --no-verify -m x" });
   expect(JSON.stringify(out)).toContain("skip git hooks");
 });
+
+test("with the gate on, the main conversation's CLAUDE.md text carries the delegation note; subagents' does not", async (ctx: any, on: any) => {
+  const seen: Record<string, any> = {};
+  host(on, seen);
+  on("prompt.context", async (_$: any, e: any) => { seen.context = e; return e; });
+  await ctx.prompt.context({ blocks: [{ name: "claudeMd", text: "Mine." }] });
+  const text = seen.context.blocks[0].text;
+  expect(text.startsWith("Mine.\n\n# HaiKrew: delegate to the crew")).toBe(true);
+  expect(text).toContain("`job:review=sonnet@high`");
+  await ctx.prompt.context({ blocks: [{ name: "claudeMd", text: "Mine." }], agentId: "w1" });
+  expect(seen.context.blocks[0].text).toBe("Mine.");
+});

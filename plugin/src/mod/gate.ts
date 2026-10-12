@@ -10,6 +10,7 @@ import type { SelectCtx } from "./select.ts";
 /** The `gate` section of settings. */
 export type GateSettings = {
   enabled: boolean;
+  delegate?: boolean;
   default_model: string;
   allow_opus: boolean;
   pinned_types: string[];

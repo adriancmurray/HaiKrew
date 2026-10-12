@@ -17,6 +17,8 @@ import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
 import { noteSpawn, noteStop, noteTokens, noteToolCall } from "../src/mod/crew.ts";
 import { addRun, readState, runFromStop } from "../src/mod/ledger.ts";
 import { registerPane } from "../src/mod/pane.ts";
+import { delegationNote, withNote } from "../src/mod/delegate.ts";
+import type { DelegateSettings } from "../src/mod/delegate.ts";
 import { registerAgentTools } from "../src/mod/agents.ts";
 import type { Settings } from "../src/schema.ts";
 
@@ -39,6 +41,14 @@ export function register(on) {
       }
       return reply;
     }, cwd);
+  });
+
+  // The main conversation's context: while the gate is on, the user's standing request to delegate (see delegate.ts).
+  // Subagents are left alone, so a haiku-coder is not told to hand its work on again.
+  on("prompt.context", async ($, e, next) => {
+    if (e.agentId) return next(e);
+    const note = delegationNote((await loadSettings($)).gate as unknown as DelegateSettings);
+    return next(note ? { ...e, blocks: withNote(e.blocks, note) } : e);
   });
 
   // Subagent steps only: stepEffort leaves the main loop (no agentId) and untracked agents unchanged.

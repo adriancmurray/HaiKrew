@@ -25,6 +25,9 @@ export const SCHEMA: Record<string, Section> = {
     fields: {
       enabled: { label: "Gate on", type: "bool", default: false,
         help: "Turn the gate on. Off by default: until you turn it on, agent launches pass through unchanged." },
+      delegate: { label: "Prefer the crew", type: "bool", default: true,
+        help: "While the gate is on, ask Claude each session to hand spec-able work to haiku-coder and haiku-scout instead of doing it itself. " +
+          "Adds a short note, built from these gate settings, to the CLAUDE.md text Claude reads." },
       default_model: { label: "Default model", type: "enum", choices: ["haiku", "sonnet", "opus"], default: "haiku",
         help: "Model given to an agent launched without one." },
       allow_opus: { label: "Allow Opus", type: "bool", default: false,

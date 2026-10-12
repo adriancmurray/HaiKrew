@@ -1,6 +1,6 @@
 ---
 name: crew-overseer
-description: Overseer workflow for getting code written by cheap haiku-coder subagents while the main model only specs, dispatches and verifies. Use whenever delegating implementation work to a repo with a verify command, instead of launching default (Opus) agents.
+description: Overseer workflow for getting code written by cheap haiku-coder subagents while the main model only specs, dispatches and verifies. Use at the start of any task that means writing or changing more than a few lines of code (a feature, a module, a refactor, tests, a script, an asset pipeline), whether or not the repo has a verify command, and whenever launching agents, instead of doing it all inline or launching default (Opus) agents.
 ---
 
 # Haiku crew: Opus plans, Haiku writes, tools verify
@@ -21,7 +21,7 @@ Never launch an agent without `subagent_type: "haiku-coder"` or an explicit `mod
 A good spec makes Haiku's job mechanical. Each one fits on one screen and contains:
 1. **Where:** the worktree path (a `git worktree add` for the branch, so the agent never touches the main checkout).
 2. **What:** files to create or edit; the exact public signatures, types and Operation names; the behaviour in numbered rules.
-3. **Done when:** the named tests pass under `haikrew verify`. Prefer writing the tests (or the list of test cases with expected results) yourself, then letting Haiku implement against them.
+3. **Done when:** the named tests pass under `haikrew verify` (with no verify command: one runnable check you name, such as `node --check` plus a small assert script). Prefer writing the tests (or the list of test cases with expected results) yourself, then letting Haiku implement against them.
 4. **Out of scope:** what not to touch.
 5. **Commit:** whether to commit on the branch.
 
