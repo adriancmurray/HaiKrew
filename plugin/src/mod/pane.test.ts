@@ -3,6 +3,7 @@
  * list entries are added, moved and removed (twice pressed), and the ledger shows its per-model rows.
  */
 import { test, expect } from "claude-code/testing";
+import { cachedLine } from "./pane.ts";
 
 type Host = { store: Map<string, unknown>; opened: string[] };
 
@@ -36,6 +37,17 @@ async function open(ctx: any): Promise<any> {
 async function drawnText(m: any): Promise<string> {
   return JSON.stringify(await m.drawn({}));
 }
+
+test("an agent's latest line is read again only once its memo is 10 seconds old", async () => {
+  const memo = new Map<string, { at: number; line: string }>();
+  let reads = 0;
+  const read = async (): Promise<string> => `line ${++reads}`;
+  expect(await cachedLine(memo, "a1", 1000, read)).toBe("line 1");
+  expect(await cachedLine(memo, "a1", 10_999, read)).toBe("line 1");
+  expect(reads).toBe(1);
+  expect(await cachedLine(memo, "a1", 11_000, read)).toBe("line 2");
+  expect(reads).toBe(2);
+});
 
 test("the /haikrew command opens the pane", async (ctx: any, on: any) => {
   const h = host(on);

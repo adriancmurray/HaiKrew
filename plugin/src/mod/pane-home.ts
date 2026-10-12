@@ -134,13 +134,15 @@ export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: 
   return ui.Box({ key: "crew-band", flexDirection: "column", height: rows, overflow: "hidden", children: [svg, ...targets, opener] });
 }
 
-/** The last band drawing made, with the key it was made for. */
+/** The last band drawing made, unanchored, with the key it was made for. */
 let bandCache: { key: string; scene: BandScene } | null = null;
 
 /**
  * The band's drawing for this crew and width. The key is what the drawing shows: the time of day, the season, the moon
  * phase to two decimals, the band's settings (scenery included), and each bot's model and act. A redraw that shows the
- * same thing hands the app the same SVG, so its loops keep their place; a new key draws and anchors a new drawing at `now`.
+ * same thing reuses the drawing, re-anchored to its own clock. The anchor is applied on every call, not once at the
+ * draw: Chromium restarts an SVG image's animations whenever its source is set, so a source anchored at an old clock
+ * would replay from that moment.
  */
 function bandDrawing(crew: Crew, width: number, opts: BandOpts): BandScene {
   const look = bandLook(opts.band, opts.now);
@@ -149,10 +151,8 @@ function bandDrawing(crew: Crew, width: number, opts: BandOpts): BandScene {
     width, time: look.time, season: look.season, phase: Math.round(look.phase * 100) / 100, band: opts.band,
     lead: [leadAct(lead), modelFamily(lead.model)], rows: crew.rows.map((r) => [r.id, rowAct(r), modelFamily(r.model)]),
   });
-  if (bandCache && bandCache.key === key) return bandCache.scene;
-  const scene = bandScene(crew, { width, band: opts.band, now: opts.now });
-  bandCache = { key, scene: { ...scene, svg: anchorAnimations(scene.svg, opts.now) } };
-  return bandCache.scene;
+  if (!bandCache || bandCache.key !== key) bandCache = { key, scene: bandScene(crew, { width, band: opts.band, now: opts.now }) };
+  return { ...bandCache.scene, svg: anchorAnimations(bandCache.scene.svg, opts.now) };
 }
 
 /**

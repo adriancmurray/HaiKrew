@@ -1,8 +1,11 @@
-/** The band's scene source: reused while what it draws holds, so a redraw does not restart its loops. */
+/** The band's scene source: its drawing is reused while what it draws holds, and anchored to each redraw's clock. */
 import { expect, test } from "claude-code/testing";
 import type { Crew, Row } from "../../src/mod/crew.ts";
 import { crewBand } from "../../src/mod/pane-home.ts";
+import { bandScene } from "../../src/mod/band/scene.ts";
+import { anchorAnimations } from "../../src/mod/svg.ts";
 import type { Settings } from "../../src/schema.ts";
+import { pxOf } from "../../src/mod/ui.ts";
 import type { Ui } from "../../src/mod/ui.ts";
 
 const BAND = { show: true, sky: "live", scenery: "mountains", season: "auto", clouds: true, headwear: "crown", haiku_color: "#9b7fc7", sonnet_color: "#d97757", opus_color: "#c9963f" } as Settings["band"];
@@ -25,11 +28,23 @@ function sourceAt(now: number, rows: Row[], band: Settings["band"] = BAND): stri
   return out.children[0]?.source ?? "";
 }
 
-test("a redraw in the same quarter hour with the same crew hands over the same source, anchored", () => {
+const WITHOUT_BEGIN = / begin="[^"]*"/g;
+
+test("a redraw in the same quarter hour reuses the drawing, and only the loops' begin offsets move", () => {
   const rows = [row("band-cache-a")];
-  const first = sourceAt(MORNING, rows);
-  expect(first).toMatch(/ begin="-?\d+\.\d{3}s"/);
-  expect(sourceAt(LATER, rows)).toBe(first);
+  const morning = sourceAt(MORNING, rows);
+  expect(morning).toMatch(/ begin="-?\d+\.\d{3}s"/);
+  const later = sourceAt(LATER, rows);
+  expect(later.replace(WITHOUT_BEGIN, "")).toBe(morning.replace(WITHOUT_BEGIN, ""));
+  expect(later).not.toBe(morning);
+});
+
+test("each redraw's source is the cached drawing anchored to that redraw's clock", () => {
+  const rows = [row("band-cache-e")];
+  const morning = sourceAt(MORNING, rows);
+  const base = bandScene(crew(rows), { width: pxOf(80), band: BAND, now: MORNING }).svg;
+  expect(morning).toBe(anchorAnimations(base, MORNING));
+  expect(sourceAt(LATER, rows)).toBe(anchorAnimations(base, LATER));
 });
 
 test("a row changing state or activity draws a new source", () => {

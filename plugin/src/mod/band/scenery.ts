@@ -65,6 +65,11 @@ const PUFFS: [number, number, number][][] = [
   [[0, 0, 7], [9, -3, 9], [20, 0, 7], [-8, 2, 5]],
   [[0, 1, 6], [7, -2, 8], [16, 1, 6], [25, 2, 4]],
 ];
+// Past this width the scenery's counts stop growing: buildings and trees widen instead, so the markup stays near its
+// size at this width and the band's drawing stays under the Svg source limit at any width.
+// ponytail: past this width the city's windows look stretched, not redrawn. The upgrade is a second set of buildings
+// drawn at the wider width, which costs markup in proportion to the width.
+const DETAIL_WIDTH = 1200;
 const SUN_Y: Record<"dawn" | "day" | "dusk", number> = { dawn: 40, day: 22, dusk: 42 };
 const SUN_COL: Record<"dawn" | "day" | "dusk", string> = { dawn: "#ffd2a0", day: "#fff2bf", dusk: "#ffb27c" };
 const CLOUD_COL: Record<TimeOfDay, string> = { dawn: "#f6c3b0", day: "#ffffff", dusk: "#f2a58c", night: "#6c7ba6" };
@@ -109,7 +114,9 @@ function forestLayers(ctx: Ctx): Layers {
   const { seed, cols, width } = ctx;
   const hills = ridgePts(seed, 54, 16, 160, 1, width);
   const crown: Pt[] = [];
-  for (let i = 0, x = -7; x <= width + 7; i++, x += 7) crown.push([x, yAt(hills, x) - 1 - 5 * seeded(seed + 1, i)]);
+  // The crown's points are spaced wider past DETAIL_WIDTH, so their number stops growing with the band.
+  const step = 7 * Math.max(1, width / DETAIL_WIDTH);
+  for (let i = 0, x = -7; x <= width + 7; i++, x += step) crown.push([x, yAt(hills, x) - 1 - 5 * seeded(seed + 1, i)]);
   const mid = ridgePts(seed + 2, 60, 10, 200, 1, width);
   const near = ridgePts(seed + 4, 70, 6, 240, 1, width);
   const jit = stream(seed + 6);
@@ -128,13 +135,16 @@ function forestLayers(ctx: Ctx): Layers {
 /** City: a hazy far skyline, mid towers with window grids and one tall tower, and low near rooftops with lamp posts. */
 function cityLayers(ctx: Ctx): Layers {
   const { seed, cols, width } = ctx;
-  const far = boxes(seed + 1, 62, 8, 26, 5, 10, width);
-  const mid = boxes(seed + 2, H, 22, 52, 10, 22, width);
-  const near = boxes(seed + 3, GROUND, 4, 10, 9, 16, width);
+  // Past DETAIL_WIDTH the skylines are drawn at that width and stretched across the rest, so their count stops growing.
+  const base = Math.min(width, DETAIL_WIDTH), k = width / base, inner: Ctx = { ...ctx, width: base };
+  const far = boxes(seed + 1, 62, 8, 26, 5, 10, base);
+  const mid = boxes(seed + 2, H, 22, 52, 10, 22, base);
+  const near = boxes(seed + 3, GROUND, 4, 10, 9, 16, base);
+  const stretched = (svg: string): string => (k > 1 ? `<g transform="scale(${k} 1)">${svg}</g>` : svg);
   return [
-    path(cols[0], skyline(far)),
-    path(cols[1], skyline(mid)) + windows(ctx, mid, seed + 4) + tower(cols[1], width),
-    path(cols[2], skyline(near)) + lamps(ctx, seed + 5),
+    stretched(path(cols[0], skyline(far))),
+    stretched(path(cols[1], skyline(mid)) + windows(inner, mid, seed + 4) + tower(cols[1], base)),
+    stretched(path(cols[2], skyline(near))) + lamps(ctx, seed + 5),
   ];
 }
 

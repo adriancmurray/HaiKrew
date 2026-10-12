@@ -1,5 +1,5 @@
 /**
- * Shared constants and helpers for the band's drawings: the canvas size, model colours, colour mixing, seeded
+ * Shared constants and helpers for the band's drawings: the canvas size, colour mixing, seeded
  * randomness, sky palettes, the moon's phase and the per-call id maker. Pure: every drawing returns a string and
  * touches no DOM.
  */
@@ -10,11 +10,6 @@ export const W = 1080;
 export const H = 81;
 /** y of the ground line in scene pixels. */
 export const GROUND = 72;
-
-/** A model family, which the band colours bots by. */
-export type Model = "haiku" | "sonnet" | "opus";
-/** The bot colour for each model family. */
-export const MODEL: Record<Model, string> = { haiku: "#9b7fc7", sonnet: "#4f9c98", opus: "#d97757" };
 
 /** A time of day for the sky and the scenery. */
 export type TimeOfDay = "dawn" | "day" | "dusk" | "night";

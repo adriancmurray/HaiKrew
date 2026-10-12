@@ -100,3 +100,16 @@ test("a subagent's tokens add up step by step and cross the warning once", () =>
   const row = snapshot([], 10).rows.find((r) => r.id === "t1");
   expect(row).toMatchObject({ tokens: 1500, over: true });
 });
+
+test("a finished subagent that shows activity again is working again, whether by a tool call or by tokens", () => {
+  resetCrew();
+  noteSpawn({ subagentType: "haiku-coder" }, { model: "haiku", agentId: "r1" }, 0);
+  noteStop("r1", "haiku-coder", "pass", 1000);
+  expect(snapshot([], 1500).rows[0]).toMatchObject({ state: "done" });
+  noteToolCall({ agentId: "r1", tool: "Edit", file_path: "/repo/a.ts" }, 2000);
+  expect(snapshot([], 2500).rows[0]).toMatchObject({ state: "working", last: "Edit a.ts" });
+  noteStop("r1", "haiku-coder", "fail", 3000);
+  expect(snapshot([], 3500).rows[0]).toMatchObject({ state: "failed" });
+  noteTokens("r1", { input_tokens: 5, output_tokens: 1 }, 0, 4000);
+  expect(snapshot([], 4500).rows[0]).toMatchObject({ state: "working" });
+});

@@ -13,7 +13,6 @@ export const KINDS = [
   { key: "desc", label: "Task mentions", phrase: "task mentions" },
   { key: "cwd", label: "Folder", phrase: "folder matches" },
 ] as const;
-export type Kind = (typeof KINDS)[number]["key"];
 
 export const MODELS = ["haiku", "sonnet", "opus"] as const;
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;

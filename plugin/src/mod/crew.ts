@@ -178,10 +178,21 @@ export function noteSpawn(input: Input, reply: unknown, now: number, rule?: stri
   m.parentId = input.parentAgentId ? String(input.parentAgentId) : null;
 }
 
+/**
+ * A finished member that shows activity again was resumed: it works again, so its end and verdict are cleared. Claude
+ * Code resumes a subagent under the same id, so its later activity is the same row, not a new one.
+ */
+function resume(m: Member): void {
+  if (m.endedAt === null) return;
+  m.endedAt = null;
+  m.verdict = "";
+}
+
 /** Count a tool call made inside a subagent and keep its last tool and target. Calls on the main loop have no agentId. */
 export function noteToolCall(e: Input, now: number): void {
   if (typeof e.agentId !== "string" || !e.agentId) return;
   const m = member(e.agentId, now);
+  resume(m);
   m.calls += 1;
   m.lastTool = String(e.tool ?? "");
   m.lastTarget = target(e);
@@ -202,6 +213,7 @@ export function target(e: Input): string {
 export function noteTokens(agentId: unknown, usage: unknown, limit: number, now: number): { total: number; crossed: boolean } {
   if (typeof agentId !== "string" || !agentId || !isObject(usage)) return { total: 0, crossed: false };
   const m = member(agentId, now);
+  resume(m);
   const n = (key: string): number => (typeof usage[key] === "number" ? (usage[key] as number) : 0);
   m.usage.input += n("input_tokens");
   m.usage.cacheWrite += n("cache_creation_input_tokens");

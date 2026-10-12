@@ -10,6 +10,7 @@ import type { Settings } from "../schema.ts";
 import { isObject } from "./api.ts";
 import type { Input } from "./api.ts";
 import { inferJob } from "./infer.ts";
+import type { LiveUsage } from "./crew.ts";
 
 /** One finished subagent. */
 export type Run = {
@@ -398,6 +399,25 @@ export function withLiveUsage(run: Run, live: { input: number; cacheWrite: numbe
   };
 }
 
+/**
+ * A run with its live usage where the transcript saw more input than the live count did, as when a resumed agent's
+ * earlier steps came before this session counted them. Each input-side field keeps the larger of the two, and output
+ * keeps the live count when it has one. Otherwise the run is withLiveUsage's. Tokens in come from the transcript here,
+ * so the counts are estimated.
+ */
+export function combineUsage(parsed: Run, live: LiveUsage): Run {
+  const liveIn = live.input + live.cacheWrite;
+  if (parsed.tokens_in <= liveIn) return withLiveUsage(parsed, live);
+  return {
+    ...parsed,
+    tokens_in: Math.max(liveIn, parsed.tokens_in),
+    cache_write: Math.max(live.cacheWrite, parsed.cache_write),
+    cache_read: Math.max(live.cacheRead, parsed.cache_read),
+    tokens_out: live.output > 0 ? live.output : parsed.tokens_out,
+    tokens_estimated: true,
+  };
+}
+
 /** The run with verdict, quality, attempts and input-side tokens re-read from its transcript. Output tokens are
  * re-read only when the run's tokens were not counted live, since the transcript's output count is a snapshot. */
 export function rescanRun(run: Run, transcript: string): Run {
@@ -412,4 +432,13 @@ export function rescanRun(run: Run, transcript: string): Run {
     ...(live ? {} : { tokens_in: t.tokens_in, cache_write: t.cache_write, cache_read: t.cache_read, tokens_out: t.tokens_out }),
     tokens_estimated: !live,
   };
+}
+
+/**
+ * The stored ledger with each rescanned run in place of the stored run that has its agent id. A stored run that was not
+ * rescanned, and any run stored since the rescan read it, stay as they are.
+ */
+export function mergeRescanned(current: LedgerState, rescanned: Run[]): LedgerState {
+  const byAgent = new Map<string, Run>(rescanned.filter((r) => r.agent_id !== "").map((r) => [r.agent_id, r]));
+  return { ...current, runs: current.runs.map((r) => byAgent.get(r.agent_id) ?? r) };
 }

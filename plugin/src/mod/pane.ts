@@ -8,9 +8,9 @@ import type { Settings } from "../schema.ts";
 import { checkChanges, mergeChanges, settingsFrom } from "./config.ts";
 import { leadActivity, leadState, snapshot } from "./crew.ts";
 import type { Crew, LiveAgent } from "./crew.ts";
-import { readState, rescanRun, tokenTotals } from "./ledger.ts";
+import { mergeRescanned, readState, rescanRun, tokenTotals } from "./ledger.ts";
 import { homeOf } from "./select.ts";
-import type { LedgerState } from "./ledger.ts";
+import type { LedgerState, Run } from "./ledger.ts";
 import { AGENT_TOOLS, allowed } from "./agents.ts";
 import { SCENE_KEY } from "./pane-crew.ts";
 import { agentTranscript } from "./pane-agent.ts";
@@ -190,7 +190,8 @@ function gateLine(ui: Ui, act: Actions, on: boolean, working: number, ledger: Le
 /**
  * One-time repair (ledger v2): runs recorded before 0.6.3 read verdicts only from `VERDICT:` lines and left cache
  * writes out of their input. Re-read each kept run's transcript, where it is still on disk, through rescanRun.
- * Output tokens of those runs stay estimates; the transcripts do not hold final counts. Runs once, then marks it.
+ * Output tokens of those runs stay estimates; the transcripts do not hold final counts. A run whose transcript cannot
+ * be read keeps its record. Runs once, then marks it, even when some runs were skipped.
  */
 async function repairLedger($: Api): Promise<void> {
   try {
@@ -199,20 +200,17 @@ async function repairLedger($: Api): Promise<void> {
     if (!home) return;
     const root = `${home}/.claude/projects`;
     const projects = (await $.fs.list(root)).filter((p: { kind: string }) => p.kind === "dir");
-    const state = readState(await $.store.get("ledger"));
-    const runs = [];
-    for (const run of state.runs) {
-      let text: string | null = null;
-      for (const p of projects) {
-        const path = `${root}/${p.name}/${run.session}/subagents/agent-${run.agent_id}.jsonl`;
-        if (run.session && run.agent_id && await $.fs.exists(path)) {
-          text = await $.fs.read(path);
-          break;
-        }
+    const rescanned: Run[] = [];
+    for (const run of readState(await $.store.get("ledger")).runs) {
+      try {
+        const text = await transcriptOf($, root, projects, run);
+        if (text !== null) rescanned.push(rescanRun(run, text));
+      } catch {
+        // Too large or unreadable: this run keeps its record.
       }
-      runs.push(text === null ? run : rescanRun(run, text));
     }
-    await $.store.set("ledger", { ...state, runs });
+    // The transcripts took a while to read, so the ledger is read again: runs stored meanwhile are kept.
+    await $.store.set("ledger", mergeRescanned(readState(await $.store.get("ledger")), rescanned));
     await $.store.set("ledger_v2", true);
     $.ui.invalidate("ui.render");
   } catch {
@@ -220,18 +218,54 @@ async function repairLedger($: Api): Promise<void> {
   }
 }
 
-/** Each working agent's latest line of text, by id. An agent whose messages cannot be read is left out. */
+/** The text of a run's subagent transcript, from whichever project folder holds it; null when none does. */
+async function transcriptOf($: Api, root: string, projects: Array<{ name: string }>, run: Run): Promise<string | null> {
+  if (!run.session || !run.agent_id) return null;
+  for (const p of projects) {
+    const path = `${root}/${p.name}/${run.session}/subagents/agent-${run.agent_id}.jsonl`;
+    if (await $.fs.exists(path)) return await $.fs.read(path);
+  }
+  return null;
+}
+
+/** How long an agent's latest line is reused before its messages are read again. */
+const LINE_TTL_MS = 10_000;
+/** An agent's latest line and when it was read; "" when its messages could not be read. */
+type LineMemo = { at: number; line: string };
+/** The latest line of each agent, by id, so a band redraw does not read every agent's messages. */
+const lineMemo = new Map<string, LineMemo>();
+
+/**
+ * Each working agent's latest line of text, by id, reused for LINE_TTL_MS. An agent whose messages cannot be read is
+ * left out.
+ */
 async function latestMessages($: Api, crew: Crew): Promise<Record<string, string>> {
+  const now = Date.now();
+  for (const [id, hit] of lineMemo) if (now - hit.at >= LINE_TTL_MS) lineMemo.delete(id);
   const out: Record<string, string> = {};
   for (const r of crew.rows.filter((row) => row.state === "working").slice(0, 8)) {
-    try {
-      const line = latestLine(await $.session.messages({ agentId: r.id }));
-      if (line) out[r.id] = line;
-    } catch {
-      // No message for this agent; the roster shows its last tool instead.
-    }
+    const line = await cachedLine(lineMemo, r.id, now, () => readLine($, r.id));
+    if (line) out[r.id] = line;
   }
   return out;
+}
+
+/** `id`'s memoised line while it is younger than LINE_TTL_MS, else `read()`'s, memoised at `now`. */
+export async function cachedLine(memo: Map<string, LineMemo>, id: string, now: number, read: () => Promise<string>): Promise<string> {
+  const hit = memo.get(id);
+  if (hit && now - hit.at < LINE_TTL_MS) return hit.line;
+  const line = await read();
+  memo.set(id, { at: now, line });
+  return line;
+}
+
+/** An agent's latest line of text; "" when its messages cannot be read, and the roster shows its last tool instead. */
+async function readLine($: Api, id: string): Promise<string> {
+  try {
+    return latestLine(await $.session.messages({ agentId: id }));
+  } catch {
+    return "";
+  }
 }
 
 /** Whether the app's theme setting is dark; true when it cannot be read or does not say light. */

@@ -146,7 +146,7 @@ const reading: Scene = (c) => {
 /** Front view: a thinking bot; three puffs lead up to a cloud where a bulb goes from grey to yellow every 4 s. */
 const thinking: Scene = (c) => {
   const { h, k, sp } = c;
-  const b = bot(c, { view: "front", mood: "thinking", arms: { near: "chin", far: "down" }, legs: "stand" });
+  const b = bot(c, { view: "front", mood: "thinking", arms: { near: "down", far: "down" }, legs: "stand" });
   const { head } = b.anchors;
   const R = 0.3 * h, cx = head.x + 0.85 * h, cy = head.y - 0.25 * h, gid = c.uid("bulb");
   const from = { x: head.x + 0.4 * h, y: head.y + 0.1 * h }, by = cy - 0.1 * R;
@@ -163,7 +163,9 @@ const thinking: Scene = (c) => {
   const bulb = el("rect", { x: cx - 0.18 * R, y: cy + 0.3 * R, width: 0.36 * R, height: 0.22 * R, rx: 0.05 * R, fill: "#6b7385" }) +
     el("circle", { cx, cy: by, r: 0.38 * R, fill: "#9aa3b2", stroke: "#6b7385", "stroke-width": 0.5 * k },
       anim("fill", "#9aa3b2;#9aa3b2;#ffd84d;#ffd84d;#9aa3b2", 4, "0;0.6;0.65;0.9;1"));
-  return b.svg + puffs + cloud + glow + bulb + headgear(c, head);
+  // The chin arm pose crosses the face, so the arms hang and the whole bot sways a few degrees instead.
+  const sway = el("g", {}, xform("rotate", `-4 ${head.x} ${c.ground};4 ${head.x} ${c.ground};-4 ${head.x} ${c.ground}`, 6, "0;0.5;1") + b.svg + headgear(c, head));
+  return sway + puffs + cloud + glow + bulb;
 };
 
 /** Front view: a conductor with a baton in the waving hand; three music notes float up in turn. */

@@ -1,8 +1,8 @@
 /** Mod tests for the ledger: transcript parsing, verdicts, token counts, condensing and the summary, on inline transcript text. */
 import { expect, test } from "claude-code/testing";
 import { suggestions } from "../../src/mod/advice.ts";
-import { addRun, byModel, condense, parseTranscriptText, readState, rescanRun, runFromStop, summary, tokenTotals,
-  withLiveUsage } from "../../src/mod/ledger.ts";
+import { addRun, byModel, combineUsage, condense, mergeRescanned, parseTranscriptText, readState, rescanRun, runFromStop,
+  summary, tokenTotals, withLiveUsage } from "../../src/mod/ledger.ts";
 import { inferJob, jobLabel } from "../../src/mod/infer.ts";
 import type { Bucket, KeyStats, LedgerState, Run } from "../../src/mod/ledger.ts";
 import { defaults } from "../../src/schema.ts";
@@ -85,6 +85,40 @@ test("rescanRun takes the transcript's output count only for runs not counted li
     tokens_estimated: true });
   const live = withLiveUsage(stored, { input: 1, cacheWrite: 0, cacheRead: 0, output: 9 });
   expect(rescanRun(live, TRANSCRIPT)).toMatchObject({ verdict: "pass", quality: 1, tokens_out: 9, tokens_estimated: false });
+});
+
+test("combineUsage takes the live counts when the transcript saw no more input than they did", () => {
+  const parsed = run("2026-10-01T00:00:00Z", 1, "pass");
+  expect(combineUsage(parsed, { input: 40, cacheWrite: 20, cacheRead: 300, output: 7 }))
+    .toEqual(withLiveUsage(parsed, { input: 40, cacheWrite: 20, cacheRead: 300, output: 7 }));
+});
+
+test("combineUsage keeps the larger count per field when the transcript saw more input, and the live output", () => {
+  const parsed = { ...run("2026-10-01T00:00:00Z", 1, "pass"), tokens_in: 500, cache_write: 100, cache_read: 900, tokens_out: 30 };
+  expect(combineUsage(parsed, { input: 40, cacheWrite: 20, cacheRead: 300, output: 7 })).toMatchObject({
+    tokens_in: 500, cache_write: 100, cache_read: 900, tokens_out: 7, tokens_estimated: true,
+  });
+});
+
+test("combineUsage keeps a live cache read that is larger, and the transcript's output when no live output was seen", () => {
+  const parsed = { ...run("2026-10-01T00:00:00Z", 1, "pass"), tokens_in: 500, cache_write: 100, cache_read: 900, tokens_out: 30 };
+  expect(combineUsage(parsed, { input: 40, cacheWrite: 20, cacheRead: 2000, output: 0 })).toMatchObject({
+    tokens_in: 500, cache_write: 100, cache_read: 2000, tokens_out: 30, tokens_estimated: true,
+  });
+});
+
+test("mergeRescanned replaces runs by agent id, keeps the others, and keeps a run stored after the rescan read the ledger", () => {
+  const old = { ...run("2026-10-01T00:00:00Z", 0, "none"), agent_id: "a1" };
+  const kept = { ...run("2026-10-02T00:00:00Z", 0, "none"), agent_id: "a2" };
+  const added = { ...run("2026-10-03T00:00:00Z", 1, "pass"), agent_id: "a3" };
+  const current: LedgerState = { runs: [old, kept, added], buckets: [] };
+  const merged = mergeRescanned(current, [{ ...old, verdict: "pass", quality: 1 }, { ...kept, agent_id: "gone", verdict: "fail" }]);
+  expect(merged).toEqual({ runs: [{ ...old, verdict: "pass", quality: 1 }, kept, added], buckets: [] });
+});
+
+test("mergeRescanned never matches a run with no agent id", () => {
+  const unnamed = { ...run("2026-10-01T00:00:00Z", 0, "none"), agent_id: "" };
+  expect(mergeRescanned({ runs: [unnamed], buckets: [] }, [{ ...unnamed, verdict: "pass" }]).runs).toEqual([unnamed]);
 });
 
 test("condense keeps the newest raw_limit runs and folds older ones by month, then by year", () => {

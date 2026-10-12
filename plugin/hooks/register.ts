@@ -15,7 +15,7 @@ import type { ChecksSettings, ReadGuardSettings, SqueezeSettings } from "../src/
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
 import { activityOf, agentModel, liveUsage, noteMainChunk, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteTurnEnd, rowFor } from "../src/mod/crew.ts";
-import { addRun, readState, runFromStop, withLiveUsage } from "../src/mod/ledger.ts";
+import { addRun, combineUsage, readState, runFromStop } from "../src/mod/ledger.ts";
 import { registerPane } from "../src/mod/pane.ts";
 import { delegationNote, withNote } from "../src/mod/delegate.ts";
 import type { DelegateSettings } from "../src/mod/delegate.ts";
@@ -170,10 +170,11 @@ async function recordStop($: Api, e: Record<string, unknown>): Promise<{ verdict
   const path = typeof e.agent_transcript_path === "string" ? e.agent_transcript_path : "";
   const transcript = cfg.ledger.enabled && path ? await readFile($, path) : null;
   if (transcript === null) return null;
-  // The transcript's usage lines hold stream-start counts, so the usage counted live from each step wins when seen.
+  // The transcript's usage lines hold stream-start counts, so the usage counted live from each step wins when seen,
+  // unless the transcript saw more input than the live count did (combineUsage).
   const parsed = runFromStop(e, transcript);
   const live = liveUsage(String(e.agent_id ?? ""));
-  const run = live ? withLiveUsage(parsed, live) : parsed;
+  const run = live ? combineUsage(parsed, live) : parsed;
   const state = addRun(readState(await $.store.get("ledger")), run, cfg);
   await $.store.set("ledger", state);
   return { verdict: run.verdict, model: run.model };

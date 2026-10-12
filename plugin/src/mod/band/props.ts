@@ -70,11 +70,13 @@ export function scrollLines(box: Box, colours: string[], gap: number, dur: numbe
 
 /** A magnifying glass in the near hand's prop space: handle at the origin, light-blue lens ahead, glint sweeping across it every 2 s. */
 export function magnifier(k: number, uid: Uid): string {
-  const r = 4.5 * k, L = 6 * k, cx = L + r, id = uid("lns");
+  const r = 8.8 * k, L = 10 * k, cx = L + r, id = uid("lns"); // k = h / 40, so r = 0.22 h and the handle is 0.25 h
   const glint = el("g", {}, xform("translate", `${cx - 2 * r} 0;${cx + 2 * r} 0`, 2) +
     el("rect", { x: -0.6 * k, y: -1.6 * r, width: 1.2 * k, height: 3.2 * r, fill: "#ffffff", opacity: 0.7, transform: "rotate(25)" }));
-  return el("line", { x1: 0, y1: 0, x2: L, y2: 0, stroke: "#6b4a2b", "stroke-width": 1.6 * k, "stroke-linecap": "round" }) +
-    el("circle", { cx, cy: 0, r, fill: "#bfe3ff", "fill-opacity": 0.45, stroke: "#3b3f4f", "stroke-width": 1.4 * k }) +
+  const hi = 0.62 * r, a = (d: number): string => `${cx + hi * Math.cos(d * Math.PI / 180)} ${-hi * Math.sin(d * Math.PI / 180)}`;
+  return el("line", { x1: 0, y1: 0, x2: L, y2: 0, stroke: "#6b4a2b", "stroke-width": Math.max(1.8, 1.6 * k), "stroke-linecap": "round" }) +
+    el("circle", { cx, cy: 0, r, fill: "#bfe3ff", "fill-opacity": 0.5, stroke: "#3b3f4f", "stroke-width": 1.5 }) +
+    el("path", { d: `M${a(110)}A${hi} ${hi} 0 0 1 ${a(160)}`, fill: "none", stroke: "#ffffff", "stroke-width": Math.max(1, 0.9 * k), "stroke-linecap": "round", opacity: 0.85 }) +
     el("clipPath", { id }, el("circle", { cx, cy: 0, r })) +
     el("g", { "clip-path": `url(#${id})` }, glint);
 }
