@@ -1,5 +1,6 @@
 /** The desktop band's pixel sky: the hour per mode, moon phase, stars, clouds and the orb's place on the scene. */
 import { expect, test } from "claude-code/testing";
+import { starPoints } from "../../src/mod/sprites.ts";
 import { moonPhase, skyHour, skySvg } from "../../src/mod/sky.ts";
 
 const DAY_MS = 86_400_000;
@@ -77,4 +78,10 @@ test("a new moon lights no pixels, and a full moon lights more than a quarter", 
   expect(lit(0)).toBe(0);
   expect(lit(0.25) > 0).toBe(true);
   expect(lit(0.5) > lit(0.25)).toBe(true);
+});
+
+test("stars spread across the whole width of a wide band", () => {
+  const w = 293;
+  const xs = starPoints(w, 16, 6).map(([x]) => x);
+  for (let t = 0; t < 3; t++) expect(xs.filter((x) => x >= (t * w) / 3 && x < ((t + 1) * w) / 3).length >= xs.length / 5).toBe(true);
 });

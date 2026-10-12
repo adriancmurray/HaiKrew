@@ -67,6 +67,8 @@ export type BandOpts = {
 
 // ponytail: desktop rows measured at about 27 px; a different font size shifts where the hover targets sit.
 const ROW_PX = 27;
+// The band's height in rows; the scene is drawn to fill exactly this many.
+const BAND_ROWS = 3;
 // Rows at the top of the band where a hover card shows; no hover target reaches into them.
 const CARD_ROWS = 2;
 // Scene pixels kept free at the right for the sun or moon, which opens the pane.
@@ -85,8 +87,11 @@ const LEAD_SAYS: Record<LeadState, string> = {
  */
 export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: BandOpts): unknown {
   const full = pxOf(cols);
-  // The scene's pixel grid follows the width, so a sprite pixel stays about five screen pixels wide.
-  const sceneCols = Math.max(48, Math.min(240, Math.round(full / 5)));
+  // The band is BAND_ROWS rows tall and the scene fills them exactly: its pixel size follows from the height, and
+  // its width in scene pixels from that, so the drawing never leaves part of a row empty above or below it.
+  const rows = BAND_ROWS;
+  const height = rows * ROW_PX;
+  const sceneCols = Math.max(48, Math.round((full * SVG_ROWS) / height));
   const b = opts.band;
   const mode = String(b.sky) as SkyMode;
   const local = new Date(opts.now);
@@ -97,8 +102,6 @@ export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: 
     colors: { haiku: String(b.haiku_color), sonnet: String(b.sonnet_color), opus: String(b.opus_color) },
     background: sky.body, reserveRight: ORB_ROOM,
   });
-  const height = Math.round((full * SVG_ROWS) / sceneCols);
-  const rows = Math.max(2, Math.round(height / ROW_PX));
   const toCol = (x: number): number => Math.floor((x * cols) / sceneCols);
   const toRow = (y: number): number => Math.max(0, Math.min(rows - 1, Math.floor((y * rows) / SVG_ROWS)));
   const lead = crew.lead ?? { state: crew.working > 0 ? "directing" : "resting", model: "opus" };
@@ -137,7 +140,8 @@ export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: 
       ui.Button({ key: "band-open", label: `Open HaiKrew ${orb.kind === "sun" ? "☀" : "☾"}`, variant: "primary", onPress: () => opts.open() }),
     ] }),
   ] });
-  return ui.Box({ key: "crew-band", flexDirection: "column", children: [svg, ...targets, opener] });
+  // An explicit height, with the hover layers clipped to it, so nothing they place can make the band taller.
+  return ui.Box({ key: "crew-band", flexDirection: "column", height: rows, overflow: "hidden", children: [svg, ...targets, opener] });
 }
 
 /**

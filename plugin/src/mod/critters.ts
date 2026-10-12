@@ -136,7 +136,12 @@ export function starPoints(width: number, height: number, cell: number, keepOut?
   const out: Array<[number, number, number]> = [];
   for (let cy = 0; cy * cell < height; cy++) {
     for (let cx = 0; cx * cell < width; cx++) {
-      const h = Math.imul(cx + 1, 73856093) ^ Math.imul(cy + 1, 19349663);
+      // Mixed (a murmur-style finaliser) so every cell gets an even chance at any width; a bare xor of two
+      // products left whole stretches of a wide scene without a star.
+      let h = Math.imul(cx + 1, 73856093) ^ Math.imul(cy + 1, 19349663);
+      h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+      h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+      h ^= h >>> 16;
       const r = (h >>> 0) / 4294967296;
       if (r > 0.6) continue;
       const x = Math.floor(cx * cell + cell * (0.15 + ((h >>> 8) & 255) / 255 * 0.7));
