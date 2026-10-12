@@ -94,7 +94,8 @@ Settings are kept in the mod store (`$.store`, key `settings`), not in a file, a
 | `gate.instructions` | `[]` | Text added to matching subagents' prompts: `<selectors>: <text>`, one entry per row in the pane. |
 | `checks.guard_hooks` | `true` | Refuse Bash commands that skip git hooks. |
 | `checks.seam_check` | `false` | Also send the seam reminder as a prompt; off: it is only logged. |
-| `checks.token_warning` | `200000` | Warn when one subagent passes this many tokens (input plus output, counted per step): a toast, a mark in the crew and a `!` above it in the band. `0` turns it off. |
+| `checks.token_limits` | `haiku=800000`, `sonnet=400000`, `opus=200000` | Warn when one subagent's new work (input, cache writes and output; cache reads not counted) passes its model's limit: a toast, a mark in the crew and a `!` above it in the band. A model left out, or `0`, never warns; an unknown model uses the lowest limit. |
+| `checks.token_effort_scale` | `true` | Multiply each limit by the agent's effort: low ×0.5, medium ×1, high ×1.5, xhigh ×2, max ×3. |
 | `squeeze.enabled` | `true` | Redirect matching commands. |
 | `squeeze.patterns` | 7 regexes (cargo, swift, xcodebuild, pytest, npm/pnpm/yarn/bun, go, make) | Regexes matched against the start of a Bash command. |
 | `squeeze.max_lines` | `20` | Most lines a summary prints. Passed to the CLI as `--max-lines`. |

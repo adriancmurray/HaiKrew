@@ -164,6 +164,11 @@ export function liveUsage(id: string): LiveUsage | null {
   return m && m.tokens + m.usage.cacheRead > 0 ? { ...m.usage } : null;
 }
 
+/** The model the roster has for `id` (from its spawn or stop), or "" when none is known. */
+export function agentModel(id: string): string {
+  return members.get(id)?.model ?? "";
+}
+
 /**
  * Mark a subagent finished. `verdict` is the ledger's ("pass", "fail", "blocked", "none") or null when unknown;
  * `model` is the one its transcript names, kept when the spawn was not seen (so a retry knows what to step up from).

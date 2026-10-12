@@ -5,13 +5,14 @@
  * Deny-and-redirect, never allow, so the user's permission rules still judge any redirected command.
  */
 import type { Input, Next } from "./api.ts";
+import { modelFamily } from "./crew.ts";
 
 /** The `squeeze` section of settings. */
 export type SqueezeSettings = { enabled: boolean; patterns: string[]; max_lines: number; wrap_prefix: string };
 /** The `read_guard` section of settings. */
 export type ReadGuardSettings = { enabled: boolean; max_lines: number };
 /** The `checks` section of settings. */
-export type ChecksSettings = { guard_hooks: boolean; seam_check: boolean };
+export type ChecksSettings = { guard_hooks: boolean; seam_check: boolean; token_limits: string[]; token_effort_scale: boolean };
 
 // Leading `cd X &&` or variable assignments such as `A=1 `, stripped repeatedly before pattern matching.
 const LEAD = /^\s*(?:cd\s+\S+\s*&&\s*|[A-Za-z_]\w*=\S*\s+)/;
@@ -22,6 +23,10 @@ const DEF = /^\s*(?:(?:pub|async|ex[p]ort|static|default)\s+)*(?:def|class|fn|fu
 const OUTLINE_MAX = 60;
 // A git invocation that skips hooks: --no-verify as its own word, or core.hooksPath given with -c or git config.
 const HOOK_SKIP = /(^|\s)--no-verify(\s|$)|core\.hooksPath=|-c\s+core\.hooksPath\b/;
+// One `token_limits` entry: a model family and its limit in new-work tokens.
+const LIMIT = /^(haiku|sonnet|opus)=(\d+)$/;
+// The multiplier on a limit for each effort when token_effort_scale is on; an effort not listed, or none, counts as x1.
+const EFFORT_SCALE = new Map([["low", 0.5], ["medium", 1], ["high", 1.5], ["xhigh", 2], ["max", 3]]);
 
 /**
  * Bash: deny a squeeze-pattern command and name `node "<root>/bin/haikrew.mjs" squeeze --max-lines <n> [--wrap "<prefix>"] -- <command>`.
@@ -47,6 +52,27 @@ export function hookGuard(cfg: ChecksSettings, e: Input, next: Next): unknown {
     deny: "HaiKrew refuses commands that skip git hooks (--no-verify, core.hooksPath). Fix what the hook reports " +
       "and run the command without skipping hooks, or turn off checks.guard_hooks in /haikrew settings.",
   };
+}
+
+/**
+ * The new-work tokens one subagent may use before its token warning, for its model and effort. A model with no
+ * entry, or a limit of 0, never warns (0). An unknown model takes the smallest positive limit, so an unfamiliar
+ * model is still watched. With token_effort_scale on, the limit is multiplied by the effort and rounded.
+ */
+export function tokenLimit(checks: Pick<ChecksSettings, "token_limits" | "token_effort_scale">, model: string, effort?: string): number {
+  const limits = new Map<string, number>();
+  for (const entry of checks.token_limits) {
+    const m = LIMIT.exec(entry);
+    if (m) limits.set(m[1] ?? "", Number(m[2]));
+  }
+  const family = modelFamily(model);
+  let base = limits.get(family) ?? 0;
+  if (family === "unknown") {
+    const positive = [...limits.values()].filter((n) => n > 0);
+    base = positive.length ? Math.min(...positive) : 0;
+  }
+  if (base <= 0 || !checks.token_effort_scale) return base;
+  return Math.round(base * (EFFORT_SCALE.get(effort ?? "") ?? 1));
 }
 
 /**

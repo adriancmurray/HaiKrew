@@ -85,8 +85,14 @@ export const SCHEMA: Record<string, Section> = {
     fields: {
       guard_hooks: { label: "Git hook guard", type: "bool", default: true,
         help: "Refuse Bash commands that skip git hooks (--no-verify, core.hooksPath overrides), with a reason." },
-      token_warning: { label: "Token warning per agent", type: "int", default: 200000, min: 0, max: 10000000,
-        help: "Warn when one subagent passes this many tokens (input plus output, as each step reports them): a toast, a mark in the crew, a ! above it. 0: off." },
+      token_limits: { label: "Token warning per model", type: "list", default: ["haiku=800000", "sonnet=400000", "opus=200000"],
+        pattern: "^(haiku|sonnet|opus)=[0-9]+$",
+        short: "New-work tokens one subagent may use before HaiKrew warns, per model, e.g. haiku=800000.",
+        help: "Warn when one subagent passes its model's limit: a toast, a mark in the crew, a ! above it. Tokens are new work: " +
+          "input, cache writes and output; cache reads are not counted. A model left out, or 0, never warns. " +
+          "An unknown model uses the lowest limit set." },
+      token_effort_scale: { label: "Scale with effort", type: "bool", default: true,
+        help: "Multiply each limit by the agent's effort: low ×0.5, medium ×1, high ×1.5, xhigh ×2, max ×3." },
       seam_check: { label: "Seam check prompt", type: "bool", default: false,
         short: "Also prompt for a full verify when parallel agents in one folder finish.",
         help: "When the last of 2+ parallel agents in one folder finishes, also send the main conversation a prompt to run " +

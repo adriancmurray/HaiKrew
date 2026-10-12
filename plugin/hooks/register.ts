@@ -10,11 +10,11 @@ import { settingsFrom } from "../src/mod/config.ts";
 import type { Api } from "../src/mod/api.ts";
 import { effortFor, gate, resolveModel } from "../src/mod/gate.ts";
 import type { GateSettings } from "../src/mod/gate.ts";
-import { hookGuard, readGuard, squeeze } from "../src/mod/guards.ts";
+import { hookGuard, readGuard, squeeze, tokenLimit } from "../src/mod/guards.ts";
 import type { ChecksSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
-import { liveUsage, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteTurnEnd } from "../src/mod/crew.ts";
+import { agentModel, liveUsage, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteTurnEnd } from "../src/mod/crew.ts";
 import { addRun, readState, runFromStop, withLiveUsage } from "../src/mod/ledger.ts";
 import { registerPane } from "../src/mod/pane.ts";
 import { delegationNote, withNote } from "../src/mod/delegate.ts";
@@ -64,9 +64,13 @@ export function register(on) {
   on("turn.step", async function* ($, e, next) {
     // A main-loop step: the main agent in the band is busy until this turn completes.
     if (!e.agentId && typeof e.turnId === "string" && noteMainStep(e.turnId)) $.ui.invalidate("ui.render");
-    const result = yield* next(stepEffort(e));
+    const stepped = stepEffort(e);
+    const result = yield* next(stepped);
     if (e.agentId && result?.usage) {
-      const limit = Number((await loadSettings($)).checks.token_warning) || 0;
+      // The limit is the step's model and the effort it ran with (the tracked one when stepEffort set it).
+      const checks = (await loadSettings($)).checks as unknown as ChecksSettings;
+      const model = typeof e.model === "string" && e.model ? e.model : agentModel(String(e.agentId));
+      const limit = tokenLimit(checks, model, String(stepped.effort ?? ""));
       const { total, crossed } = noteTokens(e.agentId, result.usage, limit, Date.now());
       if (crossed) {
         $.ui.toast(`HaiKrew: a subagent passed ${total.toLocaleString("en-US")} tokens (warning at ${limit.toLocaleString("en-US")})`);
