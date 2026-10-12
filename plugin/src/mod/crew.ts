@@ -33,7 +33,14 @@ type Member = {
   usage: LiveUsage;
   /** Whether it has passed the per-agent token warning. */
   over: boolean;
+  /** Files its Edit, Write and NotebookEdit calls changed, and an estimate of the lines it wrote. */
+  paths: Set<string>;
+  lines: number;
+  /** Its spawn prompt, the first SPEC_MAX characters. */
+  spec: string;
 };
+
+const SPEC_MAX = 4000;
 
 /** A subagent's usage summed over its steps, as each step's final usage reports it. */
 export type LiveUsage = { input: number; cacheWrite: number; cacheRead: number; output: number };
@@ -155,7 +162,7 @@ function member(id: string, now: number): Member {
     m = {
       id, display: pickName(id, displayNames()), model: "", subagentType: "", description: "", parentId: null, startedAt: now,
       calls: 0, lastTool: "", lastTarget: "", endedAt: null, verdict: "", rule: "", tokens: 0,
-      usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, over: false,
+      usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, over: false, paths: new Set(), lines: 0, spec: "",
     };
     members.set(id, m);
   }
@@ -176,6 +183,7 @@ export function noteSpawn(input: Input, reply: unknown, now: number, rule?: stri
   m.subagentType = String(input.subagentType ?? "");
   m.description = String(input.description ?? "");
   m.parentId = input.parentAgentId ? String(input.parentAgentId) : null;
+  if (typeof input.prompt === "string") m.spec = input.prompt.slice(0, SPEC_MAX);
 }
 
 /**
@@ -196,6 +204,35 @@ export function noteToolCall(e: Input, now: number): void {
   m.calls += 1;
   m.lastTool = String(e.tool ?? "");
   m.lastTarget = target(e);
+  noteChange(m, e);
+}
+
+const lineCount = (v: unknown): number => (typeof v === "string" && v !== "" ? v.split("\n").length : 0);
+
+/** Record the file and the lines an Edit, MultiEdit, Write or NotebookEdit call changed. */
+function noteChange(m: Member, e: Input): void {
+  const tool = String(e.tool ?? "");
+  let path: unknown = e.file_path;
+  let lines = 0;
+  if (tool === "Edit") lines = lineCount(e.new_string);
+  else if (tool === "MultiEdit") lines = Array.isArray(e.edits) ? e.edits.reduce((n: number, x) => n + (isObject(x) ? lineCount(x.new_string) : 0), 0) : 0;
+  else if (tool === "Write") lines = lineCount(e.content);
+  else if (tool === "NotebookEdit") { path = e.notebook_path; lines = 1; }
+  else return;
+  if (typeof path !== "string" || !path) return;
+  m.paths.add(path);
+  m.lines += lines;
+}
+
+/** The files `id` changed and the estimated lines it wrote, from its tool calls. */
+export function touched(id: string): { paths: string[]; lines: number } {
+  const m = members.get(id);
+  return { paths: m ? [...m.paths] : [], lines: m?.lines ?? 0 };
+}
+
+/** The spawn prompt of `id` (first 4000 characters), or "" when unknown. */
+export function specOf(id: string): string {
+  return members.get(id)?.spec ?? "";
 }
 
 /** A short label for what a tool call works on: a file's basename, or the first 30 characters of a command. */

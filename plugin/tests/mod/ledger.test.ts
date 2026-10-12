@@ -1,7 +1,7 @@
 /** Mod tests for the ledger: transcript parsing, verdicts, token counts, condensing and the summary, on inline transcript text. */
 import { expect, test } from "claude-code/testing";
 import { suggestions } from "../../src/mod/advice.ts";
-import { addRun, byModel, combineUsage, condense, mergeRescanned, parseTranscriptText, readState, rescanRun, runFromStop,
+import { addRun, applyChecked, parseCheckerVerdict, byModel, combineUsage, condense, mergeRescanned, parseTranscriptText, readState, rescanRun, runFromStop,
   summary, tokenTotals, withLiveUsage } from "../../src/mod/ledger.ts";
 import { inferJob, jobLabel } from "../../src/mod/infer.ts";
 import type { Bucket, KeyStats, LedgerState, Run } from "../../src/mod/ledger.ts";
@@ -276,4 +276,24 @@ test("an untagged run gets a job inferred from its prompt or agent type, marked 
   const text = [line({ type: "user", timestamp: "2026-10-12T10:00:00.000Z", message: { content: "Investigate why the build is slow" } }),
     line({ type: "assistant", timestamp: "2026-10-12T10:01:00.000Z", message: { id: "m1", model: "claude-haiku-5-5", content: [{ type: "text", text: "Done.\nVERDICT: PASS" }] } })].join("\n");
   expect(runFromStop({ agent_id: "a1", agent_type: "general-purpose" }, text).job).toBe("~research");
+});
+
+test("parseCheckerVerdict reads the last VERDICT line naming an agent", () => {
+  expect(parseCheckerVerdict("VERDICT: FAIL for Ada\nlater\nVERDICT: PASS for Isaac Newline\nlooks fine")).toEqual({ verdict: "pass", name: "Isaac Newline" });
+  expect(parseCheckerVerdict("VERDICT: PASS")).toBe(null);
+  expect(parseCheckerVerdict("no verdict")).toBe(null);
+});
+
+test("applyChecked sets the newest matching run's verdict, quality and checker", () => {
+  const a = { ...run("2026-10-01T00:00:00Z", 0, "none"), name: "Ada", attempts: 2 };
+  const b = { ...run("2026-10-02T00:00:00Z", 0, "none"), name: "Ada", attempts: 2 };
+  const c = { ...run("2026-10-03T00:00:00Z", 1, "pass"), name: "Other" };
+  const state: LedgerState = { runs: [a, b, c], buckets: [] };
+  const out = applyChecked(state, { name: "Ada" }, "pass", "Rev");
+  expect(out.runs[0]).toEqual(a);
+  expect(out.runs[1]).toMatchObject({ verdict: "pass", quality: 0.5, checked_by: "Rev" });
+  expect(out.runs[2]).toEqual(c);
+  expect(applyChecked(out, { name: "Ada" }, "fail", "Rev").runs[1]).toMatchObject({ verdict: "fail", quality: 0 });
+  expect(applyChecked(state, { name: "Nobody" }, "pass", "Rev")).toEqual(state);
+  expect(applyChecked(state, { agentId: c.agent_id }, "fail", "Rev").runs[2]).toMatchObject({ verdict: "fail" });
 });

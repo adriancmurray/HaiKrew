@@ -26,6 +26,9 @@ export function delegationNote(g: DelegateSettings): string {
     "- Start each agent prompt with a tag line, e.g. `HAIKREW job=implement lang=ts name=Katherine_JSON`, so routing rules and " +
       "the ledger can match it. Give each agent a name: a famous scientist, artist or inventor with a coding twist that suits " +
       "its task (Vincent van Go, Marie Curl, Ludwig van Buildhoven), underscores for spaces; HaiKrew picks one if you don't.",
+    "- When HaiKrew posts a review note after an agent finishes, follow it: light → glance at the diff and call `record_verdict`; " +
+      "standard/deep → launch the named reviewer model and effort with `HAIKREW job=review name=...`, telling it to call " +
+      "`review_packet` first and to end with `VERDICT: PASS|FAIL for <name>`. Fix or re-run failed work before building on it.",
     `- Gate settings now: agents launched without a model run on ${name(g.default_model)}; ` +
       (g.allow_opus ? "Opus subagents are allowed; " : "Opus subagents are refused, so don't request them; ") +
       `routing rules (first match wins): ${rules}; ` +

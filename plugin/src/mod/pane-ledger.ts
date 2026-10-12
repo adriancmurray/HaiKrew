@@ -12,7 +12,7 @@ import { jobLabel } from "./infer.ts";
 import { ruleSentence } from "./rules.ts";
 import { table } from "./svg.ts";
 import type { Cell, Ink } from "./svg.ts";
-import { C, compact, foldCard, when, duration, empty, fit, heading, hexOf, hrow, meter, modelColor, modelName, passColor, txt, vcol, view } from "./ui.ts";
+import { C, compact, foldCard, when, duration, empty, fit, heading, hexOf, hrow, meter, modelColor, modelName, passColor, textAndControls, txt, vcol, view } from "./ui.ts";
 import type { Actions, CardFrame, TimeStyle, Ui } from "./ui.ts";
 
 const RECENT_SHOWN = 8;
@@ -103,9 +103,8 @@ function suggestionBox(act: Actions, ui: Ui, list: Suggestion[]): unknown {
     txt(ui, { bold: true, color: C.warn }, "Worth a look"),
     ...list.map((s, i) => vcol(ui, {}, [
       txt(ui, {}, `${s.text}.`),
-      hrow(ui, { columnGap: 1, flexWrap: "wrap", alignItems: "center" }, [
-        txt(ui, { dimColor: true }, s.kind === "down" ? `Try a cheaper model: ${ruleSentence(s.rule)}${s.replaces ? " (replaces the current rule)" : ""}`
-          : `Send it to a stronger model: ${ruleSentence(s.rule)}`),
+      textAndControls(ui, [txt(ui, { dimColor: true, wrap: "wrap" }, s.kind === "down" ? `Try a cheaper model: ${ruleSentence(s.rule)}${s.replaces ? " (replaces the current rule)" : ""}`
+        : `Send it to a stronger model: ${ruleSentence(s.rule)}`)], [
         ui.Button({
           key: `suggest-${i}`, ...(view.armed === s.rule ? { variant: "primary" } : {}),
           label: view.armed === s.rule ? "Press again to add" : "Add rule",

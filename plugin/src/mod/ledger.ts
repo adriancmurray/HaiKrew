@@ -31,6 +31,10 @@ export type Run = {
   attempts: number;
   verdict: string;
   quality: number;
+  /** The crew display name, set at stop. */
+  name?: string;
+  /** Who checked it (the reviewer's name) when a checker's verdict replaced the run's own. */
+  checked_by?: string;
 };
 
 /** Sums of runs for one (period, model, agent_type, job, lang); period is 'YYYY-MM', 'YYYY', or ''. */
@@ -441,4 +445,37 @@ export function rescanRun(run: Run, transcript: string): Run {
 export function mergeRescanned(current: LedgerState, rescanned: Run[]): LedgerState {
   const byAgent = new Map<string, Run>(rescanned.filter((r) => r.agent_id !== "").map((r) => [r.agent_id, r]));
   return { ...current, runs: current.runs.map((r) => byAgent.get(r.agent_id) ?? r) };
+}
+
+/** The final assistant text of a subagent transcript (JSONL text): its report. */
+export function finalReport(transcript: string): string {
+  return scan(jsonLines(transcript)).finalText;
+}
+
+const CHECKER_RE = /VERDICT:\s*(PASS|FAIL)\s+for\s+([^\r\n]+)/gi;
+
+/** The last `VERDICT: PASS|FAIL for <name>` line of a checker's report, or null. */
+export function parseCheckerVerdict(text: string): { verdict: "pass" | "fail"; name: string } | null {
+  let found: { verdict: "pass" | "fail"; name: string } | null = null;
+  for (const m of text.matchAll(CHECKER_RE)) {
+    const name = (m[2] ?? "").trim().replace(/[.*_`]+$/, "").trim();
+    if (name) found = { verdict: (m[1] ?? "").toLowerCase() === "pass" ? "pass" : "fail", name };
+  }
+  return found;
+}
+
+/**
+ * The state with the newest run matching `target` (by agent id, else by name) given the checker's verdict: pass is
+ * quality 1/attempts, fail 0. Unchanged when no run matches.
+ */
+export function applyChecked(state: LedgerState, target: { agentId?: string; name?: string }, verdict: "pass" | "fail", checker: string): LedgerState {
+  const hit = (r: Run): boolean => (target.agentId ? r.agent_id === target.agentId : !!target.name && r.name === target.name);
+  let at = -1;
+  state.runs.forEach((r, i) => {
+    if (hit(r) && (at < 0 || r.ts >= (state.runs[at]?.ts ?? ""))) at = i;
+  });
+  if (at < 0) return state;
+  const runs = state.runs.map((r, i) => i !== at ? r
+    : { ...r, verdict, quality: verdict === "pass" ? 1 / Math.max(r.attempts, 1) : 0, checked_by: checker });
+  return { ...state, runs };
 }

@@ -98,8 +98,7 @@ export function onOff(ui: Ui, key: string, on: boolean, set: (value: boolean) =>
  */
 export function foldCard(ui: Ui, act: Actions, frame: CardFrame, key: string, title: string, note: string, summary: string, open: boolean, children: unknown[]): unknown {
   const isOpen = view.open[key] ?? open;
-  const head = hrow(ui, { justifyContent: "space-between", alignItems: "center", columnGap: 2 }, [
-    hrow(ui, { columnGap: 2, alignItems: "center", flexWrap: "wrap", flexShrink: 1 }, [txt(ui, { bold: true }, title), note ? txt(ui, { dimColor: true }, note) : null]),
+  const head = textAndControls(ui, [hrow(ui, { columnGap: 2, alignItems: "center", flexWrap: "wrap" }, [txt(ui, { bold: true }, title), note ? txt(ui, { dimColor: true }, note) : null])], [
     ui.Button({ key: `${key}-toggle`, label: isOpen ? "▾" : "▸", onPress: () => {
       view.open[key] = !isOpen;
       act.redraw();
@@ -114,10 +113,10 @@ export function foldCard(ui: Ui, act: Actions, frame: CardFrame, key: string, ti
 
 /** A row of a two-column form: a label in a fixed share of the width, its controls after it, wrapping. */
 export function labelled(ui: Ui, label: string, controls: unknown[]): unknown {
-  return hrow(ui, { alignItems: "center", columnGap: 1, flexWrap: "wrap" }, [
-    ui.Box({ width: "38%", flexShrink: 0, children: [txt(ui, { dimColor: true }, label)] }),
-    hrow(ui, { columnGap: 1, alignItems: "center", flexWrap: "wrap", flexShrink: 1 }, controls),
-  ]);
+  return textAndControls(ui, [txt(ui, { dimColor: true }, label)], controls, {
+    row: { alignItems: "center", columnGap: 1, flexWrap: "wrap", justifyContent: "flex-start" },
+    text: { width: "38%", flexGrow: 0 },
+  });
 }
 
 /** The SVG colour for one of the pane's status theme keys. */
@@ -138,6 +137,18 @@ export function hrow(ui: Ui, props: Record<string, unknown>, children: unknown[]
 /** A Box laid out as a column. */
 export function vcol(ui: Ui, props: Record<string, unknown>, children: unknown[]): unknown {
   return ui.Box({ flexDirection: "column", ...props, children: children.filter((c) => c !== null) });
+}
+
+/**
+ * A row of text beside controls (buttons, a switch). The text box takes the room left and may shrink, so its text
+ * wraps or truncates inside it; the control box keeps its size, so a long line never pushes a control out of the card.
+ * `props.row` goes on the row and `props.text` on the text box, e.g. a fixed width.
+ */
+export function textAndControls(ui: Ui, text: unknown[], controls: unknown[], props: { row?: Record<string, unknown>; text?: Record<string, unknown> } = {}): unknown {
+  return hrow(ui, { justifyContent: "space-between", alignItems: "center", columnGap: 2, ...props.row }, [
+    ui.Box({ flexDirection: "column", flexGrow: 1, flexShrink: 1, minWidth: 0, ...props.text, children: text.filter((c) => c !== null) }),
+    ui.Box({ flexDirection: "row", alignItems: "center", columnGap: 1, flexWrap: "wrap", flexShrink: 0, children: controls.filter((c) => c !== null) }),
+  ]);
 }
 
 /** A small bold heading in the accent colour. */

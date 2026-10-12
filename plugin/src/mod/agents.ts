@@ -10,7 +10,8 @@ import type { Settings } from "../schema.ts";
 import { checkChanges, mergeChanges, settingsFrom } from "./config.ts";
 import { snapshot } from "./crew.ts";
 import { suggestions } from "./advice.ts";
-import { byModel, readState, summary, tokenTotals } from "./ledger.ts";
+import { isObject } from "./api.ts";
+import { applyChecked, byModel, readState, summary, tokenTotals } from "./ledger.ts";
 import type { LedgerState } from "./ledger.ts";
 import { buildRule, KINDS, MODELS, EFFORTS, ruleSentence } from "./rules.ts";
 
@@ -63,9 +64,29 @@ export const AGENT_TOOLS = [
     description: "Remove a model routing rule, given exactly as status lists it under rules.stored.",
     inputSchema: { type: "object", properties: { rule: { type: "string" } }, required: ["rule"] },
   },
+  {
+    name: "review_packet",
+    description: "The review packet HaiKrew wrote when a subagent finished: its spec, final report, files changed, test claim and " +
+      "review tier. Give the agent's crew name; case does not matter.",
+    inputSchema: { type: "object", properties: { agent: { type: "string" } }, required: ["agent"] },
+  },
+  {
+    name: "record_verdict",
+    description: "Record pass or fail for a finished subagent in the ledger, checked by the main agent. Use it for a light review, " +
+      "after reading the diff.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        agent: { type: "string" },
+        verdict: { type: "string", enum: ["pass", "fail"] },
+        note: { type: "string" },
+      },
+      required: ["agent", "verdict"],
+    },
+  },
 ];
 
-const CHANGES = new Set(["set_setting", "add_rule", "remove_rule"]);
+const CHANGES = new Set(["set_setting", "add_rule", "remove_rule", "record_verdict"]);
 
 /** Whether `tool` may run under the person's agent-control setting, or why not. */
 export function allowed(settings: Settings, tool: string): string | null {
@@ -130,6 +151,36 @@ export function answer(tool: string, input: Record<string, unknown>, settings: S
   return { ok: false, reason: `unknown tool ${tool}` };
 }
 
+/** The stored packet for `agent` (name matched without case), or a line naming the agents that have one. Pure. */
+export function packetFor(packets: unknown, agent: string): string {
+  const map: Record<string, unknown> = isObject(packets) ? packets : {};
+  const names = Object.keys(map);
+  const want = agent.trim().toLowerCase();
+  const name = names.find((n) => n.toLowerCase() === want);
+  const text = name === undefined ? undefined : map[name];
+  if (typeof text === "string") return text;
+  return names.length
+    ? `No review packet for "${agent}". Packets exist for: ${names.join(", ")}.`
+    : `No review packet for "${agent}". No agent has a packet yet.`;
+}
+
+/** review_packet reads the stored packet; record_verdict writes the main agent's verdict to the newest run of that name. */
+async function reviewTool(tool: string, input: Api, $: Api): Promise<{ deny: string } | { result: string }> {
+  const agent = String(input.agent ?? "").trim();
+  if (tool === "review_packet") return { result: packetFor(await $.store.get("review_packets"), agent) };
+  const verdict = String(input.verdict ?? "");
+  if (!agent) return { deny: "Name the agent, as the crew lists it." };
+  if (verdict !== "pass" && verdict !== "fail") return { deny: 'The verdict is "pass" or "fail".' };
+  const state = readState(await $.store.get("ledger"));
+  const next = applyChecked(state, { name: agent }, verdict, "main agent");
+  // applyChecked returns the same state when no run matches; say so rather than report a verdict nobody recorded.
+  if (next === state) return { deny: `No finished agent named "${agent}" in the ledger.` };
+  await $.store.set("ledger", next);
+  $.ui.toast(`HaiKrew: ${agent} marked ${verdict}`);
+  $.ui.invalidate("ui.render");
+  return { result: `Recorded ${verdict} for ${agent}.` };
+}
+
 /** Serve the tools as `mcp__<plugin>__<name>`. pane.ts registers them at session start (one hook per event). */
 export function registerAgentTools(on: (...args: unknown[]) => void, plugin: string): void {
   for (const spec of AGENT_TOOLS) {
@@ -142,6 +193,7 @@ export function registerAgentTools(on: (...args: unknown[]) => void, plugin: str
         // A tool.call result is text or content blocks, never a bare object: the report goes out as JSON text.
         return { result: JSON.stringify(statusReport(settings, readState(await $.store.get("ledger")), working), null, 2) };
       }
+      if (spec.name === "review_packet" || spec.name === "record_verdict") return reviewTool(spec.name, e, $);
       const reply = answer(spec.name, e, settings);
       if (!reply.ok) return { deny: reply.reason };
       await $.store.set("settings", reply.settings);

@@ -1,5 +1,15 @@
 HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gate), adds squeeze and read guards on tool calls, keeps a ledger of agent runs, and shows the crew in a `/haikrew` pane. Release 0.1.0 introduced the gate, guards, ledger, pane, the haiku-coder and haiku-scout agents and the crew-overseer skill. Releases 0.4.0 to 0.5.5 added per-task model rules, rule effort and selectors, checks, ledger suggestions and a packaging change. Releases 0.6.0 to 0.6.4 redesigned the `/haikrew` pane and the band above the prompt, made the crew the default route for spec-able work, gave subagents names and set token warnings per model. The newest release covered here is 0.6.4, dated 2026-10-12.
 
+## 0.6.5 — 2026-10-12
+
+- Review tiers: when a subagent finishes, HaiKrew picks how its work gets checked from the files it changed, the size of the change, its test claim, its job and the model's checked record: light (the main agent glances), standard (a Sonnet reviewer) or deep (an Opus reviewer, or Sonnet when Opus is not allowed). Thresholds and reviewer models are `review.*` settings.
+- Reviewers start from a context packet (the original spec, the agent's report, the files it changed, its test claim) through the new `review_packet` tool, and the main conversation gets a one-line note with the tier.
+- The checker's verdict replaces the worker's: a reviewer ends with `VERDICT: PASS|FAIL for <name>`, or the main agent calls `record_verdict`; pass rates count checked work.
+- Fixes from a review: the one-time ledger repair skips unreadable transcripts and keeps runs added meanwhile; a resumed agent shows as working and keeps its earlier tokens.
+- The band re-anchors its animation timing on every redraw, stays under the 131k limit at any width, and re-reads agents' latest lines at most every 10 seconds; a larger magnifier and a swaying thinking pose.
+- Pane rows keep their buttons inside the card when text is long; the band's hover card leads with a small transcript icon.
+- `patterns check` reads `--dir` (default `./patterns`) and fails when the folder is missing; the unread `patterns.*` settings are gone.
+
 ## 0.6.4 — 2026-10-12
 
 - The band above the prompt draws Claude bots in vector art. Their faces change with mood, and their poses show desk or terminal work, a magnifier, a book, a thought bubble, coffee while waiting, and a gauge when an agent passes its token limit.

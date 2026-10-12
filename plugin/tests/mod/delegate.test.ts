@@ -24,6 +24,17 @@ test("the note reflects the gate settings", () => {
   expect(delegationNote({ ...GATE, allow_opus: true, allow_nested: false, rules: [] })).toContain("Opus subagents are allowed; routing rules (first match wins): none; agents may not start their own.");
 });
 
+test("the note tells the main model how to follow a review note, once", () => {
+  const lines = delegationNote(GATE).split("\n");
+  const bullets = lines.filter((l) => l.includes("review note"));
+  expect(bullets.length).toBe(1);
+  expect(bullets[0].startsWith("- When HaiKrew posts a review note after an agent finishes")).toBe(true);
+  expect(bullets[0]).toContain("light → glance at the diff and call `record_verdict`");
+  expect(bullets[0]).toContain("`HAIKREW job=review name=...`");
+  expect(bullets[0]).toContain("call `review_packet` first");
+  expect(bullets[0]).toContain("`VERDICT: PASS|FAIL for <name>`");
+});
+
 test("withNote appends to the CLAUDE.md block once, adds one when missing, and leaves other blocks alone", () => {
   const blocks = [{ name: "other", text: "x" }, { name: "claudeMd", text: "Mine." }];
   const once = withNote(blocks, "N") as { name: string; text: string }[];

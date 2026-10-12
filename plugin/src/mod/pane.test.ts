@@ -38,6 +38,21 @@ async function drawnText(m: any): Promise<string> {
   return JSON.stringify(await m.drawn({}));
 }
 
+/** A drawn element: its type, its props, and its children (a Text's content is a string child). */
+type Drawn = { type?: string; props?: Record<string, any>; children?: unknown[] };
+
+/** Every element under `node`, the node itself first. */
+function elements(node: unknown): Drawn[] {
+  if (!node || typeof node !== "object") return [];
+  const el = node as Drawn;
+  return [el, ...childrenOf(el).flatMap(elements)];
+}
+
+/** The element children of `el`, without the text strings. */
+function childrenOf(el: Drawn): Drawn[] {
+  return (el.children ?? []).filter((c): c is Drawn => typeof c === "object" && c !== null);
+}
+
 test("an agent's latest line is read again only once its memo is 10 seconds old", async () => {
   const memo = new Map<string, { at: number; line: string }>();
   let reads = 0;
@@ -203,6 +218,37 @@ test("the desktop draws one page: banner, controls, crew, tokens, track record a
   expect(await drawnText(m)).toContain("Routing rules");
   await m.press({ key: "card-tokens-toggle" });
   expect(await drawnText(m)).toContain("Context 1%");
+});
+
+test("on a narrow desktop, text beside a control may shrink and the control keeps its size", async (ctx: any, on: any) => {
+  host(on);
+  await ctx.command.run({ command: "haikrew" });
+  const m = await ctx.ui.mount({ plugin: "haikrew", surface: "desktop", component: "Pane", props: { bodyColumns: 40, scroll: { offset: 0, bodyRows: 41 } },
+    requestId: "haikrew", viewport: { columns: 60, rows: 47 } });
+  await m.press({ key: "card-settings-toggle" });
+  const tree = await m.drawn({});
+  // The rows inside the cards, where the text can be long. The gate line above them is pane.ts's, with a one-word label.
+  const cards = elements(tree).filter((el) => typeof el.props?.key === "string" && el.props.key.startsWith("card-"));
+  const rows = new Set(cards.flatMap(elements).filter((el) => el.type === "Box" && el.props?.flexDirection === "row"));
+  let checked = 0;
+  for (const row of rows) {
+    const kids = childrenOf(row);
+    const controls = kids.filter((k) => elements(k).some((el) => el.type === "Button"));
+    const text = kids.filter((k) => !controls.includes(k) && elements(k).some((el) => el.type === "Text"));
+    if (controls.length === 0 || text.length === 0) continue;
+    checked += 1;
+    for (const t of text) expect(t.props?.minWidth).toBe(0);
+    for (const c of controls) expect(c.props?.flexShrink).toBe(0);
+  }
+  // The Controls card's five switches and buttons, and the four Settings groups.
+  expect(checked).toBeGreaterThanOrEqual(9);
+  const routing = elements(tree).find((el) => el.props?.key === "group-row-routing");
+  expect(routing).toBeDefined();
+  const [label, control] = childrenOf(routing as Drawn);
+  expect(label.props?.minWidth).toBe(0);
+  expect(elements(label).some((el) => el.type === "Text" && el.props?.wrap === "wrap")).toBe(true);
+  expect(control.props?.flexShrink).toBe(0);
+  expect(elements(control).some((el) => el.type === "Button" && el.props?.key === "group-routing")).toBe(true);
 });
 
 test("on the desktop the crew sits in the band above the prompt, unless turned off or a survey holds it", async (ctx: any, on: any) => {

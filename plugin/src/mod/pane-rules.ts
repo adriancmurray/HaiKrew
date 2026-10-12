@@ -6,7 +6,7 @@
 import { validate } from "../schema.ts";
 import { buildInstruction, buildRule, effortOf, EFFORTS, KINDS, MODELS, phrase, readInstruction, readRule, SQUEEZE_PRESETS, title, withEffort } from "./rules.ts";
 import type { Condition } from "./rules.ts";
-import { C, hrow, modelColor, onOff, txt, vcol, view } from "./ui.ts";
+import { C, hrow, modelColor, onOff, textAndControls, txt, vcol, view } from "./ui.ts";
 import type { Actions, Ui } from "./ui.ts";
 
 type Form = Record<string, string>;
@@ -66,8 +66,7 @@ function formConds(f: Form): Condition[] {
 /** "When [kind] is [value]" with an optional second condition, as dropdowns and fields. */
 function conditionRows(ui: Ui, act: Actions, id: string, f: Form): unknown[] {
   const options = KINDS.map((k) => ({ value: k.key, label: k.label }));
-  const row = (n: "" | "2", lead: string): unknown => hrow(ui, { columnGap: 1, alignItems: "center", flexWrap: "wrap" }, [
-    ui.Box({ width: 6, children: [txt(ui, { dimColor: true }, lead)] }),
+  const row = (n: "" | "2", lead: string): unknown => textAndControls(ui, [txt(ui, { dimColor: true }, lead)], [
     ui.Select({ key: `${id}-kind${n}`, value: f[`kind${n}`], options, onSelect: (v: string) => {
       f[`kind${n}`] = v;
       act.redraw();
@@ -78,7 +77,7 @@ function conditionRows(ui: Ui, act: Actions, id: string, f: Form): unknown[] {
       f.two = f.two ? "" : "1";
       act.redraw();
     } }) : null,
-  ]);
+  ], { row: { columnGap: 1, justifyContent: "flex-start", flexWrap: "wrap" }, text: { width: 6, flexGrow: 0 } });
   return [row("", "When"), f.two ? row("2", "and") : null];
 }
 
@@ -86,16 +85,13 @@ function rulesEditor(ui: Ui, act: Actions, id: string, items: string[], allowOpu
   const f = form(id);
   const list = items.map((rule, i) => {
     const r = readRule(rule);
-    return hrow(ui, { key: `${id}-row-${i}`, columnGap: 1, alignItems: "center", hover: { backgroundColor: "#8A8A8A1F" } }, [
+    return textAndControls(ui, [hrow(ui, { columnGap: 1, flexWrap: "wrap" }, [
       txt(ui, { dimColor: true }, `${i + 1}.`),
-      ui.Box({ flexGrow: 1, flexShrink: 1, flexDirection: "row", columnGap: 1, flexWrap: "wrap", children: [
-        txt(ui, { dimColor: true }, "When"), txt(ui, {}, phrase(r.conds)), txt(ui, { dimColor: true }, "→"),
-        txt(ui, { bold: true, color: modelColor(r.model) }, title(r.model)),
-        r.effort ? txt(ui, { dimColor: true }, `${r.effort} effort`) : null,
-        r.model === "opus" && !allowOpus ? txt(ui, { color: C.warn }, "(refused while Opus is off)") : null,
-      ].filter((x) => x !== null) }),
-      ...rowActions(ui, act, id, items, i),
-    ]);
+      txt(ui, { dimColor: true }, "When"), txt(ui, {}, phrase(r.conds)), txt(ui, { dimColor: true }, "→"),
+      txt(ui, { bold: true, color: modelColor(r.model) }, title(r.model)),
+      r.effort ? txt(ui, { dimColor: true }, `${r.effort} effort`) : null,
+      r.model === "opus" && !allowOpus ? txt(ui, { color: C.warn }, "(refused while Opus is off)") : null,
+    ])], rowActions(ui, act, id, items, i), { row: { key: `${id}-row-${i}`, hover: { backgroundColor: "#8A8A8A1F" } } });
   });
   const draft = buildRule(formConds(f), f.model, f.effort);
   const add = async (): Promise<void> => {
@@ -111,20 +107,15 @@ function rulesEditor(ui: Ui, act: Actions, id: string, items: string[], allowOpu
     vcol(ui, { borderStyle: "round", borderDimColor: true, paddingX: 1, rowGap: 1 }, [
       txt(ui, { bold: true }, "New rule"),
       ...conditionRows(ui, act, id, f),
-      hrow(ui, { columnGap: 1, alignItems: "center", flexWrap: "wrap" }, [
-        ui.Box({ width: 6, children: [txt(ui, { dimColor: true }, "Use")] }),
-        ...MODELS.map((m) => ui.Button({ key: `${id}-model-${m}`, label: title(m), variant: f.model === m ? "primary" : "secondary",
-          onPress: () => { f.model = m; act.redraw(); } })),
-      ]),
+      textAndControls(ui, [txt(ui, { dimColor: true }, "Use")], MODELS.map((m) => ui.Button({ key: `${id}-model-${m}`, label: title(m), variant: f.model === m ? "primary" : "secondary",
+        onPress: () => { f.model = m; act.redraw(); } })), { row: { justifyContent: "flex-start", flexWrap: "wrap" }, text: { width: 6, flexGrow: 0 } }),
       hrow(ui, { columnGap: 1, alignItems: "center", flexWrap: "wrap" }, [
         ui.Box({ width: 6, children: [txt(ui, { dimColor: true }, "Effort")] }),
         ui.Select({ key: `${id}-effort`, value: f.effort || "own", options: [{ value: "own", label: "Agent's own" },
           ...EFFORTS.map((e) => ({ value: e, label: title(e) }))], onSelect: (v: string) => { f.effort = v === "own" ? "" : v; act.redraw(); } }),
       ]),
-      hrow(ui, { justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", columnGap: 1 }, [
-        txt(ui, { dimColor: true }, f.value.trim() ? `When ${phrase(formConds(f))} → ${title(f.model)}` : "Rules are checked top to bottom; the first match wins."),
-        ui.Button({ key: `${id}-add`, label: "Add rule", variant: "primary", onPress: add }),
-      ]),
+      textAndControls(ui, [txt(ui, { dimColor: true, wrap: "wrap" }, f.value.trim() ? `When ${phrase(formConds(f))} → ${title(f.model)}` : "Rules are checked top to bottom; the first match wins.")],
+        [ui.Button({ key: `${id}-add`, label: "Add rule", variant: "primary", onPress: add })]),
     ]),
   ]);
 }
@@ -133,12 +124,8 @@ function instructionsEditor(ui: Ui, act: Actions, id: string, items: string[]): 
   const f = form(id);
   const list = items.map((entry, i) => {
     const r = readInstruction(entry);
-    return hrow(ui, { key: `${id}-row-${i}`, columnGap: 1, alignItems: "center", hover: { backgroundColor: "#8A8A8A1F" } }, [
-      ui.Box({ flexGrow: 1, flexShrink: 1, flexDirection: "column", children: [
-        txt(ui, { dimColor: true }, `When ${phrase(r.conds)}, add:`), txt(ui, { italic: true }, r.text),
-      ] }),
-      ...rowActions(ui, act, id, items, i),
-    ]);
+    return textAndControls(ui, [txt(ui, { dimColor: true, wrap: "wrap" }, `When ${phrase(r.conds)}, add:`), txt(ui, { italic: true, wrap: "wrap" }, r.text)],
+      rowActions(ui, act, id, items, i), { row: { key: `${id}-row-${i}`, hover: { backgroundColor: "#8A8A8A1F" } } });
   });
   const add = async (): Promise<void> => {
     if (formConds(f).some((c) => c.value.trim() === "") || !f.text.trim()) {
@@ -164,13 +151,11 @@ function instructionsEditor(ui: Ui, act: Actions, id: string, items: string[]): 
 function effortEditor(ui: Ui, act: Actions, id: string, items: string[]): unknown {
   return vcol(ui, { rowGap: 1 }, MODELS.map((m) => {
     const current = effortOf(items, m);
-    return hrow(ui, { columnGap: 1, alignItems: "center", flexWrap: "wrap" }, [
-      ui.Box({ width: 10, flexDirection: "row", columnGap: 1, children: [txt(ui, { color: modelColor(m) }, "●"), txt(ui, {}, title(m))] }),
-      ...["", ...EFFORTS].map((e) => ui.Button({
+    return textAndControls(ui, [ui.Box({ width: 10, flexDirection: "row", columnGap: 1, children: [txt(ui, { color: modelColor(m) }, "●"), txt(ui, {}, title(m))] })],
+      ["", ...EFFORTS].map((e) => ui.Button({
         key: `${id}-${m}-${e || "own"}`, label: e ? title(e) : "Own", variant: current === e ? "primary" : "secondary",
         onPress: () => saveList(act, id, withEffort(items, m, e)),
-      })),
-    ]);
+      })), { row: { justifyContent: "flex-start", flexWrap: "wrap" }, text: { width: 10, flexGrow: 0 } });
   }));
 }
 
@@ -178,10 +163,9 @@ function effortEditor(ui: Ui, act: Actions, id: string, items: string[]): unknow
 function patternsEditor(ui: Ui, act: Actions, id: string, items: string[]): unknown {
   const presets = SQUEEZE_PRESETS.map((p, i) => {
     const on = items.includes(p.pattern);
-    return hrow(ui, { key: `${id}-p-${i}`, columnGap: 1, alignItems: "center", hover: { backgroundColor: "#8A8A8A1F" } }, [
-      ui.Box({ flexGrow: 1, children: [txt(ui, { dimColor: !on }, p.label)] }),
-      onOff(ui, `${id}-preset-${i}`, on, (v) => saveList(act, id, v ? [...items, p.pattern] : items.filter((x) => x !== p.pattern))),
-    ]);
+    return textAndControls(ui, [txt(ui, { dimColor: !on }, p.label)],
+      [onOff(ui, `${id}-preset-${i}`, on, (v) => saveList(act, id, v ? [...items, p.pattern] : items.filter((x) => x !== p.pattern)))],
+      { row: { key: `${id}-p-${i}`, hover: { backgroundColor: "#8A8A8A1F" } } });
   });
   const known = new Set(SQUEEZE_PRESETS.map((p) => p.pattern));
   const custom = items.map((p, i) => [p, i] as const).filter(([p]) => !known.has(p));
@@ -189,8 +173,7 @@ function patternsEditor(ui: Ui, act: Actions, id: string, items: string[]): unkn
     vcol(ui, {}, presets),
     vcol(ui, {}, [
       txt(ui, { dimColor: true }, "Custom (a regular expression matched against the start of a command)"),
-      ...custom.map(([p, i]) => hrow(ui, { columnGap: 1 }, [ui.Box({ flexGrow: 1, children: [ui.Code({ source: p, language: "regex" })] }),
-        ...rowActions(ui, act, id, items, i)])),
+      ...custom.map(([p, i]) => textAndControls(ui, [ui.Code({ source: p, language: "regex" })], rowActions(ui, act, id, items, i))),
       ui.Input({ key: `${id}-add`, placeholder: "^bazel test\\b", submitLabel: "Add", value: view.forms[id]?.text ?? "",
         onInput: (v: string) => { form(id).text = v; },
         onSubmit: async (v: string) => {

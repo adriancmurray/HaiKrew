@@ -27,11 +27,15 @@ A good spec makes Haiku's job mechanical. Each one fits on one screen and contai
 
 Split work so each spec is one crate or module and about 300 lines of output or less. Several small Haiku agents beat one big one. Run them in parallel only when they touch different repos, because builds queue on the heavy lock anyway.
 
-## Verifying (keep it cheap)
-1. Read the agent's report (120 words at most). Don't open its transcript.
-2. Run `haikrew verify` yourself in the worktree. Trust the verdict, not the report.
-3. Review with `git diff --stat main` and then read only the diff hunks that carry risk: public API, unsafe code, concurrency, permissions, anything security-related. Skip generated files and tests unless something looks wrong.
-4. If it fails: send a short correction with SendMessage to the same agent (its context is intact) rather than starting a new one. After two failed corrections, escalate to Sonnet or do it inline.
+## Review tiers (keep it cheap)
+When a subagent finishes, HaiKrew writes a review packet (spec, report, files changed, test claim) and posts a review note naming a tier. Don't open the agent's transcript; the packet and the report (120 words at most) are enough.
+- **Light** (only docs or tests, a small diff, tests not failing): glance at the diff, then call `record_verdict` with pass or fail.
+- **Standard** (everything else): launch the reviewer the note names with `HAIKREW job=review name=<Name>`. Tell it to call `review_packet` first and to end with `VERDICT: PASS|FAIL for <Name>`.
+- **Deep** (a sensitive path, a large diff, a security, migration, concurrency or protocol job, failing tests, or a model with a weak record on this job): the same, with the deep reviewer.
+
+The checker's verdict replaces the run's own in the ledger, marked with the checker's name. Then:
+1. Run `haikrew verify` yourself in the worktree. Trust the verdict, not the report, and read only the diff hunks that carry risk: public API, unsafe code, concurrency, permissions.
+2. If a review or verify fails, send a short correction with SendMessage to the same agent (its context is intact), or re-run the work. Fix failed work before building on it. After two failed corrections, escalate to Sonnet or do it inline.
 
 ## Budget discipline
 - One round of agents per user message. Say up front how many agents and what each does.

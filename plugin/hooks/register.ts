@@ -14,8 +14,11 @@ import { hookGuard, readGuard, squeeze, tokenLimit } from "../src/mod/guards.ts"
 import type { ChecksSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
-import { activityOf, agentModel, liveUsage, noteMainChunk, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteTurnEnd, rowFor } from "../src/mod/crew.ts";
-import { addRun, combineUsage, readState, runFromStop } from "../src/mod/ledger.ts";
+import { activityOf, agentModel, liveUsage, noteMainChunk, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteTurnEnd, rowFor, specOf, touched } from "../src/mod/crew.ts";
+import { addRun, applyChecked, combineUsage, finalReport, parseCheckerVerdict, readState, runFromStop, summary } from "../src/mod/ledger.ts";
+import { buildPacket, reviewNote, testsClaim } from "../src/mod/packet.ts";
+import { reviewPlan } from "../src/mod/review.ts";
+import type { ReviewSettings } from "../src/mod/review.ts";
 import { registerPane } from "../src/mod/pane.ts";
 import { delegationNote, withNote } from "../src/mod/delegate.ts";
 import type { DelegateSettings } from "../src/mod/delegate.ts";
@@ -118,11 +121,16 @@ export function register(on) {
   });
 
   on("classic.SubagentStop", async ($, e, next) => {
-    let run: { verdict: string; model: string } | null = null;
+    let run: StopRun | null = null;
     try {
       run = await recordStop($, e);
     } catch {
       // The ledger never blocks a subagent from finishing.
+    }
+    try {
+      await planReview($, e, run);
+    } catch {
+      // A review note never blocks a subagent from finishing either.
     }
     noteStop(String(e.agent_id ?? ""), String(e.agent_type ?? ""), run?.verdict ?? null, Date.now(), run?.model ?? "");
     $.ui.invalidate("ui.render"); // crew changed: the band and pane redraw
@@ -165,7 +173,7 @@ async function readFile($: Api, path: string): Promise<string | null> {
  * Append the finished subagent's run to the ledger and return its verdict and model. Skips (returns null) when ledger.enabled
  * is off or the transcript is unreadable.
  */
-async function recordStop($: Api, e: Record<string, unknown>): Promise<{ verdict: string; model: string } | null> {
+async function recordStop($: Api, e: Record<string, unknown>): Promise<StopRun | null> {
   const cfg = await loadSettings($);
   const path = typeof e.agent_transcript_path === "string" ? e.agent_transcript_path : "";
   const transcript = cfg.ledger.enabled && path ? await readFile($, path) : null;
@@ -175,7 +183,53 @@ async function recordStop($: Api, e: Record<string, unknown>): Promise<{ verdict
   const parsed = runFromStop(e, transcript);
   const live = liveUsage(String(e.agent_id ?? ""));
   const run = live ? combineUsage(parsed, live) : parsed;
-  const state = addRun(readState(await $.store.get("ledger")), run, cfg);
+  const state = addRun(readState(await $.store.get("ledger")), { ...run, name: rowFor(run.agent_id, Date.now())?.name }, cfg);
   await $.store.set("ledger", state);
-  return { verdict: run.verdict, model: run.model };
+  return { verdict: run.verdict, model: run.model, job: run.job, lang: run.lang, report: finalReport(transcript) };
+}
+
+/**
+ * After the run is recorded: a checker's verdict line settles the run it names; any other finished agent (except a review
+ * job) gets a review plan, and a tier above none stores a packet and tells the main conversation.
+ */
+async function planReview($, e: Record<string, unknown>, run: StopRun | null): Promise<void> {
+  if (!run) return;
+  const id = String(e.agent_id ?? "");
+  const name = rowFor(id, Date.now())?.name ?? id;
+  const checked = parseCheckerVerdict(run.report);
+  if (checked) {
+    const state = applyChecked(readState(await $.store.get("ledger")), { name: checked.name }, checked.verdict, name);
+    await $.store.set("ledger", state);
+    return;
+  }
+  if (run.job === "review") return;
+  const cfg = await loadSettings($);
+  const stats = summary(readState(await $.store.get("ledger"))).by_key
+    .find((k) => k.model === run.model && k.job === run.job && k.lang === run.lang);
+  const record = stats && Number(stats.judged) > 0 ? { judged: Number(stats.judged), passRate: Number(stats.pass_rate) } : null;
+  const { paths, lines } = touched(id);
+  const plan = reviewPlan({ job: run.job, lang: run.lang, paths, lines, testsPassed: testsClaim(run.report), model: run.model, record },
+    (cfg as unknown as { review: ReviewSettings }).review, Boolean(cfg.gate.allow_opus));
+  if (plan.tier === "none") return;
+  const packet = buildPacket({ name, type: String(e.agent_type ?? "agent"), model: run.model, spec: specOf(id), report: run.report,
+    paths, lines, testsPassed: testsClaim(run.report), plan });
+  const packets = asRecord(await $.store.get("review_packets"));
+  delete packets[name];
+  packets[name] = packet;
+  const keep = Object.keys(packets).slice(-20); // insertion order: the newest last
+  await $.store.set("review_packets", Object.fromEntries(keep.map((k) => [k, packets[k]])));
+  const text = reviewNote(name, plan, paths, lines);
+  if (!text) return;
+  try {
+    // A plugin's append takes the row alone; the engine stamps its origin (this plugin) and door itself.
+    await $.session.append({ message: { type: "user", content: [{ type: "text", text }] } });
+  } catch {
+    // A refused append only loses the note.
+  }
+}
+
+type StopRun = { verdict: string; model: string; job: string; lang: string; report: string };
+
+function asRecord(v: unknown): Record<string, string> {
+  return typeof v === "object" && v !== null && !Array.isArray(v) ? { ...(v as Record<string, string>) } : {};
 }

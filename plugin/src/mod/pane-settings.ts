@@ -7,7 +7,7 @@ import { SCHEMA, validate } from "../schema.ts";
 import type { Field, Settings } from "../schema.ts";
 import { specialEditor } from "./pane-rules.ts";
 import { title } from "./rules.ts";
-import { C, foldCard, hrow, onOff, txt, vcol, view } from "./ui.ts";
+import { C, foldCard, hrow, onOff, textAndControls, txt, vcol, view } from "./ui.ts";
 import type { Actions, CardFrame, Ui } from "./ui.ts";
 
 /** A field's readable name: its schema label, else its key with the underscores spaced out. */
@@ -64,13 +64,12 @@ export function settingsSection(ui: Ui, act: Actions, frame: CardFrame, settings
   return foldCard(ui, act, frame, "card-settings", "Settings", "saved for every session", GROUPS.map((g) => groupSummary(g.id, settings)).join(" · "), false, GROUPS.map((g) => {
     const open = Boolean(view.open[`group-${g.id}`]);
     return vcol(ui, { rowGap: 1 }, [
-      hrow(ui, { key: `group-row-${g.id}`, justifyContent: "space-between", alignItems: "center", columnGap: 2, hover: { backgroundColor: "#8A8A8A1A" } }, [
-        vcol(ui, { flexShrink: 1 }, [txt(ui, { bold: true }, g.label), txt(ui, { dimColor: true, wrap: "truncate-end" }, groupSummary(g.id, settings))]),
+      textAndControls(ui, [txt(ui, { bold: true }, g.label), txt(ui, { dimColor: true, wrap: "wrap" }, groupSummary(g.id, settings))], [
         ui.Button({ key: `group-${g.id}`, label: open ? "✓" : "✎", ...(open ? { variant: "primary" } : {}), onPress: () => {
           view.open[`group-${g.id}`] = !open;
           act.redraw();
         } }),
-      ]),
+      ], { row: { key: `group-row-${g.id}`, hover: { backgroundColor: "#8A8A8A1A" } } }),
       ...(open ? g.sections.map((name) => sectionCard(ui, act, settings, name, Math.max(20, cols - 10))) : []),
     ]);
   }));
@@ -85,7 +84,7 @@ function sectionCard(ui: Ui, act: Actions, settings: Settings, section: string, 
   const fields = Object.entries(sec.fields).filter(([key]) => !(toggle && key === "enabled"));
   return vcol(ui, { key: `card-${section}`, borderStyle: "round", borderColor: off ? C.muted : C.accent, borderDimColor: off, paddingX: 2, paddingY: 1, rowGap: 2 }, [
     vcol(ui, {}, [
-      hrow(ui, { justifyContent: "space-between", alignItems: "center" }, [txt(ui, { bold: true }, sec.title), toggle]),
+      textAndControls(ui, [txt(ui, { bold: true }, sec.title)], [toggle]),
       txt(ui, { dimColor: true }, off ? `${sec.help} Off: the settings below are kept and apply once it is on.` : sec.help),
     ]),
     ...fields.map(([key, field]) => fieldRow(act, ui, section, key, field, values[key], width, Boolean(settings.gate.allow_opus))),
@@ -107,24 +106,21 @@ function fieldRow(act: Actions, ui: Ui, section: string, key: string, field: Fie
   const more = field.short !== undefined;
   const help = more && !view.open[id] ? field.short : field.help;
   const wide = field.type === "list";
-  const info = vcol(ui, { flexGrow: 1, flexShrink: 1, width: wide ? "100%" : "58%" }, [
+  const info = vcol(ui, wide ? { width: "100%" } : {}, [
     txt(ui, { bold: true }, labelOf(key, field)),
-    hrow(ui, { columnGap: 1, flexWrap: "wrap" }, [
-      txt(ui, { dimColor: true }, help),
-      more ? ui.Button({
-        key: `${id}-help`, label: view.open[id] ? "less" : "more", plain: true, dimColor: true,
-        onPress: () => {
-          view.open[id] = !view.open[id];
-          act.redraw();
-        },
-      }) : null,
-    ]),
+    textAndControls(ui, [txt(ui, { dimColor: true, wrap: "wrap" }, help)], [more ? ui.Button({
+      key: `${id}-help`, label: view.open[id] ? "less" : "more", plain: true, dimColor: true,
+      onPress: () => {
+        view.open[id] = !view.open[id];
+        act.redraw();
+      },
+    }) : null], { row: { columnGap: 1, justifyContent: "flex-start" }, text: { flexGrow: 0 } }),
   ]);
   const body = wide
     ? vcol(ui, { rowGap: 1 }, [info, specialEditor(ui, act, id, current, allowOpus) ?? listEditor(act, ui, id, section, key, current as string[], width)])
-    : hrow(ui, { justifyContent: "space-between", alignItems: "center", columnGap: 2, flexWrap: "wrap" }, [
-      info, ui.Box({ flexShrink: 0, children: [control(act, ui, id, section, key, field, current)] }),
-    ]);
+    : textAndControls(ui, [info], [control(act, ui, id, section, key, field, current)], {
+      row: { flexWrap: "wrap" }, text: { width: "58%" },
+    });
   return vcol(ui, {}, [body, error ? txt(ui, { color: C.bad }, error) : null]);
 }
 
@@ -161,9 +157,10 @@ function listEditor(act: Actions, ui: Ui, id: string, section: string, key: stri
   const save = (next: string[]): Promise<void> => act.save(id, section, key, next);
   const rows = items.map((item, i) => {
     const armed = view.armed === `rm:${id}:${i}:${item}`;
-    return hrow(ui, { key: `${id}-row-${i}`, columnGap: 1, hover: { backgroundColor: "#8A8A8A1F" } }, [
+    return textAndControls(ui, [hrow(ui, { columnGap: 1 }, [
       txt(ui, { dimColor: true }, `${String(i + 1).padStart(2)}.`),
-      ui.Box({ flexGrow: 1, flexShrink: 1, children: [txt(ui, { wrap: "truncate-end" }, item)] }),
+      ui.Box({ flexGrow: 1, flexShrink: 1, minWidth: 0, children: [txt(ui, { wrap: "truncate-end" }, item)] }),
+    ])], [
       i > 0 ? ui.Button({
         key: `${id}-up-${i}`, label: "↑", plain: true, dimColor: true,
         onPress: () => save([...items.slice(0, i - 1), item, items[i - 1], ...items.slice(i + 1)]),
@@ -180,7 +177,7 @@ function listEditor(act: Actions, ui: Ui, id: string, section: string, key: stri
           await save(items.filter((_, j) => j !== i));
         },
       }),
-    ].filter((c) => c !== null));
+    ], { row: { key: `${id}-row-${i}`, columnGap: 1, hover: { backgroundColor: "#8A8A8A1F" } } });
   });
   const add = ui.Input({
     key: `${id}-add`, placeholder: "add an entry", submitLabel: "Add", value: view.drafts[`${id}-add`] ?? "",
