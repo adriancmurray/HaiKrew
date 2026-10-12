@@ -30,6 +30,9 @@ const DESKTOP_TICK_MS = 2000;
 /** Terminal ticks between roster redraws, so the roster refreshes about once a second. */
 const ROSTER_EVERY_TICKS = 4;
 /** The scene's timer while it runs; null when it is stopped. */
+// The slow sky tick, started once per load at session start.
+let skyTimer: unknown = null;
+const SKY_TICK_MS = 15 * 60 * 1000;
 let stopTimer: (() => void) | null = null;
 type Api = Record<string, any>;
 
@@ -44,6 +47,9 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
     }
     const reply = await next(e);
     void repairLedger($);
+    // The band has no redraw timer; this slow one lets an idle sky move on (dusk to night) and the moon change. The
+    // band's SVG is cached by the quarter hour, so a tick that changes nothing hands the app the same picture.
+    if (!skyTimer) skyTimer = $.clock.every(SKY_TICK_MS, () => $.ui.invalidate("ui.render"));
     const settings = await loadSettings($);
     if (allowed(settings, "status") === null) await registerTools($);
     if (settings.pane.open_on_start) await $.ui.open({ id: PANE, title: "HaiKrew" });
@@ -69,7 +75,7 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
     const ui = $.ui.resolve(e) as Ui;
     const crew = snapshot(await liveAgents($), Date.now());
     crew.lead = { state: leadState(crew.working), model: String(await $.session.model().catch(() => "")) };
-    if (crew.working > 0) startTimer($, true);
+    // No timer here: the band's loops run inside its SVG, and it redraws only when what it shows changes.
     return crewBand(ui, crew, Math.max(24, Number(e.props?.bodyColumns) || 80), await themeIsDark($), {
       band: settings.band, messages: await latestMessages($, crew), now: Date.now(),
       open: () => $.ui.open({ id: PANE, title: "HaiKrew", focus: true, closeOnEscape: true }),

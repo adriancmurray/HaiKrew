@@ -19,7 +19,7 @@ import { activityOf, animatedSceneSvg, bannerSvg, SVG_ROWS } from "./sprites.ts"
 import type { Activity } from "./sprites.ts";
 import { moonPhase, skyHour, skySvg } from "./sky.ts";
 import type { SkyMode } from "./sky.ts";
-import { gauges, inkFor, table } from "./svg.ts";
+import { anchorAnimations, gauges, inkFor, table } from "./svg.ts";
 import type { Ink } from "./svg.ts";
 import { C, CARD_INSET, compact, fillColor, foldCard, hexOf, hrow, labelled, modelColor, modelName, onOff, pxOf, thousands, txt, vcol, view, when } from "./ui.ts";
 import type { TimeStyle } from "./ui.ts";
@@ -96,8 +96,9 @@ export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: 
   const b = opts.band;
   const mode = String(b.sky) as SkyMode;
   const local = new Date(opts.now);
-  const sky = skySvg(sceneCols, SVG_ROWS, { mode, hour: skyHour(mode, local.getHours() + local.getMinutes() / 60),
-    phase: moonPhase(opts.now), clouds: Boolean(b.clouds) });
+  const hour = skyHour(mode, local.getHours() + local.getMinutes() / 60);
+  const phase = moonPhase(opts.now);
+  const sky = skySvg(sceneCols, SVG_ROWS, { mode, hour, phase, clouds: Boolean(b.clouds) });
   const scene = animatedSceneSvg(crew, sceneCols, inkFor(dark), {
     headwear: String(b.headwear) as "crown" | "wizard" | "cap" | "none",
     colors: { haiku: String(b.haiku_color), sonnet: String(b.sonnet_color), opus: String(b.opus_color) },
@@ -106,8 +107,10 @@ export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: 
   const toCol = (x: number): number => Math.floor((x * cols) / sceneCols);
   const toRow = (y: number): number => Math.max(0, Math.min(rows - 1, Math.floor((y * rows) / SVG_ROWS)));
   const lead = crew.lead ?? { state: crew.working > 0 ? "directing" : "resting", model: "opus" };
+  const drawn = crew.rows.filter((r) => scene.spots.some((s) => s.id === r.id));
+  const source = sceneSource({ sceneCols, dark, band: b, hour, phase, lead, rows: drawn }, scene.svg, opts.now);
   const who = crew.working ? `${crew.working} working` : "resting";
-  const svg = ui.Svg({ source: scene.svg, alt: `The crew, ${who}: one pixel critter per agent, the main agent first`, width: full, height });
+  const svg = ui.Svg({ source, alt: `The crew, ${who}: one pixel critter per agent, the main agent first`, width: full, height });
   const orbLeft = toCol(sky.orb.x - sky.orb.r - 1);
   const cardWidth = Math.min(orbLeft, 64);
   const cardLeft = (left: number): number => Math.max(0, Math.min(orbLeft - cardWidth, left - 1));
@@ -143,6 +146,29 @@ export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: 
   ] });
   // An explicit height, with the hover layers clipped to it, so nothing they place can make the band taller.
   return ui.Box({ key: "crew-band", flexDirection: "column", height: rows, overflow: "hidden", children: [svg, ...targets, opener] });
+}
+
+/** What the band's scene is drawn from: the sky (quarter hour and moon phase), the settings, the lead and the crew as drawn. */
+type SceneInputs = {
+  sceneCols: number; dark: boolean; band: Settings["band"]; hour: number; phase: number; lead: Lead; rows: Row[];
+};
+
+/** The last band source drawn, with the key it was drawn for. */
+let bandCache: { key: string; svg: string } | null = null;
+
+/**
+ * The band's scene source. The sky is keyed by the quarter hour and the moon phase to two decimals, so a redraw
+ * within them hands the app the same SVG and its loops keep their place. A new key draws and anchors a new source
+ * at `now`.
+ */
+function sceneSource(s: SceneInputs, svg: string, now: number): string {
+  const key = JSON.stringify({
+    sceneCols: s.sceneCols, dark: s.dark, band: s.band, hour: Math.floor(s.hour * 4) / 4, phase: Math.round(s.phase * 100) / 100,
+    lead: [s.lead.state, s.lead.model], rows: s.rows.map((r) => [r.id, r.model, r.state, activityOf(r), r.over]),
+  });
+  if (bandCache && bandCache.key === key) return bandCache.svg;
+  bandCache = { key, svg: anchorAnimations(svg, now) };
+  return bandCache.svg;
 }
 
 /**

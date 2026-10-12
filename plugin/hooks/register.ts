@@ -14,7 +14,8 @@ import { hookGuard, readGuard, squeeze, tokenLimit } from "../src/mod/guards.ts"
 import type { ChecksSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
-import { agentModel, liveUsage, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteTurnEnd } from "../src/mod/crew.ts";
+import { agentModel, liveUsage, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteTurnEnd, rowFor } from "../src/mod/crew.ts";
+import { activityOf } from "../src/mod/sprites.ts";
 import { addRun, readState, runFromStop, withLiveUsage } from "../src/mod/ledger.ts";
 import { registerPane } from "../src/mod/pane.ts";
 import { delegationNote, withNote } from "../src/mod/delegate.ts";
@@ -80,8 +81,14 @@ export function register(on) {
     return result;
   });
 
-  on("tool.call", async (_$, e, next) => {
-    noteToolCall(e, Date.now());
+  // Redraw the band only when the agent's activity (what its critter shows) changes, or when it first appears.
+  on("tool.call", async ($, e, next) => {
+    const now = Date.now();
+    const id = typeof e.agentId === "string" ? e.agentId : "";
+    const before = id ? rowFor(id, now) : undefined;
+    noteToolCall(e, now);
+    const after = id ? rowFor(id, now) : undefined;
+    if (after && (!before || activityOf(before) !== activityOf(after))) $.ui.invalidate("ui.render");
     return next(e);
   });
 

@@ -214,6 +214,12 @@ export function snapshot(live: LiveAgent[], now: number): Crew {
   return { rows, working: rows.filter((r) => r.state === "working").length };
 }
 
+/** The roster row for one tracked agent at `now`, or undefined when no spawn or call has named it yet. */
+export function rowFor(id: string, now: number): Row | undefined {
+  const m = members.get(id);
+  return m ? toRow(m, 0, now) : undefined;
+}
+
 function mergeLive(a: LiveAgent, now: number): void {
   if (typeof a.id !== "string" || !a.id) return;
   const m = member(a.id, now);

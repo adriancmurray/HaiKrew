@@ -114,3 +114,33 @@ export function gauges(items: Gauge[], width: number, ink: Ink): string {
   const h = Math.ceil(items.length / perRow) * cellH;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="font:12px ${FONT}">${parts}</svg>`;
 }
+
+const ANIMATION_TAG = /<(?:animate|animateTransform|animateMotion)\s[^>]*>/g;
+
+/**
+ * Re-anchors the looping SMIL animations in `svg` to a clock. Each indefinite one with a plain `dur` begins at its own
+ * `begin` (0 when absent) minus where `nowMs` falls in its cycle, so a drawing made at `nowMs` starts each loop at the
+ * point the clock is at: redrawing it at the same clock time gives the same markup, and the loops do not restart.
+ * Other elements, and any `begin` that is not a plain offset, are left as they are. Pure.
+ */
+export function anchorAnimations(svg: string, nowMs: number): string {
+  return svg.replace(ANIMATION_TAG, (tag) => anchorTag(tag, nowMs));
+}
+
+/** One animation element's tag with its `begin` re-anchored, or the tag unchanged when it does not loop on a plain `dur`. */
+function anchorTag(tag: string, nowMs: number): string {
+  const dur = /\sdur="(\d*\.?\d+)(ms|s)"/.exec(tag);
+  const period = dur ? Number(dur[1]) * (dur[2] === "ms" ? 0.001 : 1) : 0;
+  if (!/\srepeatCount="indefinite"/.test(tag) || !(period > 0)) return tag;
+  const begin = /\sbegin="([^"]*)"/.exec(tag);
+  const offset = begin ? offsetSeconds(begin[1] ?? "") : 0;
+  if (offset === null) return tag;
+  const anchored = ` begin="${(offset - ((nowMs / 1000) % period)).toFixed(3)}s"`;
+  return begin ? tag.replace(begin[0], anchored) : tag.replace(/^<\w+/, (name) => name + anchored);
+}
+
+/** A clock value read as seconds when it is a plain offset ("1s", "250ms", "-0.5", "+2s"); null for any other value. */
+function offsetSeconds(value: string): number | null {
+  const m = /^([+-]?\d*\.?\d+)(ms|s)?$/.exec(value);
+  return m ? Number(m[1]) * (m[2] === "ms" ? 0.001 : 1) : null;
+}
