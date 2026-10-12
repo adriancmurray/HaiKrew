@@ -71,12 +71,16 @@ export type Row = {
  * with its turn over while the crew still works, or resting with nothing running.
  */
 export type LeadState = "working" | "directing" | "waiting" | "resting";
-/** The main agent for the band: its state and its model, as an id ("claude-opus-5-5") or a family ("opus"). */
-export type Lead = { state: LeadState; model: string };
+/** What the main agent's own turn is doing: thinking, writing, a tool call sorted by what the tool does, or "other". */
+export type LeadActivity = "thinking" | "writing" | "reading" | "editing" | "running" | "web" | "directing" | "other";
+/** The main agent for the band: its state, its model as an id ("claude-opus-5-5") or a family ("opus"), and its activity. */
+export type Lead = { state: LeadState; model: string; activity?: LeadActivity };
 export type Crew = { rows: Row[]; working: number; lead?: Lead };
 
 // The main loop's turn: set by its first step (a step with no agentId), cleared when that turn completes.
 let mainTurn: string | null = null;
+// What the main loop's streamed chunks show it doing; back to "other" when its turn completes.
+let activity: LeadActivity = "other";
 
 /** A main-loop step began (turn.step with no agentId): the main agent is busy with that turn. True when that is news. */
 export function noteMainStep(turnId: string): boolean {
@@ -84,9 +88,46 @@ export function noteMainStep(turnId: string): boolean {
   mainTurn = turnId;
   return changed;
 }
-/** A turn completed; when it is the main loop's, the main agent goes idle. */
+/** A turn completed; when it is the main loop's, the main agent goes idle and its activity resets. */
 export function noteTurnEnd(turnId: string): void {
-  if (turnId === mainTurn) mainTurn = null;
+  if (turnId !== mainTurn) return;
+  mainTurn = null;
+  activity = "other";
+}
+
+/** Which activity a tool call shows, by the tool's name. A Map so a name like "constructor" is not found on Object's prototype. */
+const TOOL_ACTIVITY = new Map<string, LeadActivity>([
+  ["Read", "reading"], ["Grep", "reading"], ["Glob", "reading"], ["LS", "reading"], ["NotebookRead", "reading"],
+  ["Edit", "editing"], ["Write", "editing"], ["MultiEdit", "editing"], ["NotebookEdit", "editing"],
+  ["Bash", "running"], ["WebSearch", "web"], ["WebFetch", "web"], ["Agent", "directing"], ["Task", "directing"],
+]);
+
+/**
+ * The activity a streamed chunk shows: thinking, writing, or a tool's kind (unlisted tools, MCP ones included, are
+ * "other"). Null for chunks that show none: a tool's arguments, the stop, the engine's own items.
+ */
+function chunkActivity(chunk: unknown): LeadActivity | null {
+  if (!isObject(chunk)) return null;
+  if (chunk.kind === "thinking") return "thinking";
+  if (chunk.kind === "text") return "writing";
+  if (chunk.kind === "tool") return TOOL_ACTIVITY.get(String(chunk.name ?? "")) ?? "other";
+  return null;
+}
+
+/**
+ * A chunk of the main loop's response (turn.step with no agentId) streamed: the main agent's activity becomes what the
+ * chunk shows. True only when that changed it.
+ */
+export function noteMainChunk(chunk: unknown): boolean {
+  const next = chunkActivity(chunk);
+  if (next === null || next === activity) return false;
+  activity = next;
+  return true;
+}
+
+/** What the main agent is doing now, from its streamed chunks; "other" between turns. */
+export function leadActivity(): LeadActivity {
+  return activity;
 }
 /** The main agent's state given how many crew members work now. */
 export function leadState(working: number): LeadState {
@@ -100,6 +141,7 @@ const members = new Map<string, Member>();
 export function resetCrew(): void {
   members.clear();
   mainTurn = null;
+  activity = "other";
 }
 
 /** The display names the roster holds now. */
@@ -202,6 +244,16 @@ export function modelFamily(model: string): "haiku" | "sonnet" | "opus" | "unkno
   if (name.includes("sonnet")) return "sonnet";
   if (name.includes("opus")) return "opus";
   return "unknown";
+}
+
+/** What a crew member is doing, as its drawing and the terminal's pose show it. */
+export type Activity = "thinking" | "reading" | "editing" | "running" | "web" | "directing" | "done" | "failed";
+
+/** The activity a roster row shows: its end state, else the family of its latest tool call, else thinking. */
+export function activityOf(row: Row): Activity {
+  if (row.state === "done" || row.state === "failed") return row.state;
+  const tool = TOOL_ACTIVITY.get(row.last.split(" ")[0] ?? "");
+  return tool === "reading" || tool === "editing" || tool === "running" || tool === "web" || tool === "directing" ? tool : "thinking";
 }
 
 /** The roster at `now`: tracked agents merged with the live list, finished ones past the linger dropped. */

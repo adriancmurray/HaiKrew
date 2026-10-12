@@ -1,9 +1,9 @@
 /** Crew checks: the roster follows a spawn, its tool calls and its stop, nests children, and the scene packs to its cells. */
 import { expect, test } from "claude-code/testing";
-import { fmtElapsed, noteSpawn, noteStop, noteTokens, noteToolCall, resetCrew, snapshot } from "../../src/mod/crew.ts";
+import { activityOf, fmtElapsed, noteSpawn, noteStop, noteTokens, noteToolCall, resetCrew, snapshot } from "../../src/mod/crew.ts";
 import type { Row } from "../../src/mod/crew.ts";
 import { pickName } from "../../src/mod/names.ts";
-import { activityOf, layout, packCells, PIXEL_ROWS, scene, SCENE_ROWS } from "../../src/mod/sprites.ts";
+import { layout, packCells, PIXEL_ROWS, scene, SCENE_ROWS } from "../../src/mod/sprites.ts";
 
 const EMPTY = { rows: [], working: 0 };
 

@@ -14,8 +14,7 @@ import { hookGuard, readGuard, squeeze, tokenLimit } from "../src/mod/guards.ts"
 import type { ChecksSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
-import { agentModel, liveUsage, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteTurnEnd, rowFor } from "../src/mod/crew.ts";
-import { activityOf } from "../src/mod/sprites.ts";
+import { activityOf, agentModel, liveUsage, noteMainChunk, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteTurnEnd, rowFor } from "../src/mod/crew.ts";
 import { addRun, readState, runFromStop, withLiveUsage } from "../src/mod/ledger.ts";
 import { registerPane } from "../src/mod/pane.ts";
 import { delegationNote, withNote } from "../src/mod/delegate.ts";
@@ -66,7 +65,20 @@ export function register(on) {
     // A main-loop step: the main agent in the band is busy until this turn completes.
     if (!e.agentId && typeof e.turnId === "string" && noteMainStep(e.turnId)) $.ui.invalidate("ui.render");
     const stepped = stepEffort(e);
-    const result = yield* next(stepped);
+    const stream = next(stepped);
+    let chunk = await stream.next();
+    try {
+      while (!chunk.done) {
+        // The main loop's text, thinking and tool calls drive the band's lead; every chunk goes on unchanged.
+        if (!e.agentId && noteMainChunk(chunk.value)) $.ui.invalidate("ui.render");
+        yield chunk.value;
+        chunk = await stream.next();
+      }
+    } finally {
+      // Closed early by the consumer: close the stream beneath too, as yield* would.
+      await stream.return(undefined);
+    }
+    const result = chunk.value;
     if (e.agentId && result?.usage) {
       // The limit is the step's model and the effort it ran with (the tracked one when stepEffort set it).
       const checks = (await loadSettings($)).checks as unknown as ChecksSettings;

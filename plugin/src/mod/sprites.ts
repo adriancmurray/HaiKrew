@@ -1,16 +1,10 @@
 /**
  * The Crew scene as data: pixel critters in the header's shapes and palette, laid out for one frame. The scene is
  * a pixel grid of PIXEL_ROWS rows; the terminal packs each pair of pixel rows into one cell (the upper half-block
- * glyph, top pixel as foreground, bottom as background). The desktop band's SVG scene lives in critters.ts and is
- * re-exported here. Pure.
+ * glyph, top pixel as foreground, bottom as background). The desktop banner's title is drawn here too. Pure.
  */
 import { modelFamily } from "./crew.ts";
 import type { Crew } from "./crew.ts";
-import { CREAM, CRITTER, EYE, hex, LEAD_X, MODEL_BODY, mix, ORANGE, shade, starPoints, starRects } from "./critters.ts";
-import type { SceneInk } from "./critters.ts";
-
-export { activityOf, animatedSceneSvg, mix, SVG_ROWS, starPoints } from "./critters.ts";
-export type { Activity, SceneInk, SceneOpts, Spot } from "./critters.ts";
 
 /** Pixel rows in the scene; the terminal shows half as many cell rows. */
 export const PIXEL_ROWS = 18;
@@ -20,6 +14,78 @@ const MAX_CRITTERS = 12;
 const SPACING = 8;
 const BASE_Y = 11;
 const UPPER_HALF_BLOCK = 0x2580;
+/** Sprite rows: o body, e eye, s shade. The two legs are the shade pixels on the bottom row. */
+const CRITTER = [
+  ".ooooo.",
+  "ooooooo",
+  "ooeoeoo",
+  "ooooooo",
+  ".ooooo.",
+  "..s.s..",
+];
+/** The lead's column on the scene. */
+const LEAD_X = 2;
+/** The eyes of a critter. */
+const EYE = 0x1b1420;
+/** A highlight cream: the Zs of an empty crew and the banner's title on a dark panel. */
+const CREAM = 0xffe9c7;
+/** The orange of the Opus family, also the banner's face. */
+const ORANGE = 0xd97757;
+type Family = ReturnType<typeof modelFamily>;
+/** Each model family's body colour. */
+const MODEL_BODY: Record<Family, number> = { haiku: 0x9b7fc7, sonnet: 0x4f9c98, opus: ORANGE, unknown: 0x8a8f9c };
+/** The banner's star colour, the only ink the pixel art needs. */
+export type SceneInk = { star: string };
+
+/** Each colour channel of `a` moved toward `b` by fraction `t`. */
+function mix(a: number, b: number, t: number): number {
+  let out = 0;
+  for (const shift of [16, 8, 0]) {
+    const x = (a >> shift) & 0xff;
+    const y = (b >> shift) & 0xff;
+    out = (out << 8) | Math.round(x + (y - x) * t);
+  }
+  return out;
+}
+
+/** The colour of a critter's shade: its body colour darkened. */
+function shade(body: number): number {
+  return mix(body, 0, 0.35);
+}
+
+/** A colour as a CSS hex string. */
+function hex(c: number): string {
+  return `#${c.toString(16).padStart(6, "0")}`;
+}
+
+/** Star positions spread evenly: one per grid cell, nudged inside it, skipping cells a `keepOut` box covers. */
+function starPoints(width: number, height: number, cell: number, keepOut?: { x: number; y: number; w: number; h: number }): Array<[number, number, number]> {
+  const out: Array<[number, number, number]> = [];
+  for (let cy = 0; cy * cell < height; cy++) {
+    for (let cx = 0; cx * cell < width; cx++) {
+      // Mixed (a murmur-style finaliser) so every cell gets an even chance at any width; a bare xor of two
+      // products left whole stretches of a wide scene without a star.
+      let h = Math.imul(cx + 1, 73856093) ^ Math.imul(cy + 1, 19349663);
+      h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+      h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+      h ^= h >>> 16;
+      const r = (h >>> 0) / 4294967296;
+      if (r > 0.6) continue;
+      const x = Math.floor(cx * cell + cell * (0.15 + ((h >>> 8) & 255) / 255 * 0.7));
+      const y = Math.floor(cy * cell + cell * (0.15 + ((h >>> 16) & 255) / 255 * 0.7));
+      if (x >= width || y >= height) continue;
+      if (keepOut && x >= keepOut.x - 1 && x <= keepOut.x + keepOut.w && y >= keepOut.y - 1 && y <= keepOut.y + keepOut.h) continue;
+      out.push([x, y, r]);
+    }
+  }
+  return out;
+}
+
+/** Twinkling stars as SVG rects in `color`, each on its own slow cycle. */
+function starRects(points: Array<[number, number, number]>, color: string): string {
+  return points.map(([x, y, r], k) => `<rect x="${x}" y="${y}" width="1" height="1" fill="${color}" opacity=".3">` +
+    `<animate attributeName="opacity" values=".15;.9;.15" dur="${(2.6 + r * 3).toFixed(1)}s" begin="${((k * 0.53) % 3).toFixed(2)}s" repeatCount="indefinite"/></rect>`).join("");
+}
 
 const NAVY = 0x0f1b33;
 const STARS = [0x26385e, 0x5a6e96, 0xdfe6f5];

@@ -143,9 +143,13 @@ export const SCHEMA: Record<string, Section> = {
     fields: {
       show: { label: "Crew above the prompt", type: "bool", default: true,
         help: "Show the animated crew in the band above the prompt, whether or not this pane is open." },
-      sky: { label: "Sky", type: "enum", choices: ["live", "dawn", "day", "dusk", "night", "off"], default: "live",
+      sky: { label: "Sky", type: "enum", choices: ["live", "dawn", "day", "dusk", "night"], default: "live",
         help: "The sky behind the crew: live follows your clock (sunrise, day, sunset, night with the real moon phase); " +
-          "the others hold one time of day; off leaves the band transparent. The sun or moon at the right opens this pane." },
+          "the others hold one time of day. The sun or moon at the right opens this pane." },
+      scenery: { label: "Scenery", type: "enum", choices: ["mountains", "city", "forest", "hills"], default: "mountains",
+        help: "The landscape behind the crew." },
+      season: { label: "Season", type: "enum", choices: ["auto", "winter", "spring", "summer", "autumn", "none"], default: "auto",
+        help: "Snow in winter and falling leaves in autumn. Auto picks the season by month; none draws neither." },
       clouds: { label: "Clouds", type: "bool", default: true, help: "Let a few pixel clouds drift across the sky." },
       headwear: { label: "Main agent wears", type: "enum", choices: ["crown", "wizard", "cap", "none"], default: "crown",
         help: "What the main agent (your conversation's own model) wears in the band." },

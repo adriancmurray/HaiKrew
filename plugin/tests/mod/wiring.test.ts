@@ -13,7 +13,7 @@ const SETTINGS = {
 };
 
 /** The engine beneath the mod: settings from a fixed store, a fixed session folder, spawns that echo back. */
-function host(on: any, seen: Record<string, any>): void {
+function host(on: any, seen: Record<string, any>, chunks: unknown[] = []): void {
   resetCrew();
   resetEffort();
   resetSeams();
@@ -27,6 +27,7 @@ function host(on: any, seen: Record<string, any>): void {
   });
   on("turn.step", async function* (_$: any, e: any) {
     seen.step = e;
+    for (const c of chunks) yield c;
     return { turnId: e.turnId, index: e.index, answer: "", toolUses: [] };
   });
   on("classic.SubagentStop", async () => ({ value: null }));
@@ -46,6 +47,40 @@ test("a matching spawn gets the rule's model, the instructions, and its effort o
   expect(seen.step.effort).toBe("high");
   for await (const _ of ctx.turn.step({ turnId: "m", index: 0, model: "opus", effort: "medium", messageCount: 1 })) { /* drain */ }
   expect(seen.step.effort).toBe("medium");
+});
+
+/** Runs a turn.step stream to its end: the chunks it yielded, in order, and the result it returned. */
+async function drain(stream: AsyncGenerator<any, any>): Promise<{ chunks: any[]; result: any }> {
+  const chunks: any[] = [];
+  let step = await stream.next();
+  while (!step.done) {
+    chunks.push(step.value);
+    step = await stream.next();
+  }
+  return { chunks, result: step.value };
+}
+
+test("the main loop's chunks pass through unchanged and in order, the band redraws as the lead's activity changes, and the step still returns its result", async (ctx: any, on: any) => {
+  const chunks = [
+    { kind: "thinking", index: 0, text: "Hmm." },
+    { kind: "text", index: 1, text: "Hi" },
+    { kind: "tool", index: 2, id: "u1", name: "Bash" },
+  ];
+  const seen: Record<string, any> = { invalidations: 0 };
+  host(on, seen, chunks);
+  on("ui.invalidate", async () => {
+    seen.invalidations += 1;
+    return { value: undefined };
+  });
+  const main = await drain(ctx.turn.step({ turnId: "m", index: 0, model: "opus", effort: "medium", messageCount: 1 }));
+  expect(main.chunks).toEqual(chunks);
+  expect(main.result).toEqual({ turnId: "m", index: 0, answer: "", toolUses: [] });
+  // One redraw for the main step starting, then one each for thinking, writing and running.
+  expect(seen.invalidations).toBe(4);
+  const sub = await drain(ctx.turn.step({ turnId: "s", index: 0, model: "haiku", effort: "low", messageCount: 1, agentId: "w1" }));
+  expect(sub.chunks).toEqual(chunks);
+  expect(sub.result).toEqual({ turnId: "s", index: 0, answer: "", toolUses: [] });
+  expect(seen.invalidations).toBe(4);
 });
 
 test("a git hook bypass is refused before it runs", async (ctx: any, on: any) => {

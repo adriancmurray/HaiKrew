@@ -49,4 +49,7 @@ if [ "$here" != "$main" ]; then
   git -C "$main" merge --ff-only -q "$branch"
 fi
 claude plugin update haikrew@haikrew
-echo "main is at $(git -C "$main" log --oneline -1), installed as $next. Restart the app to use it; nothing was pushed."
+# A release pushes after this; a try never does.
+pushed=" Nothing was pushed."
+[ "${1:-}" = "--keep-version" ] && pushed=""
+echo "main is at $(git -C "$main" log --oneline -1), installed as $next. Restart the app to use it.$pushed"

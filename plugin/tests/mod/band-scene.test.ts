@@ -1,146 +1,115 @@
-/** The desktop band's animated scene: colours by model, sizes, the lead's state and headwear, poses, and where the critters stand. */
+/** The band's scene: equal inputs draw equal markup, the crew stays small and in its room, each state and activity draws its act, and the sky follows the settings and the clock. */
 import { expect, test } from "claude-code/testing";
-import type { Crew, Lead, Row } from "../../src/mod/crew.ts";
-import { animatedSceneSvg } from "../../src/mod/sprites.ts";
-import type { SceneOpts } from "../../src/mod/sprites.ts";
+import type { LeadActivity, Crew, Lead, Row } from "../../src/mod/crew.ts";
+import type { ActName } from "../../src/mod/band/acts.ts";
+import { moonPhase } from "../../src/mod/band/common.ts";
+import { bandLook, bandScene, leadAct, leadOf, rowAct } from "../../src/mod/band/scene.ts";
+import type { Settings } from "../../src/schema.ts";
 
-const INK = { star: "#5a6e96", ground: "#26385e", bubble: "#ffffff", bubbleText: "#0f1b33" };
-const NO_HEAD: SceneOpts = { headwear: "none" };
+const BAND = { show: true, sky: "night", scenery: "city", season: "none", clouds: true, headwear: "crown",
+  haiku_color: "#9b7fc7", sonnet_color: "#4f9c98", opus_color: "#d97757" } as Settings["band"];
+const NIGHT = new Date(2026, 9, 12, 23, 0).getTime();
+const MODELS = ["haiku", "sonnet", "opus"];
 
-function row(id: string, model: string, state: Row["state"] = "working", over = false, last = ""): Row {
-  return { id, depth: 0, name: "Ada Lovebytes", type: "agent", model, task: "", state, elapsedMs: 0, calls: 0, last, tokens: 0, cached: 0, over };
+function row(id: string, model = "haiku", state: Row["state"] = "working", over = false, last = "Read a.ts"): Row {
+  return { id, depth: 0, name: id, type: "agent", model, task: "", state, elapsedMs: 0, calls: 0, last, tokens: 0, cached: 0, over };
 }
 
 function crew(rows: Row[], lead?: Lead): Crew {
   return { rows, working: rows.filter((r) => r.state === "working").length, lead };
 }
 
-/** The contents of each critter's legs group, in document order. */
-function legGroups(svg: string): string[] {
-  return [...svg.matchAll(/class="legs">(.*?)<\/g>/g)].map((m) => m[1] ?? "");
+function band(over: Record<string, string>): Settings["band"] {
+  return { ...BAND, ...over } as Settings["band"];
 }
 
-test("a haiku row draws in purple and an opus lead in orange", () => {
-  expect(animatedSceneSvg(crew([row("h", "haiku")]), 60, INK).svg).toContain("#9b7fc7");
-  expect(animatedSceneSvg(crew([], { state: "resting", model: "opus" }), 60, INK).svg).toContain("#d97757");
+test("equal inputs draw equal markup", () => {
+  const c = crew([row("a"), row("b", "sonnet", "working", false, "Bash ls")], { state: "working", model: "opus", activity: "web" });
+  const o = { width: 900, band: BAND, now: NIGHT };
+  expect(bandScene(c, o).svg).toBe(bandScene(c, { ...o }).svg);
 });
 
-test("crew members grow from haiku to sonnet to opus, and an opus lead is wider than an opus member", () => {
-  const width = (model: string): number => animatedSceneSvg(crew([row("r", model)]), 60, INK).spots[1]?.w ?? 0;
-  expect(width("haiku") < width("sonnet")).toBe(true);
-  expect(width("sonnet") < width("opus")).toBe(true);
-  const { spots } = animatedSceneSvg(crew([row("r", "opus")], { state: "working", model: "opus" }), 60, INK);
-  expect((spots[0]?.w ?? 0) > (spots[1]?.w ?? 0)).toBe(true);
+test("the drawing is as wide as asked, with the sun or moon at width minus 30", () => {
+  const { svg, orb } = bandScene(crew([]), { width: 900, band: BAND, now: NIGHT });
+  expect(svg.startsWith('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 81">')).toBe(true);
+  expect(orb.x).toBe(870);
+  expect(orb.kind).toBe("moon");
 });
 
-test("each headwear kind draws its own class on the lead only, and none draws none", () => {
-  const lead = crew([row("r", "haiku")], { state: "working", model: "opus" });
-  for (const headwear of ["crown", "wizard", "cap"] as const) {
-    const svg = animatedSceneSvg(lead, 60, INK, { headwear }).svg;
-    expect(svg).toContain(`class="headwear-${headwear}"`);
-    expect(svg.split('class="headwear-').length - 1).toBe(1);
+test("a crew of nine in the city at night stays under 125000 characters", () => {
+  const rows = Array.from({ length: 9 }, (_, i) => row(`r${i}`, MODELS[i % 3]));
+  const { svg } = bandScene(crew(rows, { state: "directing", model: "opus" }), { width: 1080, band: BAND, now: NIGHT });
+  expect(svg.length).toBeLessThan(125000);
+});
+
+test("spots never overlap, stay left of the orb room, and the rows that do not fit are overflow", () => {
+  for (const width of [300, 600, 1080]) {
+    const rows = Array.from({ length: 12 }, (_, i) => row(`r${i}`, MODELS[i % 3], "working", false, i % 2 ? "Bash ls" : "Read a.ts"));
+    const { spots, overflow } = bandScene(crew(rows, { state: "working", model: "opus", activity: "running" }), { width, band: BAND, now: NIGHT });
+    for (let i = 1; i < spots.length; i++) {
+      const prev = spots[i - 1], next = spots[i];
+      expect(prev !== undefined && next !== undefined && next.x >= prev.x + prev.w).toBe(true);
+    }
+    for (const s of spots) expect(s.x + s.w <= width - 70).toBe(true);
+    expect(spots.length - 1 + overflow).toBe(rows.length);
   }
-  expect(animatedSceneSvg(lead, 60, INK, NO_HEAD).svg).not.toContain('class="headwear-');
+  expect(bandScene(crew(Array.from({ length: 12 }, (_, i) => row(`r${i}`))), { width: 300, band: BAND, now: NIGHT }).overflow).toBeGreaterThan(0);
 });
 
-test("the tallest headwear on the largest lead still fits the band", () => {
-  for (const headwear of ["crown", "wizard", "cap", "none"] as const) {
-    const { spots } = animatedSceneSvg(crew([], { state: "directing", model: "opus" }), 60, INK, { headwear });
-    expect((spots[0]?.top ?? -1) >= 0).toBe(true);
-  }
+test("the lead's spot is first and its bots stand on the ground line", () => {
+  const { spots } = bandScene(crew([row("a", "sonnet")], { state: "working", model: "opus" }), { width: 900, band: BAND, now: NIGHT });
+  expect(spots[0]?.id).toBe("lead");
+  expect(spots[0]?.top).toBe(27);
+  expect(spots[1]?.top).toBe(43);
 });
 
-test("each lead state shows its own marker", () => {
-  const drawn = (state: Lead["state"]): string => animatedSceneSvg(crew([], { state, model: "opus" }), 60, INK).svg;
-  expect(drawn("resting").split('class="z"').length - 1).toBe(3);
-  const working = drawn("working");
-  expect(working).toContain('class="bubble"');
-  expect(working).toContain('class="act-editing"');
-  expect(working).not.toContain('class="z"');
-  expect(drawn("directing")).toContain('class="baton"');
-  expect(drawn("waiting")).toContain('class="hourglass"');
+test("the main agent's act follows its state, and while it works, its activity", () => {
+  expect(leadAct({ state: "resting", model: "opus" })).toBe("resting");
+  expect(leadAct({ state: "waiting", model: "opus" })).toBe("waiting");
+  expect(leadAct({ state: "directing", model: "opus" })).toBe("directing");
+  const working: Array<[LeadActivity, ActName]> = [["thinking", "thinking"], ["writing", "typing"], ["reading", "reading"],
+    ["editing", "typing"], ["running", "terminal"], ["web", "searching"], ["directing", "directing"], ["other", "thinking"]];
+  for (const [activity, want] of working) expect(leadAct({ state: "working", model: "opus", activity })).toBe(want);
+  expect(leadAct({ state: "working", model: "opus" })).toBe("thinking");
 });
 
-test("every spot lies inside the scene, and the viewBox is the band's height", () => {
-  const cols = 64;
-  const rows = [row("a", "opus"), row("b", "sonnet", "done"), row("c", "haiku", "failed", true), row("d", "unknown")];
-  const { svg, spots, overflow } = animatedSceneSvg(crew(rows, { state: "directing", model: "sonnet" }), cols, INK);
-  expect(svg).toContain(`viewBox="0 0 ${cols} 22"`);
-  expect(overflow).toBe(0);
-  expect(spots.map((s) => s.id)).toEqual(["lead", "a", "b", "c", "d"]);
-  for (const s of spots) {
-    expect(s.x >= 0).toBe(true);
-    expect(s.x + s.w <= cols).toBe(true);
-    expect(s.top >= 0).toBe(true);
-  }
+test("a subagent's act follows its activity, and an agent past its token warning is alarmed", () => {
+  expect(rowAct(row("a", "haiku", "working", false, "Read a.ts"))).toBe("reading");
+  expect(rowAct(row("a", "haiku", "working", false, "Edit a.ts"))).toBe("typing");
+  expect(rowAct(row("a", "haiku", "working", false, "Bash ls"))).toBe("terminal");
+  expect(rowAct(row("a", "haiku", "working", false, "WebSearch x"))).toBe("searching");
+  expect(rowAct(row("a", "haiku", "working", false, "Agent x"))).toBe("directing");
+  expect(rowAct(row("a", "haiku", "working", false, ""))).toBe("thinking");
+  expect(rowAct(row("a", "haiku", "done", false, "Bash ls"))).toBe("done");
+  expect(rowAct(row("a", "haiku", "failed", false, "Read a.ts"))).toBe("failed");
+  expect(rowAct(row("a", "haiku", "working", true, "Bash ls"))).toBe("alarmed");
 });
 
-test("rows that do not fit in 48 columns are left out and counted as overflow", () => {
-  const rows = Array.from({ length: 12 }, (_, i) => row(`r${i}`, "haiku"));
-  const { overflow, spots } = animatedSceneSvg(crew(rows, { state: "directing", model: "opus" }), 48, INK);
-  expect(overflow > 0).toBe(true);
-  expect(spots.length + overflow).toBe(rows.length + 1);
+test("with no lead drawn, the main agent directs while anyone works and rests otherwise, on opus", () => {
+  expect(leadOf(crew([row("a")]))).toEqual({ state: "directing", model: "opus" });
+  expect(leadOf(crew([]))).toEqual({ state: "resting", model: "opus" });
 });
 
-test("every critter's legs group holds exactly two pixels, in every lead state", () => {
-  const rows = [
-    row("a", "opus", "working", false, "Read a.ts"), row("b", "sonnet", "done"), row("c", "haiku", "failed", true),
-    row("d", "unknown", "working", false, "Bash ls"), row("e", "haiku", "working", false, "Edit a.ts"),
-    row("f", "haiku", "working", false, "WebSearch q"), row("g", "haiku", "working", false, "Agent x"),
-  ];
-  for (const state of ["working", "directing", "waiting", "resting"] as const) {
-    const { svg, spots, overflow } = animatedSceneSvg(crew(rows, { state, model: "opus" }), 200, INK);
-    expect(overflow).toBe(0);
-    const groups = legGroups(svg);
-    expect(groups.length).toBe(spots.length);
-    for (const g of groups) expect(g.split("<rect").length - 1).toBe(2);
-  }
+test("a live sky follows the clock, a fixed one holds, and auto seasons follow the month", () => {
+  const at = (hour: number, month: number): number => new Date(2026, month, 12, hour, 30).getTime();
+  const live = band({ sky: "live", season: "auto" });
+  expect(bandLook(live, at(6, 9)).time).toBe("dawn");
+  expect(bandLook(live, at(12, 9)).time).toBe("day");
+  expect(bandLook(live, at(18, 9)).time).toBe("dusk");
+  expect(bandLook(live, at(23, 9)).time).toBe("night");
+  expect(bandLook(live, at(3, 9)).time).toBe("night");
+  expect(bandLook(band({ sky: "dusk" }), at(12, 9)).time).toBe("dusk");
+  expect(bandLook(live, at(12, 0)).season).toBe("winter");
+  expect(bandLook(live, at(12, 11)).season).toBe("winter");
+  expect(bandLook(live, at(12, 3)).season).toBe("spring");
+  expect(bandLook(live, at(12, 6)).season).toBe("summer");
+  expect(bandLook(live, at(12, 9)).season).toBe("autumn");
+  expect(bandLook(band({ season: "none" }), at(12, 0)).season).toBe("none");
+  expect(bandLook(band({ season: "spring" }), at(12, 0)).season).toBe("spring");
 });
 
-test("each activity poses its critter under its own class", () => {
-  const cases: Array<[string, Row["state"], string]> = [
-    ["Read a.ts", "working", "reading"], ["Edit a.ts", "working", "editing"], ["Bash ls", "working", "running"],
-    ["WebFetch http", "working", "web"], ["Agent x", "working", "directing"], ["", "working", "thinking"],
-    ["Bash ls", "done", "done"], ["Bash ls", "failed", "failed"],
-  ];
-  for (const [last, state, activity] of cases) {
-    const svg = animatedSceneSvg(crew([row("r", "haiku", state, false, last)]), 60, INK, NO_HEAD).svg;
-    expect(svg).toContain(`class="act-${activity}"`);
-  }
-});
-
-test("a thinking agent shows the bubble, and an over agent shows the amber warning instead of its prop", () => {
-  const thinking = animatedSceneSvg(crew([row("r", "haiku", "working", false, "")]), 60, INK, NO_HEAD).svg;
-  expect(thinking).toContain('class="act-thinking"');
-  expect(thinking).toContain("#ffffff");
-  const over = animatedSceneSvg(crew([row("r", "haiku", "working", true, "Bash ls")]), 60, INK, NO_HEAD).svg;
-  expect(over).toContain("#c98a1b");
-  expect(over).not.toContain('class="act-running"');
-});
-
-test("a colours override repaints its family, and a value that is not 6-digit hex is ignored", () => {
-  const drawn = (colors: SceneOpts["colors"]): string =>
-    animatedSceneSvg(crew([row("h", "haiku")]), 60, INK, { headwear: "none", colors }).svg;
-  expect(drawn({ haiku: "#123456" })).toContain("#123456");
-  expect(drawn({ haiku: "#123456" })).not.toContain("#9b7fc7");
-  expect(drawn({ haiku: "purple" })).toContain("#9b7fc7");
-});
-
-test("a background is inserted after the opening svg tag and replaces the scene's own stars", () => {
-  const sky = '<rect id="sky" width="60" height="22" fill="#102030"/>';
-  const { svg } = animatedSceneSvg(crew([row("h", "haiku")]), 60, INK, { headwear: "none", background: sky });
-  expect(svg).toContain(`shape-rendering="crispEdges">${sky}`);
-  expect(svg).not.toContain('values=".15;.9;.15"');
-  const plain = animatedSceneSvg(crew([row("h", "haiku")]), 60, INK, NO_HEAD).svg;
-  expect(plain).toContain('values=".15;.9;.15"');
-});
-
-test("reserveRight keeps every spot clear of the reserved columns and counts what no longer fits as overflow", () => {
-  const cols = 64;
-  const rows = Array.from({ length: 6 }, (_, i) => row(`r${i}`, "sonnet"));
-  const free = animatedSceneSvg(crew(rows), cols, INK, NO_HEAD);
-  const kept = animatedSceneSvg(crew(rows), cols, INK, { headwear: "none", reserveRight: 20 });
-  expect(kept.overflow > free.overflow).toBe(true);
-  expect(kept.spots.length + kept.overflow).toBe(rows.length + 1);
-  for (const s of kept.spots) expect(s.x + s.w <= cols - 1 - 20).toBe(true);
+test("the moon's phase is 0 at new moon and about half at 14.8 days later", () => {
+  const newMoon = Date.UTC(2000, 0, 6, 18, 14);
+  expect(Math.abs(moonPhase(newMoon)) < 0.01).toBe(true);
+  expect(Math.abs(moonPhase(newMoon + 14.765 * 86_400_000) - 0.5) < 0.01).toBe(true);
 });

@@ -5,8 +5,11 @@
  * Crew scene and roster with token lines under them, and the other pages stay behind tabs.
  */
 import type { Settings } from "../schema.ts";
-import { fmtElapsed, modelFamily } from "./crew.ts";
-import type { Crew, Lead, LeadState, Row } from "./crew.ts";
+import { activityOf, fmtElapsed, modelFamily } from "./crew.ts";
+import type { Activity, Crew, Lead, LeadState, Row } from "./crew.ts";
+import { H } from "./band/common.ts";
+import { bandLook, bandScene, leadAct, leadOf, rowAct } from "./band/scene.ts";
+import type { BandScene } from "./band/scene.ts";
 import { tokenTotals } from "./ledger.ts";
 import type { LedgerState } from "./ledger.ts";
 import { crewTab } from "./pane-crew.ts";
@@ -15,10 +18,7 @@ import { settingsSection } from "./pane-settings.ts";
 import { tokensTab } from "./pane-tokens.ts";
 import type { Usage } from "./pane-tokens.ts";
 import { title } from "./rules.ts";
-import { activityOf, animatedSceneSvg, bannerSvg, SVG_ROWS } from "./sprites.ts";
-import type { Activity } from "./sprites.ts";
-import { moonPhase, skyHour, skySvg } from "./sky.ts";
-import type { SkyMode } from "./sky.ts";
+import { bannerSvg } from "./sprites.ts";
 import { anchorAnimations, gauges, inkFor, table } from "./svg.ts";
 import type { Ink } from "./svg.ts";
 import { C, CARD_INSET, compact, fillColor, foldCard, hexOf, hrow, labelled, modelColor, modelName, onOff, pxOf, thousands, txt, vcol, view, when } from "./ui.ts";
@@ -72,8 +72,6 @@ const ROW_PX = 27;
 const BAND_ROWS = 3;
 // Rows at the top of the band where a hover card shows; no hover target reaches into them.
 const CARD_ROWS = 2;
-// Scene pixels kept free at the right for the sun or moon, which opens the pane.
-const ORB_ROOM = 12;
 const LEAD_SAYS: Record<LeadState, string> = {
   working: "Working on it myself.",
   directing: "Directing the crew while I work.",
@@ -82,48 +80,37 @@ const LEAD_SAYS: Record<LeadState, string> = {
 };
 
 /**
- * The band above the prompt: a pixel sky (live time of day, or one the settings hold) behind the crew, edge to
- * edge. Hovering a critter shows a card with who it is and what it is doing; hovering the sun or moon at the right
+ * The band above the prompt: the scenery behind the crew, edge to edge, and the crew on its ground, each bot acting out
+ * its work. Hovering a bot shows a card with who it is and what it is doing; hovering the sun or moon at the right
  * shows a button that opens the pane. Cards and button are styles the surface applies on hover; no hook runs.
  */
 export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: BandOpts): unknown {
   const full = pxOf(cols);
-  // The band is BAND_ROWS rows tall and the scene fills them exactly: its pixel size follows from the height, and
-  // its width in scene pixels from that, so the drawing never leaves part of a row empty above or below it.
+  // The band is BAND_ROWS rows tall and the drawing fills them exactly: its width in scene pixels follows from that
+  // height, so one scene pixel is one CSS pixel and the drawing is never stretched.
   const rows = BAND_ROWS;
   const height = rows * ROW_PX;
-  const sceneCols = Math.max(48, Math.round((full * SVG_ROWS) / height));
-  const b = opts.band;
-  const mode = String(b.sky) as SkyMode;
-  const local = new Date(opts.now);
-  const hour = skyHour(mode, local.getHours() + local.getMinutes() / 60);
-  const phase = moonPhase(opts.now);
-  const sky = skySvg(sceneCols, SVG_ROWS, { mode, hour, phase, clouds: Boolean(b.clouds) });
-  const scene = animatedSceneSvg(crew, sceneCols, inkFor(dark), {
-    headwear: String(b.headwear) as "crown" | "wizard" | "cap" | "none",
-    colors: { haiku: String(b.haiku_color), sonnet: String(b.sonnet_color), opus: String(b.opus_color) },
-    background: sky.body, reserveRight: ORB_ROOM,
-  });
-  const toCol = (x: number): number => Math.floor((x * cols) / sceneCols);
-  const toRow = (y: number): number => Math.max(0, Math.min(rows - 1, Math.floor((y * rows) / SVG_ROWS)));
-  const lead = crew.lead ?? { state: crew.working > 0 ? "directing" : "resting", model: "opus" };
-  const drawn = crew.rows.filter((r) => scene.spots.some((s) => s.id === r.id));
-  const source = sceneSource({ sceneCols, dark, band: b, hour, phase, lead, rows: drawn }, scene.svg, opts.now);
+  const width = Math.max(1, Math.round((full * H) / height));
+  const scene = bandDrawing(crew, width, opts);
+  const toCol = (x: number): number => Math.floor((x * cols) / width);
+  const toRow = (y: number): number => Math.max(0, Math.min(rows - 1, Math.floor((y * rows) / H)));
   const who = crew.working ? `${crew.working} working` : "resting";
-  const svg = ui.Svg({ source, alt: `The crew, ${who}: one pixel critter per agent, the main agent first`, width: full, height });
-  const orbLeft = toCol(sky.orb.x - sky.orb.r - 1);
+  const svg = ui.Svg({ source: scene.svg, alt: `The crew, ${who}: one bot per agent, the main agent first`, width: full, height });
+  const orb = scene.orb;
+  const orbLeft = toCol(orb.x - orb.r - 1);
   const cardWidth = Math.min(orbLeft, 64);
   const cardLeft = (left: number): number => Math.max(0, Math.min(orbLeft - cardWidth, left - 1));
   // Hover targets must not overlap, or one pointer lights several cards: each runs from its own left column to the
-  // next one's, the last to its critter's right edge, and none reaches the sun or moon's column.
+  // next one's, the last to its bot's right edge, and none reaches the sun or moon's column.
   const spans = hoverSpans(scene.spots, toCol, orbLeft);
+  const lead = leadOf(crew);
   const targets = scene.spots.map((spot, i) => {
-    const { left, width } = spans[i];
-    // Targets start below the card rows: a card shown over another critter's target would keep both lit.
+    const { left, width: cover } = spans[i];
+    // Targets start below the card rows: a card shown over another bot's target would keep both lit.
     const top = Math.min(rows - 1, Math.max(CARD_ROWS, toRow(spot.top)));
     const row = spot.id === "lead" ? undefined : crew.rows.find((r) => r.id === spot.id);
     const lines = spot.id === "lead" ? leadCard(lead, crew.working) : rowCard(row, opts.messages[spot.id]);
-    return ui.Box({ key: `band-${spot.id}`, position: "absolute", left, top, width, height: rows - top, children: [
+    return ui.Box({ key: `band-${spot.id}`, position: "absolute", left, top, width: cover, height: rows - top, children: [
       ui.Box({ position: "absolute", top: -top, left: cardLeft(left) - left, width: Math.min(cardWidth, orbLeft - cardLeft(left)), height: CARD_ROWS,
         display: "none", hover: { display: "flex" }, flexDirection: "column", paddingX: 1, backgroundColor: dark ? "#2b2a27" : "#f1efe8",
         children: [
@@ -136,10 +123,9 @@ export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: 
     ] });
   });
   // The sun or moon: hovering it shows the open button just to its left, inside the band.
-  const orb = sky.orb;
   const orbWidth = Math.max(2, toCol(orb.x + orb.r + 1) - orbLeft + 1);
   const opener = ui.Box({ key: "band-orb", position: "absolute", left: orbLeft, top: 0, width: Math.min(orbWidth, cols - orbLeft), height: rows, children: [
-    // In the card rows, like the cards, so the shown button never lies over a critter's hover target.
+    // In the card rows, like the cards, so the shown button never lies over a bot's hover target.
     ui.Box({ position: "absolute", top: 0, right: orbWidth, display: "none", hover: { display: "flex" }, children: [
       ui.Button({ key: "band-open", label: `Open HaiKrew ${orb.kind === "sun" ? "☀" : "☾"}`, variant: "primary", onPress: () => opts.open() }),
     ] }),
@@ -148,32 +134,30 @@ export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: 
   return ui.Box({ key: "crew-band", flexDirection: "column", height: rows, overflow: "hidden", children: [svg, ...targets, opener] });
 }
 
-/** What the band's scene is drawn from: the sky (quarter hour and moon phase), the settings, the lead and the crew as drawn. */
-type SceneInputs = {
-  sceneCols: number; dark: boolean; band: Settings["band"]; hour: number; phase: number; lead: Lead; rows: Row[];
-};
-
-/** The last band source drawn, with the key it was drawn for. */
-let bandCache: { key: string; svg: string } | null = null;
+/** The last band drawing made, with the key it was made for. */
+let bandCache: { key: string; scene: BandScene } | null = null;
 
 /**
- * The band's scene source. The sky is keyed by the quarter hour and the moon phase to two decimals, so a redraw
- * within them hands the app the same SVG and its loops keep their place. A new key draws and anchors a new source
- * at `now`.
+ * The band's drawing for this crew and width. The key is what the drawing shows: the time of day, the season, the moon
+ * phase to two decimals, the band's settings (scenery included), and each bot's model and act. A redraw that shows the
+ * same thing hands the app the same SVG, so its loops keep their place; a new key draws and anchors a new drawing at `now`.
  */
-function sceneSource(s: SceneInputs, svg: string, now: number): string {
+function bandDrawing(crew: Crew, width: number, opts: BandOpts): BandScene {
+  const look = bandLook(opts.band, opts.now);
+  const lead = leadOf(crew);
   const key = JSON.stringify({
-    sceneCols: s.sceneCols, dark: s.dark, band: s.band, hour: Math.floor(s.hour * 4) / 4, phase: Math.round(s.phase * 100) / 100,
-    lead: [s.lead.state, s.lead.model], rows: s.rows.map((r) => [r.id, r.model, r.state, activityOf(r), r.over]),
+    width, time: look.time, season: look.season, phase: Math.round(look.phase * 100) / 100, band: opts.band,
+    lead: [leadAct(lead), modelFamily(lead.model)], rows: crew.rows.map((r) => [r.id, rowAct(r), modelFamily(r.model)]),
   });
-  if (bandCache && bandCache.key === key) return bandCache.svg;
-  bandCache = { key, svg: anchorAnimations(svg, now) };
-  return bandCache.svg;
+  if (bandCache && bandCache.key === key) return bandCache.scene;
+  const scene = bandScene(crew, { width, band: opts.band, now: opts.now });
+  bandCache = { key, scene: { ...scene, svg: anchorAnimations(scene.svg, opts.now) } };
+  return bandCache.scene;
 }
 
 /**
- * Column spans for the critters' hover targets, left to right and never overlapping: each runs from its own left
- * column to the next one's, the last to its critter's right edge, none past `limit` (the sun or moon's column).
+ * Column spans for the bots' hover targets, left to right and never overlapping: each runs from its own left
+ * column to the next one's, the last to its bot's right edge, none past `limit` (the sun or moon's column).
  */
 export function hoverSpans(spots: Array<{ x: number; w: number }>, toCol: (x: number) => number, limit: number): Array<{ left: number; width: number }> {
   const lefts = spots.map((s) => Math.min(toCol(s.x), limit - 1));

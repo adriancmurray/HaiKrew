@@ -54,7 +54,7 @@ export function groupSummary(id: string, s: Settings): string {
   if (id === "guards") return `Output squeeze ${onOff(s.squeeze.enabled)} · big-file guard ${onOff(s.read_guard.enabled)} · git hook guard ${onOff(s.checks.guard_hooks)}`;
   if (id === "widget") {
     if (!s.band.show) return "Off";
-    return `Sky ${String(s.band.sky)}${s.band.clouds && s.band.sky !== "off" ? " with clouds" : ""} · main agent wears ${s.band.headwear === "none" ? "nothing" : `a ${s.band.headwear}`}`;
+    return `${title(String(s.band.scenery))} scenery · sky ${String(s.band.sky)}${s.band.clouds ? " with clouds" : ""} · main agent wears ${s.band.headwear === "none" ? "nothing" : `a ${s.band.headwear}`}`;
   }
   return `Ledger ${onOff(s.ledger.enabled)} · agent tools ${s.agents.control === "off" ? "off" : s.agents.control === "read" ? "look only" : "look and change"}`;
 }

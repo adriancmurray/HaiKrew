@@ -5,7 +5,7 @@ import { crewBand } from "../../src/mod/pane-home.ts";
 import type { Settings } from "../../src/schema.ts";
 import type { Ui } from "../../src/mod/ui.ts";
 
-const BAND = { show: true, sky: "live", clouds: true, headwear: "crown", haiku_color: "#9b7fc7", sonnet_color: "#d97757", opus_color: "#c9963f" } as Settings["band"];
+const BAND = { show: true, sky: "live", scenery: "mountains", season: "auto", clouds: true, headwear: "crown", haiku_color: "#9b7fc7", sonnet_color: "#d97757", opus_color: "#c9963f" } as Settings["band"];
 // Each part returns its props, so the band's tree reads back as data.
 const UI = { Box: (p: unknown) => p, Text: (p: unknown) => p, Button: (p: unknown) => p, Svg: (p: unknown) => p } as Ui;
 const MORNING = new Date(2026, 9, 12, 10, 1).getTime();
@@ -20,9 +20,9 @@ function crew(rows: Row[]): Crew {
 }
 
 /** The scene's SVG source as the band hands it to the app: the first child of the band is the Svg. */
-function sourceAt(now: number, rows: Row[]): string {
-  const band = crewBand(UI, crew(rows), 80, false, { band: BAND, messages: {}, now, open: () => null, openAgent: () => null }) as { children: Array<{ source?: string }> };
-  return band.children[0]?.source ?? "";
+function sourceAt(now: number, rows: Row[], band: Settings["band"] = BAND): string {
+  const out = crewBand(UI, crew(rows), 80, false, { band, messages: {}, now, open: () => null, openAgent: () => null }) as { children: Array<{ source?: string }> };
+  return out.children[0]?.source ?? "";
 }
 
 test("a redraw in the same quarter hour with the same crew hands over the same source, anchored", () => {
@@ -37,4 +37,10 @@ test("a row changing state or activity draws a new source", () => {
   expect(sourceAt(LATER, [row("band-cache-b", "done")])).not.toBe(working);
   const reading = sourceAt(MORNING, [row("band-cache-c", "working", "Read a.ts")]);
   expect(sourceAt(LATER, [row("band-cache-c", "working", "Edit a.ts")])).not.toBe(reading);
+});
+
+test("a new scenery draws a new source", () => {
+  const rows = [row("band-cache-d")];
+  const mountains = sourceAt(MORNING, rows);
+  expect(sourceAt(LATER, rows, { ...BAND, scenery: "city" } as Settings["band"])).not.toBe(mountains);
 });

@@ -6,7 +6,7 @@
  */
 import type { Settings } from "../schema.ts";
 import { checkChanges, mergeChanges, settingsFrom } from "./config.ts";
-import { leadState, snapshot } from "./crew.ts";
+import { leadActivity, leadState, snapshot } from "./crew.ts";
 import type { Crew, LiveAgent } from "./crew.ts";
 import { readState, rescanRun, tokenTotals } from "./ledger.ts";
 import { homeOf } from "./select.ts";
@@ -48,7 +48,7 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
     const reply = await next(e);
     void repairLedger($);
     // The band has no redraw timer; this slow one lets an idle sky move on (dusk to night) and the moon change. The
-    // band's SVG is cached by the quarter hour, so a tick that changes nothing hands the app the same picture.
+    // band's SVG is cached by what it shows, so a tick that changes nothing hands the app the same picture.
     if (!skyTimer) skyTimer = $.clock.every(SKY_TICK_MS, () => $.ui.invalidate("ui.render"));
     const settings = await loadSettings($);
     if (allowed(settings, "status") === null) await registerTools($);
@@ -74,7 +74,7 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
     if (!settings.band.show) return next(e);
     const ui = $.ui.resolve(e) as Ui;
     const crew = snapshot(await liveAgents($), Date.now());
-    crew.lead = { state: leadState(crew.working), model: String(await $.session.model().catch(() => "")) };
+    crew.lead = { state: leadState(crew.working), model: String(await $.session.model().catch(() => "")), activity: leadActivity() };
     // No timer here: the band's loops run inside its SVG, and it redraws only when what it shows changes.
     return crewBand(ui, crew, Math.max(24, Number(e.props?.bodyColumns) || 80), await themeIsDark($), {
       band: settings.band, messages: await latestMessages($, crew), now: Date.now(),
