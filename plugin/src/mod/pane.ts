@@ -1,54 +1,49 @@
 /**
- * HaiKrew's `/haikrew` pane: three tabs (Settings, Ledger, Tokens) drawn on the terminal surface. Every `$`
- * use stays in this file; the formatting helpers take plain values only.
+ * HaiKrew's `/haikrew` pane. On desktop one page (pane-home.ts): banner, gate, controls, crew, tokens, track
+ * record and settings. On the terminal a gate line, a tab row and one of three tabs (Home, Ledger, Settings). Every `$` use stays in this file, since the engine follows `$` into functions
+ * of this file only: it loads the data, saves settings and runs the scene's timer, and hands each tab file plain
+ * values and an Actions object of closures.
  */
-import { SCHEMA, validate } from "../schema.ts";
-import type { Field, Settings } from "../schema.ts";
+import type { Settings } from "../schema.ts";
 import { checkChanges, mergeChanges, settingsFrom } from "./config.ts";
-import { rowLine, snapshot } from "./crew.ts";
-import type { LiveAgent } from "./crew.ts";
-import { readState, summary, suggestions, tokenTotals } from "./ledger.ts";
-import type { KeyStats, Run, Suggestion } from "./ledger.ts";
-import { packCells, scene, sceneSvg, SCENE_ROWS } from "./sprites.ts";
+import { snapshot } from "./crew.ts";
+import type { Crew, LiveAgent } from "./crew.ts";
+import { readState, tokenTotals } from "./ledger.ts";
+import type { LedgerState } from "./ledger.ts";
+import { AGENT_TOOLS, allowed } from "./agents.ts";
+import { SCENE_KEY } from "./pane-crew.ts";
+import { crewBand, desktopView, latestLine, terminalHome } from "./pane-home.ts";
+import { ledgerTab } from "./pane-ledger.ts";
+import { settingsTab } from "./pane-settings.ts";
+import { packCells, scene, SCENE_ROWS } from "./sprites.ts";
+import { C, hrow, onOff, TABS, txt, vcol, view } from "./ui.ts";
+import type { Actions, Ui } from "./ui.ts";
 
-const PANE = "haikrew";
-const TABS = [["crew", "Crew"], ["settings", "Settings"], ["ledger", "Ledger"], ["tokens", "Tokens"]] as const;
-type Tab = (typeof TABS)[number][0];
-const SCENE_KEY = "crew-scene";
+/** The pane id and command name: "haikrew", or another name a development copy registers under. */
+let PANE = "haikrew";
 const TICK_MS = 250;
-const DESKTOP_TICK_MS = 500;
+/** Off the terminal the scene animates itself; the timer only refreshes the roster's times and last tools. */
+const DESKTOP_TICK_MS = 2000;
 /** Terminal ticks between roster redraws, so the roster refreshes about once a second. */
 const ROSTER_EVERY_TICKS = 4;
 /** The scene's timer while it runs; null when it is stopped. */
 let stopTimer: (() => void) | null = null;
-type Ui = Record<string, (...args: unknown[]) => unknown>;
 type Api = Record<string, any>;
 
-
-/** A Text element. Mods read its content from `children` inside the props, so the content goes there. */
-function txt(ui: Ui, props: Record<string, unknown>, content: unknown): unknown {
-  return ui.Text({ ...props, children: content });
-}
-/** Session-local view state. Module scope because the pane's handlers outlive a single render. */
-const view: {
-  tab: Tab;
-  section: string;
-  drafts: Record<string, string>;
-  errors: Record<string, string>;
-  frame: number;
-  cols: number;
-  armed: string;
-} = { tab: "crew", section: "gate", drafts: {}, errors: {}, frame: 0, cols: 80, armed: "" };
-
-/** Claude Code calls this once when the mod loads. Adds the /haikrew command at session start and draws its pane. */
-export function registerPane(on: (...args: unknown[]) => void): void {
+/** Claude Code calls this once when the mod loads. Adds the /haikrew command (or `/<name>`) at session start and draws its pane. */
+export function registerPane(on: (...args: unknown[]) => void, name = "haikrew"): void {
+  PANE = name;
   on("session.start", async ($: Api, e: Api, next: (e: Api) => unknown) => {
     try {
-      await $.command.register({ name: PANE, description: "Open the HaiKrew pane: settings, ledger, token use" });
+      await $.command.register({ name: PANE, description: "Open the HaiKrew pane: crew, settings, ledger, token use" });
     } catch {
       // The pane still opens through the command.run hook when registration is refused.
     }
-    return next(e);
+    const reply = await next(e);
+    const settings = await loadSettings($);
+    if (allowed(settings, "status") === null) await registerTools($);
+    if (settings.pane.open_on_start) await $.ui.open({ id: PANE, title: "HaiKrew" });
+    return reply;
   });
 
   on("command.run", { command: PANE }, async ($: Api) => {
@@ -61,28 +56,137 @@ export function registerPane(on: (...args: unknown[]) => void): void {
     return next(e);
   });
 
+  // The crew in the band above the prompt, on the desktop: always there unless the person turned it off, and
+  // stepping aside while a survey holds the band.
+  on("ui.render", { component: "AbovePrompt" }, async ($: Api, e: Api, next: (e: Api) => unknown) => {
+    if (e.surface === "terminal" || e.props?.hasSurvey) return next(e);
+    const settings = await loadSettings($);
+    if (!settings.pane.crew_band) return next(e);
+    const ui = $.ui.resolve(e) as Ui;
+    const crew = snapshot(await liveAgents($), Date.now());
+    if (crew.working > 0) startTimer($, true);
+    // An SVG takes no clicks, so a button to open the pane sits over the scene, shown while the pointer is on it.
+    return ui.Box({ key: "crew-band", flexDirection: "column", children: [
+      crewBand(ui, crew, Math.max(24, Number(e.props?.bodyColumns) || 80), await themeIsDark($)),
+      ui.Box({ position: "absolute", top: 0, right: 1, display: "none", hover: { display: "flex" }, children: [
+        ui.Button({ key: "band-open", label: "↗", variant: "primary",
+          onPress: () => $.ui.open({ id: PANE, title: "HaiKrew", focus: true, closeOnEscape: true }) }),
+      ] }),
+    ] });
+  });
+
   on("ui.render", { component: "Pane" }, async ($: Api, e: Api, next: (e: Api) => unknown) => {
     if (e.requestId !== PANE) return next(e);
     const ui = $.ui.resolve(e) as Ui;
-    const cols = Math.max(20, Number(e.props?.bodyColumns) || 80);
+    const cols = Math.max(24, Number(e.props?.bodyColumns) || 80);
+    const inner = cols - 2;
     const surface = String(e.surface ?? "terminal");
-    const body = view.tab === "crew" ? await crewTab($, ui, cols, surface)
-      : view.tab === "settings" ? await settingsTab($, ui, cols)
-      : view.tab === "ledger" ? await ledgerTab($, ui, cols) : await tokensTab($, ui, cols);
-    return ui.Box({ borderStyle: "round", flexDirection: "column", padding: 1, width: cols, gap: 1, children: [
-      txt(ui, { bold: true }, "HaiKrew"),
-      ui.Box({ flexDirection: "row", columnGap: 2, children: TABS.map(([id, label], i) => ui.Button({
-        key: `tab-${id}`, label: view.tab === id ? `[${i + 1} ${label}]` : `${i + 1} ${label}`,
-        plain: true, hotkey: String(i + 1), onPress: () => setTab($, id),
-      })) }),
-      ...body,
-    ] });
+    const act = actions($);
+    const settings = await loadSettings($);
+    const ledger = readState(await $.store.get("ledger"));
+    const crew = snapshot(await liveAgents($), Date.now());
+    if (crew.working > 0 && (surface !== "terminal" || view.tab === "home")) startTimer($, surface !== "terminal");
+    if (surface !== "terminal") {
+      const data = { crew, settings, ledger, usage: await sessionUsage($), messages: await latestMessages($, crew), dark: await themeIsDark($) };
+      return desktopView(ui, act, data, gateLine(ui, act, Boolean(settings.gate.enabled), crew.working, ledger, true), cols);
+    }
+    const nav = vcol(ui, { rowGap: 1 }, [
+      gateLine(ui, act, Boolean(settings.gate.enabled), crew.working, ledger, false),
+      hrow(ui, { columnGap: 1, flexWrap: "wrap" }, TABS.map(([id, label], i) => ui.Button({
+        key: `tab-${id}`, label: `${i + 1} ${label}`, hotkey: String(i + 1),
+        variant: view.tab === id ? "primary" : "secondary",
+        onPress: () => {
+          view.tab = id;
+          act.redraw();
+        },
+      }))),
+    ]);
+    let body: unknown[];
+    if (view.tab === "home") {
+      view.cols = inner;
+      body = terminalHome(ui, { crew, settings, ledger, usage: await sessionUsage($), messages: {}, dark: true }, inner);
+    } else if (view.tab === "ledger") {
+      body = ledgerTab(ui, act, ledger, settings, inner);
+    } else {
+      body = settingsTab(ui, act, settings, inner);
+    }
+    return vcol(ui, { paddingX: 1, width: cols, rowGap: 1 }, [nav, ...body]);
   });
 }
 
-function setTab($: Api, tab: Tab): void {
-  view.tab = tab;
-  $.ui.invalidate("ui.render");
+/** The closures the tabs call; each one reaches the host through this file's `$`. */
+function actions($: Api): Actions {
+  return {
+    redraw: () => $.ui.invalidate("ui.render"),
+    save: (id, section, key, value) => apply($, id, section, key, value),
+    addRule: async (rule, replaces) => {
+      const current = (await loadSettings($)).gate.rules as string[];
+      const at = replaces ? current.indexOf(replaces) : -1;
+      const next = at >= 0 ? current.map((r, i) => (i === at ? rule : r)) : [rule, ...current];
+      await saveSettings($, { gate: { rules: next } });
+      $.ui.invalidate("ui.render");
+    },
+    retry: async (agent, model) => {
+      // The main conversation runs the retry, so the main model still writes the spec and checks the result.
+      const task = agent.task ? ` "${agent.task}"` : "";
+      await $.prompt.submit({ text: `HaiKrew: the ${agent.name} subagent${task} did not pass on ${agent.model}. ` +
+        `Run the same task again as a subagent with model ${model}, then check its result.` });
+      $.ui.toast(`HaiKrew: asked Claude to retry on ${model}`);
+    },
+  };
+}
+
+/**
+ * The gate's state in words and colour with its switch (hotkey g), and one line of counts. On desktop the banner
+ * above carries the name, so `banner` leaves the title out.
+ */
+function gateLine(ui: Ui, act: Actions, on: boolean, working: number, ledger: LedgerState, banner: boolean): unknown {
+  const runs = Object.values(tokenTotals(ledger)).reduce((n, t) => n + t.runs, 0);
+  const counts = `${working} ${working === 1 ? "agent" : "agents"} working · ${runs} ${runs === 1 ? "run" : "runs"} recorded`;
+  return vcol(ui, banner ? { alignItems: "center" } : {}, [
+    hrow(ui, { justifyContent: banner ? "center" : "space-between", alignItems: "center", flexWrap: "wrap", columnGap: 2 }, [
+      banner ? null : txt(ui, { bold: true, color: C.accent }, "HaiKrew"),
+      hrow(ui, { columnGap: 1, alignItems: "center" }, [
+        txt(ui, { bold: true, color: on ? C.ok : C.warn }, "Model gate"),
+        onOff(ui, "gate-switch", on, (v) => act.save("gate.enabled", "gate", "enabled", v), "g"),
+      ]),
+    ].filter((x) => x !== null)),
+    txt(ui, { dimColor: true, wrap: "truncate-end" }, on ? `${counts} · applies to every session`
+      : "Off: subagents run on whatever model they ask for. Turn it on to route them, in every session."),
+  ]);
+}
+
+/** Each working agent's latest line of text, by id. An agent whose messages cannot be read is left out. */
+async function latestMessages($: Api, crew: Crew): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const r of crew.rows.filter((row) => row.state === "working").slice(0, 8)) {
+    try {
+      const line = latestLine(await $.session.messages({ agentId: r.id }));
+      if (line) out[r.id] = line;
+    } catch {
+      // No message for this agent; the roster shows its last tool instead.
+    }
+  }
+  return out;
+}
+
+/** Whether the app's theme setting is dark; true when it cannot be read or does not say light. */
+async function themeIsDark($: Api): Promise<boolean> {
+  try {
+    const row = (await $.config.list()).find((r: { key: string }) => r.key === "theme");
+    return !String(row?.value ?? "dark").toLowerCase().startsWith("light");
+  } catch {
+    return true;
+  }
+}
+
+/** This session's usage, or nothing when the host cannot say; the token block then shows empty gauges. */
+async function sessionUsage($: Api): Promise<Record<string, any>> {
+  try {
+    return (await $.session.usage()) ?? {};
+  } catch {
+    return {};
+  }
 }
 
 /** The live agent list, or none when the host refuses it. */
@@ -93,49 +197,6 @@ async function liveAgents($: Api): Promise<LiveAgent[]> {
   } catch {
     return [];
   }
-}
-
-/** The Crew tab: the pixel scene (a Raster on the terminal, an Svg on desktop) over the roster of agents. */
-async function crewTab($: Api, ui: Ui, cols: number, surface: string): Promise<unknown[]> {
-  const crew = snapshot(await liveAgents($), Date.now());
-  const { px, overflow } = scene(crew, cols, view.frame);
-  view.cols = cols;
-  if (crew.working > 0) startTimer($, surface === "desktop");
-  const picture = surface === "desktop"
-    ? ui.Svg({ source: sceneSvg(px, cols), alt: "Crew: one pixel critter per agent, the lead first" })
-    : ui.Raster({ key: SCENE_KEY, columns: cols, rows: SCENE_ROWS, cells: packCells(px, cols) });
-  const roster = crew.rows.length === 0
-    ? [txt(ui, { dimColor: true }, "No agents working. Crew members appear here when Claude starts a subagent.")]
-    : crew.rows.map((r) => txt(ui, r.state === "failed" ? { color: "red" }
-      : r.state === "working" ? { color: "green" } : { dimColor: true }, rowLine(r, cols)));
-  return [picture, ...(overflow > 0 ? [txt(ui, {}, `+${overflow} more`)] : []), ...roster];
-}
-
-/** Start the scene's timer unless it runs. It stops itself when no agent works, the tab is left or a blit is refused. */
-function startTimer($: Api, desktop: boolean): void {
-  if (stopTimer) return;
-  stopTimer = $.clock.every(desktop ? DESKTOP_TICK_MS : TICK_MS, () => void tick($, desktop));
-}
-
-/** One timer period: advance the frame, repaint the scene on terminal or redraw the pane on desktop. */
-async function tick($: Api, desktop: boolean): Promise<void> {
-  const crew = snapshot(await liveAgents($), Date.now());
-  if (crew.working === 0 || view.tab !== "crew") return halt();
-  view.frame += 1;
-  if (desktop) {
-    $.ui.invalidate("ui.render");
-    return;
-  }
-  const { px } = scene(crew, view.cols, view.frame);
-  const reply = await $.ui.blit({ requestId: PANE, key: SCENE_KEY, cells: packCells(px, view.cols), columns: view.cols, rows: SCENE_ROWS });
-  if (reply?.deny) return halt();
-  if (view.frame % ROSTER_EVERY_TICKS === 0) $.ui.invalidate("ui.render");
-}
-
-/** Stop the scene's timer if it runs. */
-function halt(): void {
-  stopTimer?.();
-  stopTimer = null;
 }
 
 /** Settings from the mod store merged over defaults. Invalid stored values keep their defaults. */
@@ -157,202 +218,48 @@ async function apply($: Api, id: string, section: string, key: string, value: un
   const errors = await saveSettings($, { [section]: { [key]: value } });
   if (errors.length) view.errors[id] = errors.join("; ");
   else delete view.errors[id];
+  if (!errors.length && section === "agents" && value !== "off") await registerTools($);
   $.ui.invalidate("ui.render");
 }
 
-async function settingsTab($: Api, ui: Ui, cols: number): Promise<unknown[]> {
-  const settings = await loadSettings($);
-  const names = Object.keys(SCHEMA);
-  const section = SCHEMA[view.section] ? view.section : names[0];
-  const sec = SCHEMA[section];
-  const rows: unknown[] = [
-    ui.Select({
-      key: "section", label: "Section", value: section,
-      options: names.map((n) => ({ value: n, label: SCHEMA[n].title })),
-      onSelect: (v: string) => {
-        view.section = v;
-        $.ui.invalidate("ui.render");
-      },
-    }),
-    txt(ui, { dimColor: true }, sec.help),
-  ];
-  for (const [key, field] of Object.entries(sec.fields)) {
-    rows.push(fieldRow($, ui, section, key, field, settings[section][key]));
+/** Register the agent tools; a refusal leaves them for the next session start. The pane works without them. */
+async function registerTools($: Api): Promise<void> {
+  for (const spec of AGENT_TOOLS) {
+    try {
+      await $.tool.register(spec);
+    } catch {
+      // Registration is refused before the session binds.
+    }
   }
-  return rows;
 }
 
-function fieldRow($: Api, ui: Ui, section: string, key: string, field: Field, current: unknown): unknown {
-  const id = `${section}.${key}`;
-  const error = view.errors[id];
-  const children = [
-    txt(ui, { bold: true }, key),
-    fieldControl($, ui, id, section, key, field, current),
-    error ? txt(ui, { color: "red" }, error) : null,
-    txt(ui, { dimColor: true }, field.help),
-  ].filter((x) => x !== null);
-  return ui.Box({ flexDirection: "column", children });
+/** Start the scene's timer unless it runs. It stops itself when no agent works, the tab is left or a blit is refused. */
+function startTimer($: Api, desktop: boolean): void {
+  if (stopTimer) return;
+  stopTimer = $.clock.every(desktop ? DESKTOP_TICK_MS : TICK_MS, () => void tick($, desktop));
 }
 
-function fieldControl($: Api, ui: Ui, id: string, section: string, key: string, field: Field, current: unknown): unknown {
-  if (field.type === "bool") {
-    return ui.Button({
-      key: id, label: current ? "on" : "off", plain: true,
-      onPress: () => apply($, id, section, key, !current),
-    });
+/** One timer period: advance the frame, repaint the scene on terminal or redraw the pane on desktop. */
+async function tick($: Api, desktop: boolean): Promise<void> {
+  const crew = snapshot(await liveAgents($), Date.now());
+  if (crew.working === 0 || (!desktop && view.tab !== "home")) {
+    // One last redraw so the crew stops bobbing and the roster shows who finished.
+    if (desktop) $.ui.invalidate("ui.render");
+    return halt();
   }
-  if (field.type === "enum") {
-    return ui.Select({
-      key: id, label: key, value: current,
-      options: field.choices.map((c) => ({ value: c, label: c })),
-      onSelect: (v: string) => apply($, id, section, key, v),
-    });
-  }
-  const shown = field.type === "list" ? (current as string[]).join(`${listSep(field)} `) : String(current);
-  return ui.Input({
-    key: id, label: key, placeholder: field.type === "list" ? `items separated by ${listSep(field)}` : "", submitLabel: "Save",
-    value: view.drafts[id] ?? shown,
-    onInput: (text: string) => {
-      view.drafts[id] = text;
-    },
-    onSubmit: async (text: string) => {
-      const value = parseText(field, text);
-      const error = validate(section, key, value);
-      if (error) {
-        view.errors[id] = error;
-        $.ui.invalidate("ui.render");
-        return;
-      }
-      delete view.drafts[id];
-      await apply($, id, section, key, value);
-    },
-  });
-}
-
-/** The typed value of an Input's text: a whole number for int (NaN when blank), items for list, else the text. */
-export function parseText(field: Field, text: string): unknown {
-  if (field.type === "int") return text.trim() === "" ? NaN : Number(text.trim());
-  if (field.type === "list") return text.split(listSep(field)).map((s) => s.trim()).filter((s) => s !== "");
-  return text;
-}
-
-/** The separator between a list field's items: its `sep` when the schema sets one, else a comma. */
-function listSep(field: Field): string {
-  return field.type === "list" ? field.sep ?? "," : ",";
-}
-
-const LEDGER_WIDTHS = [10, 12, 8, 6, 16, 6, 10, 10, 8];
-const TOKEN_WIDTHS = [12, 14, 14, 8];
-
-/** One fixed-width line: each cell cut or padded to its width, joined by a space. */
-export function row(cells: string[], widths: number[]): string {
-  return cells.map((c, i) => c.slice(0, widths[i]).padEnd(widths[i])).join(" ").trimEnd();
-}
-
-/** A quality bar of ten block characters for a value between 0 and 1. */
-export function bar(quality: number): string {
-  const filled = Math.round(Math.min(1, Math.max(0, quality)) * 10);
-  return "█".repeat(filled) + "░".repeat(10 - filled);
-}
-
-/** Digits with thousands separators: 12345 -> 12,345. */
-export function thousands(value: number): string {
-  return Math.round(value).toLocaleString("en-US");
-}
-
-async function ledgerTab($: Api, ui: Ui, cols: number): Promise<unknown[]> {
-  const state = readState(await $.store.get("ledger"));
-  const { recent, by_key } = summary(state);
-  if (recent.length === 0 && by_key.length === 0) {
-    return [txt(ui, { dimColor: true }, "No agent runs recorded yet. Runs are added when a subagent finishes.")];
-  }
-  const rules = (await loadSettings($)).gate.rules as string[];
-  const header = row(["Model", "Job", "Lang", "N", "Quality", "Pass", "Tok in", "Tok out", "Secs"], LEDGER_WIDTHS);
-  const lines = [header, ...by_key.map(ledgerRow)].map((l) => l.slice(0, cols));
-  const runs = recent.slice(0, 10).map((run) => runLine(run).slice(0, cols));
-  return [
-    txt(ui, { bold: true }, "By model, job and language"),
-    ...lines.map((l, i) => txt(ui, { bold: i === 0, dimColor: i === 0 }, l)),
-    ...suggestionRows($, ui, suggestions(state, rules), cols),
-    txt(ui, { bold: true }, "Recent runs"),
-    ...runs.map((l) => txt(ui, {}, l)),
-  ];
-}
-
-/** A Suggestions heading, then each suggestion's line and its Add rule button. Nothing is added until pressed twice. */
-function suggestionRows($: Api, ui: Ui, list: Suggestion[], cols: number): unknown[] {
-  if (list.length === 0) return [];
-  return [
-    txt(ui, { bold: true }, "Suggestions"),
-    ...list.flatMap((s, i) => [
-      txt(ui, {}, s.text.slice(0, cols)),
-      ui.Button({
-        key: `suggest-${i}`, plain: true,
-        label: view.armed === s.rule ? `Press again to add ${s.rule}` : "Add rule",
-        onPress: () => addSuggestion($, s.rule),
-      }),
-    ]),
-  ];
-}
-
-/** The first press arms the rule; a second press on the same armed rule puts it first in the gate rules. */
-async function addSuggestion($: Api, rule: string): Promise<void> {
-  if (view.armed !== rule) {
-    view.armed = rule;
+  view.frame += 1;
+  if (desktop) {
     $.ui.invalidate("ui.render");
     return;
   }
-  const current = (await loadSettings($)).gate.rules as string[];
-  view.armed = "";
-  await saveSettings($, { gate: { rules: [rule, ...current] } });
-  $.ui.invalidate("ui.render");
+  const { px } = scene(crew, view.cols, view.frame);
+  const reply = await $.ui.blit({ requestId: PANE, key: SCENE_KEY, cells: packCells(px, view.cols), columns: view.cols, rows: SCENE_ROWS });
+  if (reply?.deny) return halt();
+  if (view.frame % ROSTER_EVERY_TICKS === 0) $.ui.invalidate("ui.render");
 }
 
-function ledgerRow(r: KeyStats): string {
-  const q = Number(r.quality_mean);
-  return row([
-    String(r.model), String(r.job), String(r.lang), thousands(Number(r.n)), `${bar(q)} ${q.toFixed(2)}`,
-    `${Math.round(Number(r.pass_rate) * 100)}%`, thousands(Number(r.tokens_in_mean)),
-    thousands(Number(r.tokens_out_mean)), thousands(Number(r.duration_mean)),
-  ], LEDGER_WIDTHS);
-}
-
-function runLine(run: Run): string {
-  return `${run.ts.slice(0, 16).replace("T", " ")}  ${run.model}  ${run.job}/${run.lang}  ${run.verdict}  q=${run.quality.toFixed(2)}`;
-}
-
-async function tokensTab($: Api, ui: Ui, cols: number): Promise<unknown[]> {
-  const usage: Api = (await $.session.usage()) ?? {};
-  const ctx: Api = usage.context ?? {};
-  const rows: unknown[] = [
-    txt(ui, { bold: true }, "This session"),
-    txt(ui, {}, `Context: ${thousands(Number(ctx.tokens ?? 0))} of ${thousands(Number(ctx.window ?? 0))} tokens (${Number(ctx.percent ?? 0)}%)`),
-  ];
-  for (const limit of Array.isArray(usage.rateLimits) ? usage.rateLimits : []) {
-    rows.push(txt(ui, {}, `${limit.kind}: ${Number(limit.percentUsed ?? 0)}% used, resets ${resetText(limit.resetsAt)}`));
-  }
-  if (typeof usage.cost === "number") rows.push(txt(ui, {}, `Cost: $${usage.cost.toFixed(2)}`));
-  rows.push(txt(ui, { bold: true }, "Subagent tokens by model (ledger)"));
-  rows.push(...ledgerTokenRows(ui, tokenTotals(readState(await $.store.get("ledger"))), cols));
-  return rows;
-}
-
-/** A rate-limit reset as UTC text. Accepts an ISO string or epoch seconds or milliseconds. */
-export function resetText(value: unknown): string {
-  if (typeof value === "string") return value.slice(0, 16).replace("T", " ");
-  if (typeof value !== "number") return "unknown";
-  const ms = value < 1e12 ? value * 1000 : value;
-  return new Date(ms).toISOString().slice(0, 16).replace("T", " ");
-}
-
-/** One line per model with tokens in, tokens out and runs, or a note when the ledger is empty. */
-function ledgerTokenRows(ui: Ui, totals: Record<string, { tokens_in: number; tokens_out: number; runs: number }>, cols: number): unknown[] {
-  const models = Object.keys(totals).sort();
-  if (models.length === 0) return [txt(ui, { dimColor: true }, "No subagent runs recorded yet.")];
-  const head = row(["Model", "Tok in", "Tok out", "Runs"], TOKEN_WIDTHS);
-  const lines = models.map((m) => {
-    const t = totals[m];
-    return row([m, thousands(t.tokens_in), thousands(t.tokens_out), thousands(t.runs)], TOKEN_WIDTHS);
-  });
-  return [head, ...lines].map((l, i) => txt(ui, { bold: i === 0 }, l.slice(0, cols)));
+/** Stop the scene's timer if it runs. */
+function halt(): void {
+  stopTimer?.();
+  stopTimer = null;
 }

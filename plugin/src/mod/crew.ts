@@ -24,6 +24,10 @@ type Member = {
   endedAt: number | null;
   verdict: string;
   rule: string;
+  /** Input plus output tokens of its steps so far, as each step's usage reports them. */
+  tokens: number;
+  /** Whether it has passed the per-agent token warning. */
+  over: boolean;
 };
 
 /** One agent from `$.agent.list()`: only the fields the roster reads. */
@@ -42,6 +46,10 @@ export type Row = {
   elapsedMs: number;
   calls: number;
   last: string;
+  /** Input plus output tokens so far. */
+  tokens: number;
+  /** Past the per-agent token warning. */
+  over: boolean;
 };
 
 /** The roster at one instant: its rows in display order, and how many are still working. */
@@ -59,7 +67,7 @@ function member(id: string, now: number): Member {
   if (!m) {
     m = {
       id, model: "", subagentType: "", description: "", parentId: null, startedAt: now,
-      calls: 0, lastTool: "", lastTarget: "", endedAt: null, verdict: "", rule: "",
+      calls: 0, lastTool: "", lastTarget: "", endedAt: null, verdict: "", rule: "", tokens: 0, over: false,
     };
     members.set(id, m);
   }
@@ -96,11 +104,30 @@ export function target(e: Input): string {
   return "";
 }
 
-/** Mark a subagent finished. `verdict` is the ledger's ("pass", "fail", "blocked", "none") or null when unknown. */
-export function noteStop(id: string, type: string, verdict: string | null, now: number): void {
+/**
+ * Add one step's usage to a subagent's running total. Returns the total and whether this step took it past `limit`
+ * for the first time (never when `limit` is 0, the warning off). Steps of the main loop carry no agent id and count
+ * for nobody.
+ */
+export function noteTokens(agentId: unknown, usage: unknown, limit: number, now: number): { total: number; crossed: boolean } {
+  if (typeof agentId !== "string" || !agentId || !isObject(usage)) return { total: 0, crossed: false };
+  const m = member(agentId, now);
+  const n = (key: string): number => (typeof usage[key] === "number" ? (usage[key] as number) : 0);
+  m.tokens += n("input_tokens") + n("output_tokens");
+  const crossed = limit > 0 && !m.over && m.tokens > limit;
+  if (crossed) m.over = true;
+  return { total: m.tokens, crossed };
+}
+
+/**
+ * Mark a subagent finished. `verdict` is the ledger's ("pass", "fail", "blocked", "none") or null when unknown;
+ * `model` is the one its transcript names, kept when the spawn was not seen (so a retry knows what to step up from).
+ */
+export function noteStop(id: string, type: string, verdict: string | null, now: number, model = ""): void {
   if (!id) return;
   const m = member(id, now);
   if (!m.subagentType) m.subagentType = type;
+  if (!m.model && model && model !== "unknown") m.model = model;
   m.endedAt = now;
   m.verdict = verdict ?? "";
 }
@@ -166,6 +193,8 @@ function toRow(m: Member, depth: number, now: number): Row {
     elapsedMs: (m.endedAt ?? now) - m.startedAt,
     calls: m.calls,
     last: [m.lastTool, m.lastTarget].filter(Boolean).join(" "),
+    tokens: m.tokens,
+    over: m.over,
   };
 }
 
@@ -173,16 +202,4 @@ function toRow(m: Member, depth: number, now: number): Row {
 export function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-
-/**
- * One roster line cut to `cols`: indent, status dot, name, model, the rule that chose it (when one did), elapsed,
- * calls, then the task and last tool.
- */
-export function rowLine(r: Row, cols: number): string {
-  const via = r.rule ? ` ${r.rule.slice(0, 10)}` : "";
-  const head = `${"  ".repeat(r.depth)}● ${r.name.slice(0, 14).padEnd(14)} ${modelFamily(r.model).slice(0, 7).padEnd(7)}${via} ` +
-    `${fmtElapsed(r.elapsedMs).padStart(5)} ${String(r.calls).padStart(3)}  `;
-  const tail = [r.task, r.last].filter(Boolean).join(" · ");
-  return (head + tail).slice(0, cols);
 }

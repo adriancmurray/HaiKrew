@@ -7,6 +7,7 @@
 import type { Settings } from "../schema.ts";
 import { isObject } from "./api.ts";
 import type { Input } from "./api.ts";
+import { inferJob } from "./infer.ts";
 
 /** One finished subagent. */
 export type Run = {
@@ -46,7 +47,7 @@ export type Bucket = {
 export type LedgerState = { runs: Run[]; buckets: Bucket[] };
 
 /** Fields computed from one subagent transcript. `ended` is the last timestamp, or null. */
-export type Transcript = Omit<Run, "ts" | "session" | "agent_id" | "agent_type"> & { ended: string | null };
+export type Transcript = Omit<Run, "ts" | "session" | "agent_id" | "agent_type"> & { ended: string | null; prompt: string };
 
 /** Stats for one (model, job, lang) group, as summary() returns them. */
 export type KeyStats = Record<string, string | number>;
@@ -148,7 +149,8 @@ function verdict(text: string): string {
   return found.length ? found[found.length - 1][1].toLowerCase() : "none";
 }
 
-/** Fields computed from one subagent transcript given as JSONL text. Missing data yields 0, "unknown" or "none". */
+/** Fields computed from one subagent transcript given as JSONL text. Missing data yields 0, "unknown" or "none".
+ * `prompt` is the first user turn, for inferring a job the spec did not tag. */
 export function parseTranscriptText(text: string): Transcript {
   const s = scan(jsonLines(text));
   const usage = [...s.usage.values()];
@@ -171,6 +173,7 @@ export function parseTranscriptText(text: string): Transcript {
     verdict: result,
     quality: result === "pass" ? 1 / Math.max(attempts, 1) : 0,
     ended: hi !== null ? iso(hi) : null,
+    prompt: first,
   };
 }
 
@@ -268,6 +271,26 @@ export function tokenTotals(state: LedgerState): Record<string, { tokens_in: num
   return out;
 }
 
+/** One model's totals across its groups: runs, pass rate, and mean tokens (in plus out) and seconds per run. */
+export type ModelStats = { model: string; n: number; pass_rate: number; tokens_mean: number; duration_mean: number };
+
+/** Per-model stats from summary()'s groups, weighted by each group's runs; most runs first. */
+export function byModel(groups: KeyStats[]): ModelStats[] {
+  const out = new Map<string, ModelStats>();
+  for (const g of groups) {
+    const n = Number(g.n);
+    const m = out.get(String(g.model)) ?? { model: String(g.model), n: 0, pass_rate: 0, tokens_mean: 0, duration_mean: 0 };
+    m.n += n;
+    m.pass_rate += Number(g.pass_rate) * n;
+    m.tokens_mean += (Number(g.tokens_in_mean) + Number(g.tokens_out_mean)) * n;
+    m.duration_mean += Number(g.duration_mean) * n;
+    out.set(m.model, m);
+  }
+  return [...out.values()].filter((m) => m.n > 0).map((m) => ({
+    ...m, pass_rate: m.pass_rate / m.n, tokens_mean: m.tokens_mean / m.n, duration_mean: m.duration_mean / m.n,
+  })).sort((a, b) => b.n - a.n || cmp(a.model, b.model));
+}
+
 function cmp(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
@@ -287,44 +310,6 @@ function keyStats(b: Bucket): KeyStats {
   };
 }
 
-/** A gate rule the pane offers to add, with the line that explains it. */
-export type Suggestion = { rule: string; text: string };
-
-const SUGGEST_MIN_RUNS = 4;
-const SUGGEST_PASS_BELOW = 0.6;
-
-/** 'haiku', 'sonnet' or 'opus' when the model name contains one, else ''. */
-function family(model: string): string {
-  return ["haiku", "sonnet", "opus"].find((f) => model.toLowerCase().includes(f)) ?? "";
-}
-
-/** Rules that move a group up one model when it passes poorly: Haiku to Sonnet, Sonnet to Opus. Groups with fewer
- * than four runs are not judged. A rule is skipped when a current rule already starts with its selector. Writes nothing. */
-export function suggestions(state: LedgerState, rules: string[]): Suggestion[] {
-  const out: Suggestion[] = [];
-  for (const r of summary(state).by_key) {
-    const n = Number(r.n);
-    const job = String(r.job);
-    const lang = String(r.lang);
-    const fam = family(String(r.model));
-    const next = fam === "haiku" ? "sonnet" : fam === "sonnet" ? "opus" : "";
-    if (n < SUGGEST_MIN_RUNS || Number(r.pass_rate) >= SUGGEST_PASS_BELOW || job === "" || job === "unknown" || next === "") continue;
-    const selector = "job:" + job + (lang && lang !== "unknown" ? "+lang:" + lang : "");
-    if (rules.some((rule) => rule.slice(0, rule.lastIndexOf("=")) === selector)) continue;
-    const pct = Math.round(Number(r.pass_rate) * 100);
-    const rule = selector + "=" + next;
-    out.push({
-      rule,
-      text: job + " " + (lang && lang !== "unknown" ? lang + " " : "") + "on " + capitalize(fam) + ": " + n + " runs, " + pct + "% pass; suggest " + rule,
-    });
-  }
-  return out;
-}
-
-function capitalize(word: string): string {
-  return word.charAt(0).toUpperCase() + word.slice(1);
-}
-
 /** The stored ledger state, or an empty one when the stored value is not a ledger. */
 export function readState(value: unknown): LedgerState {
   if (isObject(value) && Array.isArray(value.runs) && Array.isArray(value.buckets)) {
@@ -335,12 +320,14 @@ export function readState(value: unknown): LedgerState {
 
 /** One run from a SubagentStop event and the subagent's transcript text. */
 export function runFromStop(e: Input, transcript: string): Run {
-  const { ended, ...info } = parseTranscriptText(transcript);
+  const { ended, prompt, ...info } = parseTranscriptText(transcript);
+  const agentType = String(e.agent_type || "unknown");
   return {
     ...info,
+    job: info.job === "unknown" ? inferJob(prompt, agentType) : info.job,
     ts: ended ?? iso(Date.now()),
     session: String(e.session_id || ""),
     agent_id: String(e.agent_id || ""),
-    agent_type: String(e.agent_type || "unknown"),
+    agent_type: agentType,
   };
 }

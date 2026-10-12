@@ -10,7 +10,7 @@ A subagent launched without a `model` inherits the main model, so every default 
 
 ## What's inside
 
-- **Model gate** (`agent.spawn`): off until you turn it on in `/haikrew` Settings. When on, it sets a model on every subagent launch that lacks one, and refuses Opus unless allowed.
+- **Model gate** (`agent.spawn`): off until you turn it on in `/haikrew` (the switch in the pane's header, hotkey `g`, or Settings). When on, it sets a model on every subagent launch that lacks one, and refuses Opus unless allowed.
 - **Effort** (`turn.step`): a rule ending in `@<effort>`, or `gate.default_effort`, sets how hard a subagent thinks. Main conversation untouched.
 - **Agent instructions** (`agent.spawn`): `gate.instructions` text is added to the prompt of matching subagents.
 - **Hook-bypass guard** (`tool.call` on Bash): refuses `--no-verify` and `core.hooksPath` overrides.
@@ -18,7 +18,10 @@ A subagent launched without a `model` inherits the main model, so every default 
 - **Squeeze** (`tool.call` on Bash): runs noisy commands such as `cargo test` or `xcodebuild` through `haikrew squeeze`, which prints a short verdict and keeps the full log on disk.
 - **Read guard** (`tool.call` on Read): a large file read without a line range returns an outline and asks for a range.
 - **Ledger** (`classic.SubagentStop`): one row per finished subagent (model, job, language, time, tokens, verdict). The newest 200 rows are kept in full; older rows fold into monthly averages, and monthly averages older than 12 months fold into yearly ones.
-- **`/haikrew` pane**: four tabs. Crew, Settings, Ledger (with rule suggestions), and Tokens.
+- **`/haikrew` pane**: in the desktop app one page: a pixel-art banner with the model gate switch, then Controls, Your crew (each working agent's latest message), Token use, Track record and Settings, each a card that folds to one line. The animated crew walks in the band above the prompt (`pane.crew_band`). The terminal gets a plain three-tab version (Home, Ledger, Settings).
+- **Ledger advice**: the Track record suggests a stronger model for a tagged job that keeps failing (4+ runs under 60%) and a cheaper one for a job a stronger model nearly always passes (8+ runs at 90% or more, unless the cheaper model already fails it). Runs without a `HAIKREW job=` tag get a job inferred from the prompt's opening and the agent type, shown as "(inferred)"; inferred jobs get no rule suggestions, because the gate reads only tags.
+- **Retry one model up**: a failed agent in the crew card offers "Retry on Sonnet" (or Opus, when allowed). It asks the main conversation to run the same task again on that model, so the main model still checks the result.
+- **Agent tools** (off by default, Settings › General › Agent control): `status`, `set_setting`, `add_rule`, `remove_rule`, listed as `mcp__haikrew__<name>`. "Read" allows `status` only; "Change" allows all four, validated like the pane. Agents can never change the agent-control setting or turn on Allow Opus; every change shows a toast.
 - **`haiku-coder` agent**: implements a tightly written spec.
 - **`haiku-scout` agent**: answers one research question with a short cited brief.
 - **`crew-overseer` skill**: the overseer workflow: write the spec, dispatch Haiku, verify.
@@ -67,7 +70,7 @@ The marketplace is named `haikrew` and lists one plugin, `haikrew`, whose source
 
 ## Settings
 
-Settings are kept in the mod store (`$.store`, key `settings`), not in a file. Edit them in `/haikrew`. Defaults come from `plugin/src/schema.ts`. Values are validated on save.
+Settings are kept in the mod store (`$.store`, key `settings`), not in a file, and apply to every session. Edit them in `/haikrew`: rules and instructions are built there as sentences from dropdowns and buttons, default effort is a row of buttons per model, and the squeeze patterns are named switches; the stored values keep the formats below. Defaults come from `plugin/src/schema.ts`. Values are validated on save.
 
 | Key | Default | What it does |
 |---|---|---|
@@ -80,9 +83,10 @@ Settings are kept in the mod store (`$.store`, key `settings`), not in a file. E
 | `gate.rules` | `["job:review=sonnet", "job:research=haiku", "type:Explore=haiku"]` | Ordered rules, first match wins: selectors joined by `+`, then `=haiku`, `=sonnet` or `=opus`, optionally `@low` to `@max`. Selectors: `job:<tag>`, `lang:<tag>`, `type:<agent type>`, `desc:<words>`, `cwd:<glob>`. |
 | `gate.rules_override` | `false` | Let rules replace a model the caller named. |
 | `gate.default_effort` | `[]` | Effort for subagents on a model when no rule sets one, e.g. `sonnet=high`. Empty: effort is left as it is. |
-| `gate.instructions` | `[]` | Text added to matching subagents' prompts: `<selectors>: <text>`, entries separated by `\|` in the pane. |
+| `gate.instructions` | `[]` | Text added to matching subagents' prompts: `<selectors>: <text>`, one entry per row in the pane. |
 | `checks.guard_hooks` | `true` | Refuse Bash commands that skip git hooks. |
 | `checks.seam_check` | `false` | Also send the seam reminder as a prompt; off: it is only logged. |
+| `checks.token_warning` | `200000` | Warn when one subagent passes this many tokens (input plus output, counted per step): a toast, a mark in the crew and a `!` above it in the band. `0` turns it off. |
 | `squeeze.enabled` | `true` | Redirect matching commands. |
 | `squeeze.patterns` | 7 regexes (cargo, swift, xcodebuild, pytest, npm/pnpm/yarn/bun, go, make) | Regexes matched against the start of a Bash command. |
 | `squeeze.max_lines` | `20` | Most lines a summary prints. Passed to the CLI as `--max-lines`. |
@@ -94,6 +98,10 @@ Settings are kept in the mod store (`$.store`, key `settings`), not in a file. E
 | `ledger.yearly_after_months` | `12` | Monthly averages older than this fold into yearly ones. |
 | `patterns.max_files` | `20` | Most pattern files allowed. Used by `patterns check` (or `--max-files`). |
 | `patterns.max_lines` | `40` | Most lines per pattern file. Used by `patterns check` (or `--max-lines`). |
+| `pane.open_on_start` | `false` | Open the `/haikrew` pane by itself whenever a session starts. |
+| `pane.time_style` | `"relative"` | How limit resets and past runs are shown: `relative` (in 2 h 14 min, 3 h ago), `clock` (at 6:00 PM, your time zone) or `both`. |
+| `pane.crew_band` | `true` | In the desktop app, show the animated crew in the band above the prompt, whether or not the pane is open. |
+| `agents.control` | `"off"` | What agents may do through HaiKrew's tools: `off`, `read` (status, settings, ledger) or `change` (also settings and rules; never agent control or Allow Opus). |
 
 Example: `"rules": ["job:review=sonnet", "desc:migration=sonnet"]` runs a spec headed `HAIKREW job=review` on Sonnet, and any task whose description mentions "migration" on Sonnet too. `job:implement+lang:rust=sonnet@high` runs Rust implementation specs on Sonnet at high effort; `cwd:~/projects/*=haiku` matches any session under `~/projects`. A rule that picks Opus is refused unless `gate.allow_opus` is on.
 
@@ -105,6 +113,8 @@ Example: `"rules": ["job:review=sonnet", "desc:migration=sonnet"]` runs a spec h
 
 ## Limitations
 
+- The desktop pane picks light or dark colours from Claude Code's `theme` setting; if the desktop app's appearance differs from that setting, the stars and chart text use the other palette. The crew, bubbles and switches show on either.
+- The agent tools (`agents.control`) and the crew above the prompt are covered by mod tests; the tools have not been called by a live agent yet.
 - The gate has had one live check (an agent launched with no model ran on Haiku). Per-task rules, effort, instructions and the seam check are covered by mod tests only; they have not been watched with real agents mid-run.
 - The mod parts (gate, guards, ledger, pane) run only in Claude Code. The CLI (`squeeze`, `verify`, `patterns check`) runs anywhere Node 22.18 or later runs.
 - The squeeze hook matches the start of a command with a regex.

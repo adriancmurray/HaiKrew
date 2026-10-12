@@ -1,6 +1,6 @@
 /** Crew checks: the roster follows a spawn, its tool calls and its stop, nests children, and the scene packs to its cells. */
 import { expect, test } from "claude-code/testing";
-import { fmtElapsed, noteSpawn, noteStop, noteToolCall, resetCrew, rowLine, snapshot } from "../../src/mod/crew.ts";
+import { fmtElapsed, noteSpawn, noteStop, noteTokens, noteToolCall, resetCrew, snapshot } from "../../src/mod/crew.ts";
 import { layout, packCells, PIXEL_ROWS, scene, SCENE_ROWS } from "../../src/mod/sprites.ts";
 
 const EMPTY = { rows: [], working: 0 };
@@ -33,14 +33,13 @@ test("a nested agent is indented under its parent", () => {
   noteSpawn({ subagentType: "helper", parentAgentId: "p" }, { model: "haiku", agentId: "c" }, 10);
   const crew = snapshot([], 100);
   expect(crew.rows.map((r) => r.depth)).toEqual([0, 1]);
-  expect(rowLine(crew.rows[1], 80).startsWith("  ● helper")).toBe(true);
+  expect(crew.rows[1].name).toBe("helper");
 });
 
-test("live agents merge in and the roster line fits its width", () => {
+test("live agents merge in and elapsed time reads as m:ss", () => {
   resetCrew();
   const crew = snapshot([{ id: "x", type: "Explore", description: "look around", status: "running" }], 0);
   expect(crew.rows[0]).toMatchObject({ name: "Explore", state: "working", task: "look around" });
-  expect(rowLine(crew.rows[0], 30).length).toBeLessThanOrEqual(30);
   expect(fmtElapsed(65_000)).toBe("1:05");
 });
 
@@ -64,4 +63,16 @@ test("more agents than the scene holds report the overflow", () => {
   const { critters, overflow } = layout(crew, 80, 0);
   expect(critters.length).toBe(9);
   expect(overflow).toBe(4);
+});
+
+test("a subagent's tokens add up step by step and cross the warning once", () => {
+  resetCrew();
+  noteSpawn({ subagentType: "haiku-coder" }, { model: "claude-haiku-5-5", agentId: "t1" }, 0);
+  expect(noteTokens("t1", { input_tokens: 500, output_tokens: 100 }, 1000, 1)).toEqual({ total: 600, crossed: false });
+  expect(noteTokens("t1", { input_tokens: 400, output_tokens: 100 }, 1000, 2)).toEqual({ total: 1100, crossed: true });
+  expect(noteTokens("t1", { input_tokens: 400, output_tokens: 0 }, 1000, 3)).toEqual({ total: 1500, crossed: false });
+  expect(noteTokens(undefined, { input_tokens: 5 }, 1000, 4)).toEqual({ total: 0, crossed: false });
+  expect(noteTokens("t2", { input_tokens: 5000 }, 0, 5).crossed).toBe(false);
+  const row = snapshot([], 10).rows.find((r) => r.id === "t1");
+  expect(row).toMatchObject({ tokens: 1500, over: true });
 });

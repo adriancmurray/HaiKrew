@@ -1,6 +1,8 @@
 /** Mod tests for the ledger: transcript parsing, condensing and the summary, on inline transcript text. */
 import { expect, test } from "claude-code/testing";
-import { addRun, condense, parseTranscriptText, suggestions, summary, tokenTotals } from "../../src/mod/ledger.ts";
+import { suggestions } from "../../src/mod/advice.ts";
+import { addRun, condense, parseTranscriptText, runFromStop, summary, tokenTotals } from "../../src/mod/ledger.ts";
+import { inferJob, jobLabel } from "../../src/mod/infer.ts";
 import type { Bucket, LedgerState, Run } from "../../src/mod/ledger.ts";
 import { defaults } from "../../src/schema.ts";
 import type { Settings } from "../../src/schema.ts";
@@ -109,11 +111,12 @@ test("an existing rule that starts with the selector suppresses the suggestion",
 
 test("suggestion text is exact and omits the lang word when lang is empty", () => {
   expect(suggestions(only(group("claude-haiku-5-5", 4, 2)), [])).toEqual([{
+    kind: "up",
     rule: "job:implement+lang:rust=sonnet",
-    text: "implement rust on Haiku: 4 runs, 50% pass; suggest job:implement+lang:rust=sonnet",
+    text: "implement rust on Haiku passed 50% of 4 runs",
   }]);
   expect(suggestions(only(group("claude-haiku-5-5", 4, 2, "")), [])[0].text)
-    .toBe("implement on Haiku: 4 runs, 50% pass; suggest job:implement=sonnet");
+    .toBe("implement on Haiku passed 50% of 4 runs");
 });
 
 test("suggestions never change the state they read", () => {
@@ -121,4 +124,36 @@ test("suggestions never change the state they read", () => {
   const before = JSON.stringify(state);
   suggestions(state, []);
   expect(JSON.stringify(state)).toBe(before);
+});
+
+const reviews = (model: string, n: number, passes: number, job = "review"): Bucket =>
+  ({ ...group(model, n, passes, ""), job });
+
+test("a job a stronger model nearly always passes is offered one model down, replacing its rule", () => {
+  const down = suggestions(only(reviews("claude-sonnet-5-5", 12, 12)), ["job:review=sonnet@high", "type:Explore=haiku"]);
+  expect(down).toEqual([{ kind: "down", rule: "job:review=haiku@high", replaces: "job:review=sonnet@high",
+    text: "review on Sonnet passed 100% of 12 runs; Haiku might do and costs less" }]);
+  expect(suggestions(only(reviews("claude-sonnet-5-5", 7, 7)), [])).toEqual([]);
+  expect(suggestions(only(reviews("claude-sonnet-5-5", 12, 10)), [])).toEqual([]);
+  expect(suggestions(only(reviews("claude-haiku-5-5", 12, 12)), [])).toEqual([]);
+});
+
+test("no cheaper suggestion when the cheaper model already fails that job, nor for inferred jobs", () => {
+  expect(suggestions(only(reviews("claude-sonnet-5-5", 12, 12), reviews("claude-haiku-5-5", 4, 1)), [])
+    .filter((s) => s.kind === "down")).toEqual([]);
+  expect(suggestions(only(reviews("claude-sonnet-5-5", 12, 12, "~review")), [])).toEqual([]);
+  expect(suggestions(only(reviews("claude-haiku-5-5", 4, 0, "~review")), [])).toEqual([]);
+});
+
+test("an untagged run gets a job inferred from its prompt or agent type, marked as inferred", () => {
+  expect(inferJob("Please review the diff in src/", "general-purpose")).toBe("~review");
+  expect(inferJob("Fix the failing parser test", "haiku-coder")).toBe("~fix");
+  expect(inferJob("What is in this folder?", "Explore")).toBe("~research");
+  expect(inferJob("hello", "general-purpose")).toBe("unknown");
+  expect(jobLabel("~review")).toBe("review (inferred)");
+  expect(jobLabel("review")).toBe("review");
+  const line = (o: unknown) => JSON.stringify(o);
+  const text = [line({ type: "user", timestamp: "2026-10-12T10:00:00.000Z", message: { content: "Investigate why the build is slow" } }),
+    line({ type: "assistant", timestamp: "2026-10-12T10:01:00.000Z", message: { id: "m1", model: "claude-haiku-5-5", content: [{ type: "text", text: "Done.\nVERDICT: PASS" }] } })].join("\n");
+  expect(runFromStop({ agent_id: "a1", agent_type: "general-purpose" }, text).job).toBe("~research");
 });

@@ -1,9 +1,10 @@
 /**
  * HaiKrew mod entry point. Claude Code calls register(on) once when the mod loads.
- * agent.spawn gates subagent models and adds settings instructions, turn.step applies a subagent's effort,
- * tool.call guards git-hook bypasses, squeezes noisy Bash and guards large Reads, and the SubagentStop hook records
- * each finished subagent in the ledger and flags the end of a parallel batch. Pure logic lives in src/mod;
- * this file is the only place that touches `$`, because the mod validator forbids passing `$` across imports.
+ * agent.spawn gates subagent models and adds settings instructions, turn.step applies a subagent's effort and
+ * counts its tokens for the token warning, tool.call guards git-hook bypasses, squeezes noisy Bash and guards large
+ * Reads, and the SubagentStop hook records each finished subagent in the ledger and flags the end of a parallel batch.
+ * Pure logic lives in src/mod. The validator forbids passing `$` across imports, so `$` is used only here and in
+ * the hooks of src/mod/pane.ts (the pane and band) and src/mod/agents.ts (the agent tools).
  */
 import { settingsFrom } from "../src/mod/config.ts";
 import type { Api } from "../src/mod/api.ts";
@@ -13,9 +14,10 @@ import { hookGuard, readGuard, squeeze } from "../src/mod/guards.ts";
 import type { ChecksSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
-import { noteSpawn, noteStop, noteToolCall } from "../src/mod/crew.ts";
+import { noteSpawn, noteStop, noteTokens, noteToolCall } from "../src/mod/crew.ts";
 import { addRun, readState, runFromStop } from "../src/mod/ledger.ts";
 import { registerPane } from "../src/mod/pane.ts";
+import { registerAgentTools } from "../src/mod/agents.ts";
 import type { Settings } from "../src/schema.ts";
 
 /** Claude Code calls this once when the mod loads, with the `on` that attaches hooks. */
@@ -28,6 +30,7 @@ export function register(on) {
     return gate(gateCfg, e, async (passed) => {
       const reply = await next(passed);
       noteSpawn(passed, reply, Date.now(), choice.rule);
+      $.ui.invalidate("ui.render"); // crew changed: the band and pane redraw
       const id = typeof reply?.agentId === "string" ? reply.agentId : "";
       if (id) {
         const effort = effortFor(gateCfg, choice, String(reply.model ?? passed.model ?? ""));
@@ -39,8 +42,18 @@ export function register(on) {
   });
 
   // Subagent steps only: stepEffort leaves the main loop (no agentId) and untracked agents unchanged.
-  on("turn.step", async function* (_$, e, next) {
-    return yield* next(stepEffort(e));
+  // Each subagent step also adds its usage to the agent's running total, for the token warning.
+  on("turn.step", async function* ($, e, next) {
+    const result = yield* next(stepEffort(e));
+    if (e.agentId && result?.usage) {
+      const limit = Number((await loadSettings($)).checks.token_warning) || 0;
+      const { total, crossed } = noteTokens(e.agentId, result.usage, limit, Date.now());
+      if (crossed) {
+        $.ui.toast(`HaiKrew: a subagent passed ${total.toLocaleString("en-US")} tokens (warning at ${limit.toLocaleString("en-US")})`);
+        $.ui.invalidate("ui.render");
+      }
+    }
+    return result;
   });
 
   on("tool.call", async (_$, e, next) => {
@@ -62,13 +75,14 @@ export function register(on) {
   });
 
   on("classic.SubagentStop", async ($, e, next) => {
-    let verdict: string | null = null;
+    let run: { verdict: string; model: string } | null = null;
     try {
-      verdict = await recordStop($, e);
+      run = await recordStop($, e);
     } catch {
       // The ledger never blocks a subagent from finishing.
     }
-    noteStop(String(e.agent_id ?? ""), String(e.agent_type ?? ""), verdict, Date.now());
+    noteStop(String(e.agent_id ?? ""), String(e.agent_type ?? ""), run?.verdict ?? null, Date.now(), run?.model ?? "");
+    $.ui.invalidate("ui.render"); // crew changed: the band and pane redraw
     const seam = noteSeamStop(String(e.agent_id ?? ""));
     if (seam) {
       $.ui.log(seam);
@@ -78,6 +92,7 @@ export function register(on) {
   });
 
   registerPane(on);
+  registerAgentTools(on, "haikrew");
 }
 
 /** The session's folder, or "" when Claude Code cannot say. */
@@ -104,10 +119,10 @@ async function readFile($: Api, path: string): Promise<string | null> {
 }
 
 /**
- * Append the finished subagent's run to the ledger and return its verdict. Skips (returns null) when ledger.enabled
+ * Append the finished subagent's run to the ledger and return its verdict and model. Skips (returns null) when ledger.enabled
  * is off or the transcript is unreadable.
  */
-async function recordStop($: Api, e: Record<string, unknown>): Promise<string | null> {
+async function recordStop($: Api, e: Record<string, unknown>): Promise<{ verdict: string; model: string } | null> {
   const cfg = await loadSettings($);
   const path = typeof e.agent_transcript_path === "string" ? e.agent_transcript_path : "";
   const transcript = cfg.ledger.enabled && path ? await readFile($, path) : null;
@@ -115,5 +130,5 @@ async function recordStop($: Api, e: Record<string, unknown>): Promise<string | 
   const run = runFromStop(e, transcript);
   const state = addRun(readState(await $.store.get("ledger")), run, cfg);
   await $.store.set("ledger", state);
-  return run.verdict;
+  return { verdict: run.verdict, model: run.model };
 }

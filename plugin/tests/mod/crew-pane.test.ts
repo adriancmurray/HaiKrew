@@ -28,7 +28,9 @@ test("the empty Crew tab shows the sleeping lead's message on the terminal", asy
   host(on);
   resetCrew();
   const m = await open(ctx, "terminal");
-  expect(await drawnText(m)).toContain("No agents working. Crew members appear here when Claude starts a subagent.");
+  const text = await drawnText(m);
+  expect(text).toContain("No agents working.");
+  expect(text).toContain("Crew members appear here when Claude starts a subagent.");
 });
 
 test("the Crew tab draws on the desktop surface as an SVG scene", async (ctx: any, on: any) => {
@@ -37,7 +39,7 @@ test("the Crew tab draws on the desktop surface as an SVG scene", async (ctx: an
   const m = await open(ctx, "desktop");
   const text = await drawnText(m);
   expect(text).toContain("<svg");
-  expect(text).toContain("No agents working.");
+  expect(text).toContain("Nobody is working right now.");
 });
 
 test("a SubagentStop puts its agent on the roster", async (ctx: any, on: any) => {
