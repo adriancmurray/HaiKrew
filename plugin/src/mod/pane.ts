@@ -8,10 +8,13 @@ import type { Settings } from "../schema.ts";
 import { checkChanges, mergeChanges, settingsFrom } from "./config.ts";
 import { leadState, snapshot } from "./crew.ts";
 import type { Crew, LiveAgent } from "./crew.ts";
-import { readState, tokenTotals } from "./ledger.ts";
+import { readState, rescanRun, tokenTotals } from "./ledger.ts";
+import { homeOf } from "./select.ts";
 import type { LedgerState } from "./ledger.ts";
 import { AGENT_TOOLS, allowed } from "./agents.ts";
 import { SCENE_KEY } from "./pane-crew.ts";
+import { agentTranscript } from "./pane-agent.ts";
+import type { AgentMessage } from "./pane-agent.ts";
 import { crewBand, desktopView, latestLine, terminalHome } from "./pane-home.ts";
 import { ledgerTab } from "./pane-ledger.ts";
 import { settingsTab } from "./pane-settings.ts";
@@ -40,6 +43,7 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
       // The pane still opens through the command.run hook when registration is refused.
     }
     const reply = await next(e);
+    void repairLedger($);
     const settings = await loadSettings($);
     if (allowed(settings, "status") === null) await registerTools($);
     if (settings.pane.open_on_start) await $.ui.open({ id: PANE, title: "HaiKrew" });
@@ -61,23 +65,24 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
   on("ui.render", { component: "AbovePrompt" }, async ($: Api, e: Api, next: (e: Api) => unknown) => {
     if (e.surface === "terminal" || e.props?.hasSurvey) return next(e);
     const settings = await loadSettings($);
-    if (!settings.pane.crew_band) return next(e);
+    if (!settings.band.show) return next(e);
     const ui = $.ui.resolve(e) as Ui;
     const crew = snapshot(await liveAgents($), Date.now());
     crew.lead = { state: leadState(crew.working), model: String(await $.session.model().catch(() => "")) };
     if (crew.working > 0) startTimer($, true);
-    // An SVG takes no clicks, so a button to open the pane sits over the scene, shown while the pointer is on it.
-    return ui.Box({ key: "crew-band", flexDirection: "column", children: [
-      crewBand(ui, crew, Math.max(24, Number(e.props?.bodyColumns) || 80), await themeIsDark($),
-        { crown: Boolean(settings.pane.crown), messages: await latestMessages($, crew) }),
-      ui.Box({ position: "absolute", top: 0, right: 1, display: "none", hover: { display: "flex" }, children: [
-        ui.Button({ key: "band-open", label: "↗", variant: "primary",
-          onPress: () => $.ui.open({ id: PANE, title: "HaiKrew", focus: true, closeOnEscape: true }) }),
-      ] }),
-    ] });
+    return crewBand(ui, crew, Math.max(24, Number(e.props?.bodyColumns) || 80), await themeIsDark($), {
+      band: settings.band, messages: await latestMessages($, crew), now: Date.now(),
+      open: () => $.ui.open({ id: PANE, title: "HaiKrew", focus: true, closeOnEscape: true }),
+      openAgent: (row) => {
+        agentInView = row.id;
+        $.ui.invalidate("ui.render");
+        return $.ui.open({ id: `${PANE}-agent`, title: `HaiKrew · ${row.name}`, focus: true, closeOnEscape: true });
+      },
+    });
   });
 
   on("ui.render", { component: "Pane" }, async ($: Api, e: Api, next: (e: Api) => unknown) => {
+    if (e.requestId === `${PANE}-agent`) return agentPane($, e);
     if (e.requestId !== PANE) return next(e);
     const ui = $.ui.resolve(e) as Ui;
     const cols = Math.max(24, Number(e.props?.bodyColumns) || 80);
@@ -114,6 +119,24 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
     }
     return vcol(ui, { paddingX: 1, width: cols, rowGap: 1 }, [nav, ...body]);
   });
+}
+
+// The subagent whose transcript the agent pane shows, set from its card in the band.
+let agentInView = "";
+
+/** The agent pane: one subagent's transcript, redrawn on the timer while it works. */
+async function agentPane($: Api, e: Api): Promise<unknown> {
+  const ui = $.ui.resolve(e) as Ui;
+  const cols = Math.max(24, Number(e.props?.bodyColumns) || 80);
+  const row = snapshot(await liveAgents($), Date.now()).rows.find((r) => r.id === agentInView);
+  if (row?.state === "working") startTimer($, true);
+  let messages: AgentMessage[] = [];
+  try {
+    messages = agentInView ? await $.session.messages({ agentId: agentInView }) : [];
+  } catch {
+    // Its messages cannot be read (it ended before this session started); the header still says who it was.
+  }
+  return vcol(ui, { paddingX: 1, width: cols }, [agentTranscript(ui, row, messages, cols - 2)]);
 }
 
 /** The closures the tabs call; each one reaches the host through this file's `$`. */
@@ -156,6 +179,39 @@ function gateLine(ui: Ui, act: Actions, on: boolean, working: number, ledger: Le
     txt(ui, { dimColor: true, wrap: "truncate-end" }, on ? `${counts} · applies to every session`
       : "Off: subagents run on whatever model they ask for. Turn it on to route them, in every session."),
   ]);
+}
+
+/**
+ * One-time repair (ledger v2): runs recorded before 0.6.3 read verdicts only from `VERDICT:` lines and left cache
+ * writes out of their input. Re-read each kept run's transcript, where it is still on disk, through rescanRun.
+ * Output tokens of those runs stay estimates; the transcripts do not hold final counts. Runs once, then marks it.
+ */
+async function repairLedger($: Api): Promise<void> {
+  try {
+    if (await $.store.get("ledger_v2")) return;
+    const home = homeOf(String(await $.session.cwd().catch(() => "")));
+    if (!home) return;
+    const root = `${home}/.claude/projects`;
+    const projects = (await $.fs.list(root)).filter((p: { kind: string }) => p.kind === "dir");
+    const state = readState(await $.store.get("ledger"));
+    const runs = [];
+    for (const run of state.runs) {
+      let text: string | null = null;
+      for (const p of projects) {
+        const path = `${root}/${p.name}/${run.session}/subagents/agent-${run.agent_id}.jsonl`;
+        if (run.session && run.agent_id && await $.fs.exists(path)) {
+          text = await $.fs.read(path);
+          break;
+        }
+      }
+      runs.push(text === null ? run : rescanRun(run, text));
+    }
+    await $.store.set("ledger", { ...state, runs });
+    await $.store.set("ledger_v2", true);
+    $.ui.invalidate("ui.render");
+  } catch {
+    // The repair is tried again at the next session start.
+  }
 }
 
 /** Each working agent's latest line of text, by id. An agent whose messages cannot be read is left out. */

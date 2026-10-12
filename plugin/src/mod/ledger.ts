@@ -1,8 +1,10 @@
 /**
  * Agent ledger for the mod: one run per finished subagent, folded into monthly and yearly buckets as it ages.
  * State is {runs, buckets} kept in $.store under "ledger". Every field is computed from the transcript, never
- * judged by a model: job and lang come from a `HAIKREW job=<word> lang=<word>` first line, verdict from the
- * last `VERDICT: PASS|FAIL` (or `STATUS: blocked`), quality is 1/attempts on pass and 0 otherwise.
+ * judged by a model: job and lang come from a `HAIKREW job=<word> lang=<word>` first line, quality is 1/attempts
+ * on pass and 0 otherwise. Verdict is whichever of `VERDICT: PASS|FAIL` and `STATUS: done|blocked` comes last in
+ * the final message: PASS and done are "pass", FAIL and blocked are "fail", and "none" when neither appears.
+ * Only judged runs (pass or fail) count toward pass rates.
  */
 import type { Settings } from "../schema.ts";
 import { isObject } from "./api.ts";
@@ -22,6 +24,8 @@ export type Run = {
   tokens_in: number;
   tokens_out: number;
   cache_read: number;
+  cache_write: number;
+  tokens_estimated: boolean;
   tool_calls: number;
   attempts: number;
   verdict: string;
@@ -41,7 +45,9 @@ export type Bucket = {
   sum_tokens_in: number;
   sum_tokens_out: number;
   sum_duration: number;
+  sum_cache_read: number;
   passes: number;
+  fails: number;
 };
 
 export type LedgerState = { runs: Run[]; buckets: Bucket[] };
@@ -143,14 +149,21 @@ function tag(prompt: string, name: string): string {
   return value ? value[0] : "unknown";
 }
 
+const VERDICT_RE = /VERDICT:\s*(PASS|FAIL)\b|STATUS:\s*(done|blocked)\b/gi;
+
+/** The verdict the text ends on: the last VERDICT or STATUS marker decides, "none" when there is none. */
 function verdict(text: string): string {
-  if (/STATUS:\s*blocked\b/i.test(text)) return "blocked";
-  const found = [...text.matchAll(/VERDICT:\s*(PASS|FAIL)\b/g)];
-  return found.length ? found[found.length - 1][1].toLowerCase() : "none";
+  let result = "none";
+  for (const m of text.matchAll(VERDICT_RE)) {
+    const word = (m[1] ?? m[2] ?? "").toLowerCase();
+    result = word === "pass" || word === "done" ? "pass" : "fail";
+  }
+  return result;
 }
 
 /** Fields computed from one subagent transcript given as JSONL text. Missing data yields 0, "unknown" or "none".
- * `prompt` is the first user turn, for inferring a job the spec did not tag. */
+ * `prompt` is the first user turn, for inferring a job the spec did not tag. Transcript output counts are the
+ * stream-start snapshot, so the result is marked estimated. */
 export function parseTranscriptText(text: string): Transcript {
   const s = scan(jsonLines(text));
   const usage = [...s.usage.values()];
@@ -160,13 +173,16 @@ export function parseTranscriptText(text: string): Transcript {
   const first = s.turns[0] ?? "";
   const hi = s.times.reduce<number | null>((a, t) => (a === null || t > a ? t : a), null);
   const lo = s.times.reduce<number | null>((a, t) => (a === null || t < a ? t : a), null);
+  const cacheWrite = sumOf("cache_creation_input_tokens");
   return {
     model: s.model ?? "unknown",
     job: tag(first, "job"),
     lang: tag(first, "lang"),
-    tokens_in: sumOf("input_tokens"),
+    tokens_in: sumOf("input_tokens") + cacheWrite,
     tokens_out: sumOf("output_tokens"),
     cache_read: sumOf("cache_read_input_tokens"),
+    cache_write: cacheWrite,
+    tokens_estimated: true,
     tool_calls: s.tools.size,
     attempts,
     duration_s: hi !== null && lo !== null ? (hi - lo) / 1000 : 0,
@@ -194,7 +210,9 @@ function mergeInto(map: Map<string, Bucket>, key: string, b: Bucket): void {
   have.sum_tokens_in += b.sum_tokens_in;
   have.sum_tokens_out += b.sum_tokens_out;
   have.sum_duration += b.sum_duration;
+  have.sum_cache_read += b.sum_cache_read;
   have.passes += b.passes;
+  have.fails += b.fails;
 }
 
 /** A one-run bucket for a run, in the period of its timestamp. */
@@ -203,7 +221,9 @@ function fromRun(run: Run): Bucket {
     period: run.ts.slice(0, 7), model: run.model, agent_type: run.agent_type, job: run.job, lang: run.lang,
     n: 1, sum_quality: run.quality, sumsq_quality: run.quality * run.quality,
     sum_tokens_in: run.tokens_in, sum_tokens_out: run.tokens_out, sum_duration: run.duration_s,
+    sum_cache_read: run.cache_read,
     passes: run.verdict === "pass" ? 1 : 0,
+    fails: run.verdict === "fail" ? 1 : 0,
   };
 }
 
@@ -257,37 +277,52 @@ export function summary(state: LedgerState): { recent: Run[]; by_key: KeyStats[]
   return { recent, by_key: rows.map(keyStats) };
 }
 
-/** Tokens in, tokens out and run count per model, summed over the kept runs and the monthly and yearly buckets. */
-export function tokenTotals(state: LedgerState): Record<string, { tokens_in: number; tokens_out: number; runs: number }> {
-  const out: Record<string, { tokens_in: number; tokens_out: number; runs: number }> = {};
-  const add = (model: string, tokensIn: number, tokensOut: number, runs: number): void => {
-    const t = (out[model] ??= { tokens_in: 0, tokens_out: 0, runs: 0 });
-    t.tokens_in += tokensIn;
-    t.tokens_out += tokensOut;
-    t.runs += runs;
+/** One model's token and run totals. */
+export type ModelTokens = { tokens_in: number; tokens_out: number; cache_read: number; runs: number };
+
+/** Tokens in, tokens out, cache reads and run count per model, summed over the kept runs and the monthly and
+ * yearly buckets. */
+export function tokenTotals(state: LedgerState): Record<string, ModelTokens> {
+  const out: Record<string, ModelTokens> = {};
+  const add = (model: string, t: ModelTokens): void => {
+    const acc = (out[model] ??= { tokens_in: 0, tokens_out: 0, cache_read: 0, runs: 0 });
+    acc.tokens_in += t.tokens_in;
+    acc.tokens_out += t.tokens_out;
+    acc.cache_read += t.cache_read;
+    acc.runs += t.runs;
   };
-  for (const run of state.runs) add(run.model, run.tokens_in, run.tokens_out, 1);
-  for (const b of state.buckets) add(b.model, b.sum_tokens_in, b.sum_tokens_out, b.n);
+  for (const run of state.runs) {
+    add(run.model, { tokens_in: run.tokens_in, tokens_out: run.tokens_out, cache_read: run.cache_read, runs: 1 });
+  }
+  for (const b of state.buckets) {
+    add(b.model, { tokens_in: b.sum_tokens_in, tokens_out: b.sum_tokens_out, cache_read: b.sum_cache_read, runs: b.n });
+  }
   return out;
 }
 
-/** One model's totals across its groups: runs, pass rate, and mean tokens (in plus out) and seconds per run. */
-export type ModelStats = { model: string; n: number; pass_rate: number; tokens_mean: number; duration_mean: number };
+/** One model's totals across its groups: runs, judged runs, pass rate over the judged ones, and mean tokens (in
+ * plus out) and seconds per run. */
+export type ModelStats = { model: string; n: number; judged: number; pass_rate: number; tokens_mean: number; duration_mean: number };
 
-/** Per-model stats from summary()'s groups, weighted by each group's runs; most runs first. */
+/** Per-model stats from summary()'s groups. Tokens and seconds are weighted by each group's runs, the pass rate by
+ * its judged runs; most runs first. */
 export function byModel(groups: KeyStats[]): ModelStats[] {
   const out = new Map<string, ModelStats>();
   for (const g of groups) {
     const n = Number(g.n);
-    const m = out.get(String(g.model)) ?? { model: String(g.model), n: 0, pass_rate: 0, tokens_mean: 0, duration_mean: 0 };
+    const judged = Number(g.judged);
+    const m = out.get(String(g.model)) ??
+      { model: String(g.model), n: 0, judged: 0, pass_rate: 0, tokens_mean: 0, duration_mean: 0 };
     m.n += n;
-    m.pass_rate += Number(g.pass_rate) * n;
+    m.judged += judged;
+    m.pass_rate += Number(g.pass_rate) * judged; // the group's passes, divided by judged below
     m.tokens_mean += (Number(g.tokens_in_mean) + Number(g.tokens_out_mean)) * n;
     m.duration_mean += Number(g.duration_mean) * n;
     out.set(m.model, m);
   }
   return [...out.values()].filter((m) => m.n > 0).map((m) => ({
-    ...m, pass_rate: m.pass_rate / m.n, tokens_mean: m.tokens_mean / m.n, duration_mean: m.duration_mean / m.n,
+    ...m, pass_rate: m.judged > 0 ? m.pass_rate / m.judged : 0,
+    tokens_mean: m.tokens_mean / m.n, duration_mean: m.duration_mean / m.n,
   })).sort((a, b) => b.n - a.n || cmp(a.model, b.model));
 }
 
@@ -295,27 +330,46 @@ function cmp(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/** Stats for one group. Stdev is the sample stdev. */
+/** Stats for one group. `n` counts every run; pass_rate is over the judged runs (passes plus fails) only. Stdev is
+ * the sample stdev. */
 function keyStats(b: Bucket): KeyStats {
   const n = b.n;
+  const judged = b.passes + b.fails;
   const variance = n > 1 ? (b.sumsq_quality - (b.sum_quality * b.sum_quality) / n) / (n - 1) : 0;
   return {
-    model: b.model, job: b.job, lang: b.lang, n,
+    model: b.model, job: b.job, lang: b.lang, n, judged,
     quality_mean: b.sum_quality / n,
     quality_stdev: Math.sqrt(Math.max(variance, 0)),
-    pass_rate: b.passes / n,
+    pass_rate: judged > 0 ? b.passes / judged : 0,
     tokens_in_mean: b.sum_tokens_in / n,
     tokens_out_mean: b.sum_tokens_out / n,
     duration_mean: b.sum_duration / n,
   };
 }
 
-/** The stored ledger state, or an empty one when the stored value is not a ledger. */
+/** The stored ledger state, or an empty one when the stored value is not a ledger. Fields that older ledgers lack
+ * get their defaults here, so the rest of the module sees complete records. */
 export function readState(value: unknown): LedgerState {
   if (isObject(value) && Array.isArray(value.runs) && Array.isArray(value.buckets)) {
-    return value as unknown as LedgerState;
+    return {
+      runs: (value.runs as Run[]).map(storedRun),
+      buckets: (value.buckets as Bucket[]).map((b) => ({
+        // A bucket folded before fails were counted judged nothing reliably: its passes count as unjudged too.
+        ...b, passes: b.fails === undefined ? 0 : b.passes, fails: b.fails ?? 0, sum_cache_read: b.sum_cache_read ?? 0,
+      })),
+    };
   }
   return { runs: [], buckets: [] };
+}
+
+/** A stored run with cache writes 0 and tokens estimated when absent, and the retired "blocked" verdict as "fail". */
+function storedRun(r: Run): Run {
+  return {
+    ...r,
+    cache_write: r.cache_write ?? 0,
+    tokens_estimated: r.tokens_estimated ?? true,
+    verdict: r.verdict === "blocked" ? "fail" : r.verdict,
+  };
 }
 
 /** One run from a SubagentStop event and the subagent's transcript text. */
@@ -329,5 +383,33 @@ export function runFromStop(e: Input, transcript: string): Run {
     session: String(e.session_id || ""),
     agent_id: String(e.agent_id || ""),
     agent_type: agentType,
+  };
+}
+
+/** A run whose tokens were counted live, not read from the transcript. Cache writes count toward tokens in. */
+export function withLiveUsage(run: Run, live: { input: number; cacheWrite: number; cacheRead: number; output: number }): Run {
+  return {
+    ...run,
+    tokens_in: live.input + live.cacheWrite,
+    cache_write: live.cacheWrite,
+    cache_read: live.cacheRead,
+    tokens_out: live.output,
+    tokens_estimated: false,
+  };
+}
+
+/** The run with verdict, quality, attempts and input-side tokens re-read from its transcript. Output tokens are
+ * re-read only when the run's tokens were not counted live, since the transcript's output count is a snapshot. */
+export function rescanRun(run: Run, transcript: string): Run {
+  const t = parseTranscriptText(transcript);
+  const live = run.tokens_estimated === false;
+  return {
+    ...run,
+    verdict: t.verdict,
+    quality: t.quality,
+    attempts: t.attempts,
+    // A live-counted run keeps all its token counts; only a transcript-counted one takes the re-read ones.
+    ...(live ? {} : { tokens_in: t.tokens_in, cache_write: t.cache_write, cache_read: t.cache_read, tokens_out: t.tokens_out }),
+    tokens_estimated: !live,
   };
 }

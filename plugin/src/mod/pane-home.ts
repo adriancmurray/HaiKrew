@@ -16,6 +16,8 @@ import { tokensTab } from "./pane-tokens.ts";
 import type { Usage } from "./pane-tokens.ts";
 import { title } from "./rules.ts";
 import { animatedSceneSvg, bannerSvg, SVG_ROWS } from "./sprites.ts";
+import { moonPhase, skyHour, skySvg } from "./sky.ts";
+import type { SkyMode } from "./sky.ts";
 import { gauges, inkFor, table } from "./svg.ts";
 import type { Ink } from "./svg.ts";
 import { C, CARD_INSET, compact, fillColor, foldCard, hexOf, hrow, labelled, modelColor, modelName, onOff, pxOf, thousands, txt, vcol, view, when } from "./ui.ts";
@@ -48,18 +50,27 @@ export function desktopView(ui: Ui, act: Actions, data: HomeData, gate: unknown,
       gate,
       controls(ui, act, frame, data.settings),
       crewCard(ui, act, frame, data.crew, data.messages, Boolean(data.settings.gate.allow_opus)),
-      tokenCard(ui, act, frame, data.usage, data.ledger, inner, ink, data.settings.pane.time_style as TimeStyle),
+      tokenCard(ui, act, frame, data.usage, data.ledger, data.crew, inner, ink, data.settings.pane.time_style as TimeStyle),
       recordSection(ui, act, frame, data.ledger, data.settings, inner, ink),
       settingsSection(ui, act, frame, data.settings, cols - 4),
     ]),
   ]);
 }
 
-/** What the band draws besides the crew: the main agent's crown, and each working agent's latest line for its card. */
-export type BandOpts = { crown: boolean; messages: Record<string, string> };
+/** What the band draws besides the crew: the band settings, each working agent's latest line, the time, and how to open the pane. */
+export type BandOpts = {
+  band: Settings["band"]; messages: Record<string, string>; now: number;
+  open: () => unknown;
+  /** Opens a subagent's transcript in HaiKrew's agent pane. */
+  openAgent: (row: Row) => unknown;
+};
 
 // ponytail: desktop rows measured at about 27 px; a different font size shifts where the hover targets sit.
 const ROW_PX = 27;
+// Rows at the top of the band where a hover card shows; no hover target reaches into them.
+const CARD_ROWS = 2;
+// Scene pixels kept free at the right for the sun or moon, which opens the pane.
+const ORB_ROOM = 12;
 const LEAD_SAYS: Record<LeadState, string> = {
   working: "Working on it myself.",
   directing: "Directing the crew while I work.",
@@ -68,33 +79,77 @@ const LEAD_SAYS: Record<LeadState, string> = {
 };
 
 /**
- * The crew for the band above the prompt: the animated scene, edge to edge, on the panel's own background, with an
- * invisible hover target over each critter that shows a card with who it is and what it is doing. `cols` is the
- * band's width in columns. The cards are styles the surface applies on hover; no hook runs.
+ * The band above the prompt: a pixel sky (live time of day, or one the settings hold) behind the crew, edge to
+ * edge. Hovering a critter shows a card with who it is and what it is doing; hovering the sun or moon at the right
+ * shows a button that opens the pane. Cards and button are styles the surface applies on hover; no hook runs.
  */
-export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: BandOpts = { crown: true, messages: {} }): unknown {
+export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: BandOpts): unknown {
   const full = pxOf(cols);
   // The scene's pixel grid follows the width, so a sprite pixel stays about five screen pixels wide.
   const sceneCols = Math.max(48, Math.min(240, Math.round(full / 5)));
-  const scene = animatedSceneSvg(crew, sceneCols, inkFor(dark), { crown: opts.crown });
+  const b = opts.band;
+  const mode = String(b.sky) as SkyMode;
+  const local = new Date(opts.now);
+  const sky = skySvg(sceneCols, SVG_ROWS, { mode, hour: skyHour(mode, local.getHours() + local.getMinutes() / 60),
+    phase: moonPhase(opts.now), clouds: Boolean(b.clouds) });
+  const scene = animatedSceneSvg(crew, sceneCols, inkFor(dark), {
+    headwear: String(b.headwear) as "crown" | "wizard" | "cap" | "none",
+    colors: { haiku: String(b.haiku_color), sonnet: String(b.sonnet_color), opus: String(b.opus_color) },
+    background: sky.body, reserveRight: ORB_ROOM,
+  });
   const height = Math.round((full * SVG_ROWS) / sceneCols);
   const rows = Math.max(2, Math.round(height / ROW_PX));
+  const toCol = (x: number): number => Math.floor((x * cols) / sceneCols);
+  const toRow = (y: number): number => Math.max(0, Math.min(rows - 1, Math.floor((y * rows) / SVG_ROWS)));
   const lead = crew.lead ?? { state: crew.working > 0 ? "directing" : "resting", model: "opus" };
   const who = crew.working ? `${crew.working} working` : "resting";
   const svg = ui.Svg({ source: scene.svg, alt: `The crew, ${who}: one pixel critter per agent, the main agent first`, width: full, height });
-  const cardWidth = Math.min(cols - 2, 64);
-  const targets = scene.spots.map((spot) => {
-    const left = Math.floor((spot.x * cols) / sceneCols);
-    const width = Math.max(2, Math.ceil((spot.w * cols) / sceneCols));
-    const top = Math.min(rows - 1, Math.floor((spot.top * rows) / SVG_ROWS));
-    const lines = spot.id === "lead" ? leadCard(lead, crew.working) : rowCard(crew.rows.find((r) => r.id === spot.id), opts.messages[spot.id]);
+  const orbLeft = toCol(sky.orb.x - sky.orb.r - 1);
+  const cardWidth = Math.min(orbLeft, 64);
+  const cardLeft = (left: number): number => Math.max(0, Math.min(orbLeft - cardWidth, left - 1));
+  // Hover targets must not overlap, or one pointer lights several cards: each runs from its own left column to the
+  // next one's, the last to its critter's right edge, and none reaches the sun or moon's column.
+  const spans = hoverSpans(scene.spots, toCol, orbLeft);
+  const targets = scene.spots.map((spot, i) => {
+    const { left, width } = spans[i];
+    // Targets start below the card rows: a card shown over another critter's target would keep both lit.
+    const top = Math.min(rows - 1, Math.max(CARD_ROWS, toRow(spot.top)));
+    const row = spot.id === "lead" ? undefined : crew.rows.find((r) => r.id === spot.id);
+    const lines = spot.id === "lead" ? leadCard(lead, crew.working) : rowCard(row, opts.messages[spot.id]);
     return ui.Box({ key: `band-${spot.id}`, position: "absolute", left, top, width, height: rows - top, children: [
-      ui.Box({ position: "absolute", top: -top, left: Math.max(0, Math.min(cols - cardWidth, left - 1)) - left, width: cardWidth,
+      ui.Box({ position: "absolute", top: -top, left: cardLeft(left) - left, width: Math.min(cardWidth, orbLeft - cardLeft(left)), height: CARD_ROWS,
         display: "none", hover: { display: "flex" }, flexDirection: "column", paddingX: 1, backgroundColor: dark ? "#2b2a27" : "#f1efe8",
-        children: [txt(ui, { bold: true, wrap: "truncate-end" }, lines[0]), txt(ui, { dimColor: true, wrap: "truncate-end" }, lines[1])] }),
+        children: [
+          hrow(ui, { columnGap: 1, justifyContent: "space-between" }, [
+            hrow(ui, { flexShrink: 1 }, [txt(ui, { bold: true, wrap: "truncate-end" }, lines[0])]),
+            row ? ui.Button({ key: `band-transcript-${spot.id}`, label: "Transcript ↗", variant: "secondary", onPress: () => opts.openAgent(row) }) : null,
+          ].filter((x) => x !== null)),
+          txt(ui, { dimColor: true, wrap: "truncate-end" }, lines[1]),
+        ] }),
     ] });
   });
-  return ui.Box({ flexDirection: "column", children: [svg, ...targets] });
+  // The sun or moon: hovering it shows the open button just to its left, inside the band.
+  const orb = sky.orb;
+  const orbWidth = Math.max(2, toCol(orb.x + orb.r + 1) - orbLeft + 1);
+  const opener = ui.Box({ key: "band-orb", position: "absolute", left: orbLeft, top: 0, width: Math.min(orbWidth, cols - orbLeft), height: rows, children: [
+    // In the card rows, like the cards, so the shown button never lies over a critter's hover target.
+    ui.Box({ position: "absolute", top: 0, right: orbWidth, display: "none", hover: { display: "flex" }, children: [
+      ui.Button({ key: "band-open", label: `Open HaiKrew ${orb.kind === "sun" ? "☀" : "☾"}`, variant: "primary", onPress: () => opts.open() }),
+    ] }),
+  ] });
+  return ui.Box({ key: "crew-band", flexDirection: "column", children: [svg, ...targets, opener] });
+}
+
+/**
+ * Column spans for the critters' hover targets, left to right and never overlapping: each runs from its own left
+ * column to the next one's, the last to its critter's right edge, none past `limit` (the sun or moon's column).
+ */
+export function hoverSpans(spots: Array<{ x: number; w: number }>, toCol: (x: number) => number, limit: number): Array<{ left: number; width: number }> {
+  const lefts = spots.map((s) => Math.min(toCol(s.x), limit - 1));
+  return spots.map((s, i) => {
+    const end = Math.min(i + 1 < lefts.length ? lefts[i + 1] : toCol(s.x + s.w) + 1, limit);
+    return { left: lefts[i], width: Math.max(1, end - lefts[i]) };
+  });
 }
 
 /** The main agent's card: its model and what it is doing. */
@@ -149,7 +204,7 @@ export function stepUp(model: string, allowOpus: boolean): string {
 function member(ui: Ui, act: Actions, r: Row, message: string, allowOpus: boolean): unknown {
   const live = r.state === "working";
   const detail = [r.task, r.last ? `last used ${r.last}` : ""].filter(Boolean).join(" · ");
-  const stats = [fmtElapsed(r.elapsedMs), r.calls ? `${r.calls} ${r.calls === 1 ? "step" : "steps"}` : "", r.tokens ? `${compact(r.tokens)} tokens` : ""]
+  const stats = [fmtElapsed(r.elapsedMs), r.calls ? `${r.calls} ${r.calls === 1 ? "step" : "steps"}` : "", r.tokens ? `${compact(r.tokens)} tokens` : "", r.cached ? `+${compact(r.cached)} cached` : ""]
     .filter(Boolean).join(" · ");
   const up = r.state === "failed" ? stepUp(r.model, allowOpus) : "";
   const asked = view.open[`retried-${r.id}`];
@@ -177,7 +232,7 @@ function member(ui: Ui, act: Actions, r: Row, message: string, allowOpus: boolea
 }
 
 /** Token use: rings for context and rate limits, then each model's share of subagent tokens. */
-function tokenCard(ui: Ui, act: Actions, frame: CardFrame, usage: Usage, ledger: LedgerState, width: number, ink: Ink, style: TimeStyle): unknown {
+function tokenCard(ui: Ui, act: Actions, frame: CardFrame, usage: Usage, ledger: LedgerState, crew: Crew, width: number, ink: Ink, style: TimeStyle): unknown {
   const now = Date.now();
   const ctx: Usage = usage.context ?? {};
   const rings = [{ label: "Context", fraction: Number(ctx.percent ?? 0) / 100, color: hexOf(fillColor(Number(ctx.percent ?? 0) / 100)),
@@ -196,13 +251,26 @@ function tokenCard(ui: Ui, act: Actions, frame: CardFrame, usage: Usage, ledger:
     models.length === 0
       ? txt(ui, { dimColor: true }, "Each model's share of subagent tokens shows here once a subagent finishes.")
       : ui.Svg({ source: table(
-        [{ label: "Subagents", share: 26 }, { label: "Tokens", share: 44 }, { label: "In", share: 10, end: true },
-          { label: "Out", share: 10, end: true }, { label: "Runs", share: 10, end: true }],
+        [{ label: "Subagents", share: 24 }, { label: "Tokens", share: 36 }, { label: "In", share: 10, end: true },
+          { label: "Out", share: 10, end: true }, { label: "Cached", share: 10, end: true }, { label: "Runs", share: 10, end: true }],
         models.map((m) => [{ dot: modelColor(m), text: modelName(m) }, { bar: sum(totals[m]) / most, color: modelColor(m), label: compact(sum(totals[m])) },
-          { text: compact(totals[m].tokens_in), muted: true }, { text: compact(totals[m].tokens_out), muted: true }, { text: String(totals[m].runs) }]),
-        width, models.map((m) => `${modelName(m)}: ${thousands(totals[m].tokens_in)} in, ${thousands(totals[m].tokens_out)} out, ${totals[m].runs} runs`), ink),
+          { text: compact(totals[m].tokens_in), muted: true }, { text: compact(totals[m].tokens_out), muted: true },
+          { text: compact(totals[m].cache_read ?? 0), muted: true }, { text: String(totals[m].runs) }]),
+        width, models.map((m) => `${modelName(m)}: ${thousands(totals[m].tokens_in)} in, ${thousands(totals[m].tokens_out)} out, ` +
+          `${thousands(totals[m].cache_read ?? 0)} cache reads, ${totals[m].runs} runs`), ink),
       alt: "Subagent tokens per model" }),
+    tokenNote(ui, ledger, crew),
   ]);
+}
+
+/** What the table counts: finished runs only, new work (cache reads apart), and which outputs are estimates. */
+function tokenNote(ui: Ui, ledger: LedgerState, crew: Crew): unknown {
+  const running = crew.rows.filter((r) => r.state === "working");
+  const estimated = ledger.runs.filter((r) => r.tokens_estimated !== false).length;
+  const parts = ["Finished runs. Tokens are new work (input, cache writes, output); cached is context re-read from cache."];
+  if (running.length) parts.push(`${running.length} still running: ${compact(running.reduce((n, r) => n + r.tokens, 0))} so far, added when they finish.`);
+  if (estimated) parts.push(`Output of ${estimated} older ${estimated === 1 ? "run is" : "runs is"} an estimate.`);
+  return txt(ui, { dimColor: true }, parts.join(" "));
 }
 
 function sum(t: { tokens_in: number; tokens_out: number }): number {

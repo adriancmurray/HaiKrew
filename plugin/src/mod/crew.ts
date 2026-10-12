@@ -24,11 +24,16 @@ type Member = {
   endedAt: number | null;
   verdict: string;
   rule: string;
-  /** Input plus output tokens of its steps so far, as each step's usage reports them. */
+  /** New work so far (input + cache writes + output), summed from each step's usage. */
   tokens: number;
+  /** Each step's usage summed by kind; cache reads are kept apart from `tokens`. */
+  usage: LiveUsage;
   /** Whether it has passed the per-agent token warning. */
   over: boolean;
 };
+
+/** A subagent's usage summed over its steps, as each step's final usage reports it. */
+export type LiveUsage = { input: number; cacheWrite: number; cacheRead: number; output: number };
 
 /** One agent from `$.agent.list()`: only the fields the roster reads. */
 export type LiveAgent = { id: string; type?: string; description?: string; status?: string; parentId?: string };
@@ -46,8 +51,10 @@ export type Row = {
   elapsedMs: number;
   calls: number;
   last: string;
-  /** Input plus output tokens so far. */
+  /** New work so far: input + cache writes + output. */
   tokens: number;
+  /** Cache reads so far, shown apart from `tokens`. */
+  cached: number;
   /** Past the per-agent token warning. */
   over: boolean;
 };
@@ -94,7 +101,8 @@ function member(id: string, now: number): Member {
   if (!m) {
     m = {
       id, model: "", subagentType: "", description: "", parentId: null, startedAt: now,
-      calls: 0, lastTool: "", lastTarget: "", endedAt: null, verdict: "", rule: "", tokens: 0, over: false,
+      calls: 0, lastTool: "", lastTarget: "", endedAt: null, verdict: "", rule: "", tokens: 0,
+      usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, over: false,
     };
     members.set(id, m);
   }
@@ -140,10 +148,20 @@ export function noteTokens(agentId: unknown, usage: unknown, limit: number, now:
   if (typeof agentId !== "string" || !agentId || !isObject(usage)) return { total: 0, crossed: false };
   const m = member(agentId, now);
   const n = (key: string): number => (typeof usage[key] === "number" ? (usage[key] as number) : 0);
-  m.tokens += n("input_tokens") + n("output_tokens");
+  m.usage.input += n("input_tokens");
+  m.usage.cacheWrite += n("cache_creation_input_tokens");
+  m.usage.cacheRead += n("cache_read_input_tokens");
+  m.usage.output += n("output_tokens");
+  m.tokens = m.usage.input + m.usage.cacheWrite + m.usage.output;
   const crossed = limit > 0 && !m.over && m.tokens > limit;
   if (crossed) m.over = true;
   return { total: m.tokens, crossed };
+}
+
+/** The usage counted live for `id`, or null when none of its steps were seen (it started before this session did). */
+export function liveUsage(id: string): LiveUsage | null {
+  const m = members.get(id);
+  return m && m.tokens + m.usage.cacheRead > 0 ? { ...m.usage } : null;
 }
 
 /**
@@ -221,6 +239,7 @@ function toRow(m: Member, depth: number, now: number): Row {
     calls: m.calls,
     last: [m.lastTool, m.lastTarget].filter(Boolean).join(" "),
     tokens: m.tokens,
+    cached: m.usage.cacheRead,
     over: m.over,
   };
 }

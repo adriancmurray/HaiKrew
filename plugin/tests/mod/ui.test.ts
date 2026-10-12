@@ -26,9 +26,9 @@ test("counts, durations and cells format short", () => {
   expect(fit("ab", 4)).toBe("ab  ");
 });
 
-test("byModel weights each group by its runs", () => {
+test("byModel weights pass rates by judged runs and the rest by runs", () => {
   const g = (model: string, n: number, pass: number, tin: number, dur: number) =>
-    ({ model, job: "j", lang: "l", n, pass_rate: pass, tokens_in_mean: tin, tokens_out_mean: 0, duration_mean: dur, quality_mean: 0, quality_stdev: 0 });
+    ({ model, job: "j", lang: "l", n, judged: n, pass_rate: pass, tokens_in_mean: tin, tokens_out_mean: 0, duration_mean: dur, quality_mean: 0, quality_stdev: 0 });
   const out = byModel([g("h", 3, 1, 100, 10), g("h", 1, 0, 500, 50), g("s", 1, 1, 1, 1)]);
   expect(out.map((m) => m.model)).toEqual(["h", "s"]);
   expect(out[0]).toMatchObject({ n: 4, pass_rate: 0.75, tokens_mean: 200, duration_mean: 20 });

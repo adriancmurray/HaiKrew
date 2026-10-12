@@ -27,6 +27,7 @@ export function parseText(field: Field, text: string): unknown {
 export const GROUPS = [
   { id: "routing", label: "Routing", sections: ["gate"] },
   { id: "guards", label: "Guards", sections: ["squeeze", "read_guard", "checks"] },
+  { id: "widget", label: "Prompt widget", sections: ["band"] },
   { id: "general", label: "General", sections: ["pane", "agents", "ledger", "patterns"] },
 ] as const;
 
@@ -51,6 +52,10 @@ export function groupSummary(id: string, s: Settings): string {
     return `Gate ${onOff(s.gate.enabled)}${s.gate.enabled && s.gate.delegate ? " · crew preferred" : ""} · agents start on ${title(String(s.gate.default_model))} · ${n} ${n === 1 ? "rule" : "rules"}`;
   }
   if (id === "guards") return `Output squeeze ${onOff(s.squeeze.enabled)} · big-file guard ${onOff(s.read_guard.enabled)} · git hook guard ${onOff(s.checks.guard_hooks)}`;
+  if (id === "widget") {
+    if (!s.band.show) return "Off";
+    return `Sky ${String(s.band.sky)}${s.band.clouds && s.band.sky !== "off" ? " with clouds" : ""} · main agent wears ${s.band.headwear === "none" ? "nothing" : `a ${s.band.headwear}`}`;
+  }
   return `Ledger ${onOff(s.ledger.enabled)} · agent tools ${s.agents.control === "off" ? "off" : s.agents.control === "read" ? "look only" : "look and change"}`;
 }
 

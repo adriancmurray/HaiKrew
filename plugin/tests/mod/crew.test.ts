@@ -1,9 +1,26 @@
 /** Crew checks: the roster follows a spawn, its tool calls and its stop, nests children, and the scene packs to its cells. */
 import { expect, test } from "claude-code/testing";
 import { fmtElapsed, noteSpawn, noteStop, noteTokens, noteToolCall, resetCrew, snapshot } from "../../src/mod/crew.ts";
-import { layout, packCells, PIXEL_ROWS, scene, SCENE_ROWS } from "../../src/mod/sprites.ts";
+import type { Row } from "../../src/mod/crew.ts";
+import { activityOf, layout, packCells, PIXEL_ROWS, scene, SCENE_ROWS } from "../../src/mod/sprites.ts";
 
 const EMPTY = { rows: [], working: 0 };
+
+function rowWith(state: Row["state"], last: string): Row {
+  return { id: "x", depth: 0, name: "agent", model: "haiku", task: "", state, elapsedMs: 0, calls: 0, last, tokens: 0, cached: 0, over: false };
+}
+
+test("a tool call's family sets the activity, unknown or empty calls think, and an end state overrides both", () => {
+  const cases: Array<[string, string]> = [
+    ["Read a.ts", "reading"], ["Grep foo", "reading"], ["Glob *.ts", "reading"], ["LS /", "reading"], ["NotebookRead n", "reading"],
+    ["Edit a.ts", "editing"], ["Write a.ts", "editing"], ["MultiEdit a.ts", "editing"], ["NotebookEdit n", "editing"],
+    ["Bash npm test", "running"], ["WebSearch q", "web"], ["WebFetch http", "web"], ["Agent x", "directing"], ["Task x", "directing"],
+    ["Mystery x", "thinking"], ["constructor x", "thinking"], ["", "thinking"],
+  ];
+  for (const [last, want] of cases) expect(activityOf(rowWith("working", last))).toBe(want);
+  expect(activityOf(rowWith("done", "Bash npm test"))).toBe("done");
+  expect(activityOf(rowWith("failed", "Read a.ts"))).toBe("failed");
+});
 
 test("a spawn, its tool calls and its stop update the roster row", () => {
   resetCrew();

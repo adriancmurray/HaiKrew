@@ -155,12 +155,12 @@ test("an invalid int shows its error and does not save", async (ctx: any, on: an
 test("a suggested rule is added only on the second press", async (ctx: any, on: any) => {
   const h = host(on);
   const failing = { period: "2026-10", model: "claude-haiku-5-5", agent_type: "haiku-coder", job: "implement",
-    lang: "rust", n: 4, sum_quality: 0, sumsq_quality: 0, sum_tokens_in: 0, sum_tokens_out: 0, sum_duration: 0, passes: 0 };
+    lang: "rust", n: 4, sum_quality: 0, sumsq_quality: 0, sum_tokens_in: 0, sum_tokens_out: 0, sum_duration: 0, passes: 0, fails: 4, sum_cache_read: 0 };
   h.store.set("ledger", { runs: [], buckets: [failing] });
   const m = await open(ctx);
   await m.press({ key: "tab-ledger" });
   const text = await drawnText(m);
-  expect(text).toContain("implement rust on Haiku passed 0% of 4 runs");
+  expect(text).toContain("implement rust on Haiku passed 0% of 4 judged runs");
   expect(text).toContain("When job is implement and language is rust → Sonnet");
   await m.press({ key: "suggest-0" });
   expect(await drawnText(m)).toContain("Press again to add");
@@ -204,7 +204,7 @@ test("on the desktop the crew sits in the band above the prompt, unless turned o
   await shown.press({ key: "band-open" });
   expect(h.opened).toContain("haikrew");
   // Turned off, HaiKrew passes the band on; with nothing beneath it in a test, the mount then has no drawing.
-  h.store.set("settings", { pane: { crew_band: false } });
+  h.store.set("settings", { band: { show: false } });
   let passed = "";
   try {
     await band();

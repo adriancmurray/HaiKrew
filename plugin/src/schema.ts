@@ -7,7 +7,7 @@ export type Value = boolean | number | string | string[];
 export type Field = { label?: string; short?: string } & (
   | { type: "bool"; default: boolean; help: string }
   | { type: "int"; default: number; min: number; max: number; help: string }
-  | { type: "str"; default: string; help: string }
+  | { type: "str"; default: string; help: string; pattern?: string }
   | { type: "enum"; default: string; choices: string[]; help: string }
   | { type: "list"; default: string[]; help: string; pattern?: string });
 export type Section = { title: string; help: string; fields: Record<string, Field> };
@@ -129,10 +129,26 @@ export const SCHEMA: Record<string, Section> = {
         help: "Open this pane by itself whenever a session starts. Off: open it with /haikrew." },
       time_style: { label: "Times", type: "enum", choices: ["relative", "clock", "both"], default: "relative",
         help: "How limit resets and past runs are shown: relative (in 2 h 14 min, 3 h ago), clock (at 6:00 PM, your time zone) or both." },
-      crew_band: { label: "Crew above the prompt", type: "bool", default: true,
-        help: "In the desktop app, show the animated crew in the band above the prompt, whether or not this pane is open." },
-      crown: { label: "Crown on the main agent", type: "bool", default: true,
-        help: "In the band above the prompt, the main agent (your conversation's own model) wears a small crown." },
+    },
+  },
+  band: {
+    title: "Prompt widget",
+    help: "The crew in the band above the prompt, in the desktop app: the main agent first, then each subagent at work.",
+    fields: {
+      show: { label: "Crew above the prompt", type: "bool", default: true,
+        help: "Show the animated crew in the band above the prompt, whether or not this pane is open." },
+      sky: { label: "Sky", type: "enum", choices: ["live", "dawn", "day", "dusk", "night", "off"], default: "live",
+        help: "The sky behind the crew: live follows your clock (sunrise, day, sunset, night with the real moon phase); " +
+          "the others hold one time of day; off leaves the band transparent. The sun or moon at the right opens this pane." },
+      clouds: { label: "Clouds", type: "bool", default: true, help: "Let a few pixel clouds drift across the sky." },
+      headwear: { label: "Main agent wears", type: "enum", choices: ["crown", "wizard", "cap", "none"], default: "crown",
+        help: "What the main agent (your conversation's own model) wears in the band." },
+      haiku_color: { label: "Haiku colour", type: "str", default: "#9b7fc7", pattern: "^#[0-9a-fA-F]{6}$",
+        help: "The colour of Haiku agents, as #rrggbb." },
+      sonnet_color: { label: "Sonnet colour", type: "str", default: "#4f9c98", pattern: "^#[0-9a-fA-F]{6}$",
+        help: "The colour of Sonnet agents, as #rrggbb." },
+      opus_color: { label: "Opus colour", type: "str", default: "#d97757", pattern: "^#[0-9a-fA-F]{6}$",
+        help: "The colour of Opus agents, as #rrggbb." },
     },
   },
 };
@@ -156,7 +172,9 @@ export function validate(section: string, key: string, value: unknown): string |
     case "int":
       if (typeof value !== "number" || !Number.isInteger(value)) return "expected a whole number";
       return value >= f.min && value <= f.max ? null : `must be between ${f.min} and ${f.max}`;
-    case "str": return typeof value === "string" ? null : "expected text";
+    case "str":
+      if (typeof value !== "string") return "expected text";
+      return !f.pattern || new RegExp(f.pattern).test(value) ? null : `"${value}" does not match ${f.pattern}`;
     case "enum": return f.choices.includes(value as string) ? null : `must be one of ${f.choices.join(", ")}`;
     case "list": {
       if (!Array.isArray(value) || !value.every((v) => typeof v === "string")) return "expected a list of text values";
