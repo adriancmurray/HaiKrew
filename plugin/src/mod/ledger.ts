@@ -105,12 +105,15 @@ function scanAssistant(out: Scan, msg: Record<string, unknown>, idx: number): vo
   const mid = msg.id ? String(msg.id) : String(idx); // real ids are never bare digits
   if (isObject(msg.usage)) out.usage.set(mid, msg.usage);
   if (!out.model && typeof msg.model === "string" && msg.model) out.model = msg.model;
+  const text = textBlocks(msg.content);
   if (Array.isArray(msg.content)) {
     msg.content.forEach((block, pos) => {
       if (isObject(block) && block.type === "tool_use") out.tools.add(block.id ? String(block.id) : mid + "#" + pos);
+      // Agents may hand their final report back through a SubagentHandback call instead of a text block.
+      if (isObject(block) && block.type === "tool_use" && block.name === "SubagentHandback" && isObject(block.input) &&
+        typeof block.input.message === "string" && block.input.message.trim()) text.push(block.input.message);
     });
   }
-  const text = textBlocks(msg.content);
   if (text.length) out.finalText = text.join("\n");
 }
 
@@ -429,8 +432,8 @@ export function rescanRun(run: Run, transcript: string): Run {
   const live = run.tokens_estimated === false;
   return {
     ...run,
-    verdict: t.verdict,
-    quality: t.quality,
+    // A reviewer's verdict (checked_by) outranks the agent's own.
+    ...(run.checked_by ? {} : { verdict: t.verdict, quality: t.quality }),
     attempts: t.attempts,
     // A live-counted run keeps all its token counts; only a transcript-counted one takes the re-read ones.
     ...(live ? {} : { tokens_in: t.tokens_in, cache_write: t.cache_write, cache_read: t.cache_read, tokens_out: t.tokens_out }),

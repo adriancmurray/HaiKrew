@@ -66,6 +66,19 @@ test("only the final assistant message with text sets the verdict", () => {
   expect(parseTranscriptText(text).verdict).toBe("fail");
 });
 
+test("a report handed back through SubagentHandback sets the verdict and the final report", () => {
+  const handback = JSON.stringify({ type: "assistant", message: { id: "h1", content: [
+    { type: "tool_use", id: "t9", name: "SubagentHandback", input: { message: "Built it.\nSTATUS: done\nVERDICT: PASS (all three)." } }] } });
+  const text = [finalMessage("Let me check the tests."), handback].join("\n");
+  expect(parseTranscriptText(text).verdict).toBe("pass");
+  expect(parseTranscriptText(text.replace("VERDICT: PASS", "VERDICT: FAIL")).verdict).toBe("fail");
+});
+
+test("rescanRun keeps a reviewer's verdict", () => {
+  const checked = { ...run("2026-10-08T09:00:00.000Z", 0, "fail"), checked_by: "Ada" };
+  expect(rescanRun(checked, TRANSCRIPT)).toMatchObject({ verdict: "fail", quality: 0 });
+});
+
 test("parseTranscriptText counts cache writes into tokens in and marks the counts estimated", () => {
   const line = JSON.stringify({ type: "assistant", message: { id: "m2", content: "VERDICT: PASS",
     usage: { input_tokens: 3, cache_creation_input_tokens: 100, cache_read_input_tokens: 50, output_tokens: 9 } } });

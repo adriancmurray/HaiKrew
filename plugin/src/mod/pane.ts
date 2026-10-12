@@ -195,7 +195,7 @@ function gateLine(ui: Ui, act: Actions, on: boolean, working: number, ledger: Le
  */
 async function repairLedger($: Api): Promise<void> {
   try {
-    if (await $.store.get("ledger_v2")) return;
+    if (await $.store.get("ledger_v3")) return;
     const home = homeOf(String(await $.session.cwd().catch(() => "")));
     if (!home) return;
     const root = `${home}/.claude/projects`;
@@ -211,7 +211,7 @@ async function repairLedger($: Api): Promise<void> {
     }
     // The transcripts took a while to read, so the ledger is read again: runs stored meanwhile are kept.
     await $.store.set("ledger", mergeRescanned(readState(await $.store.get("ledger")), rescanned));
-    await $.store.set("ledger_v2", true);
+    await $.store.set("ledger_v3", true);
     $.ui.invalidate("ui.render");
   } catch {
     // The repair is tried again at the next session start.
