@@ -131,6 +131,8 @@ export const SCHEMA: Record<string, Section> = {
         help: "How limit resets and past runs are shown: relative (in 2 h 14 min, 3 h ago), clock (at 6:00 PM, your time zone) or both." },
       crew_band: { label: "Crew above the prompt", type: "bool", default: true,
         help: "In the desktop app, show the animated crew in the band above the prompt, whether or not this pane is open." },
+      crown: { label: "Crown on the main agent", type: "bool", default: true,
+        help: "In the band above the prompt, the main agent (your conversation's own model) wears a small crown." },
     },
   },
 };

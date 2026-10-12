@@ -50,7 +50,7 @@ export const C = {
   track: "subtle",
 } as const;
 
-const MODEL_HEX: Record<string, string> = { haiku: "#d97757", sonnet: "#4f9c98", opus: "#9b7fc7", unknown: "#8a8f9c" };
+const MODEL_HEX: Record<string, string> = { haiku: "#9b7fc7", sonnet: "#4f9c98", opus: "#d97757", unknown: "#8a8f9c" };
 
 /** The colour of a model's dot or bar: the crew sprite colour of its family. */
 export function modelColor(model: string): string {

@@ -53,13 +53,40 @@ export type Row = {
 };
 
 /** The roster at one instant: its rows in display order, and how many are still working. */
-export type Crew = { rows: Row[]; working: number };
+/**
+ * What the main agent (the conversation's own model) is doing: working alone, directing a working crew, waiting
+ * with its turn over while the crew still works, or resting with nothing running.
+ */
+export type LeadState = "working" | "directing" | "waiting" | "resting";
+/** The main agent for the band: its state and its model, as an id ("claude-opus-5-5") or a family ("opus"). */
+export type Lead = { state: LeadState; model: string };
+export type Crew = { rows: Row[]; working: number; lead?: Lead };
+
+// The main loop's turn: set by its first step (a step with no agentId), cleared when that turn completes.
+let mainTurn: string | null = null;
+
+/** A main-loop step began (turn.step with no agentId): the main agent is busy with that turn. True when that is news. */
+export function noteMainStep(turnId: string): boolean {
+  const changed = mainTurn !== turnId;
+  mainTurn = turnId;
+  return changed;
+}
+/** A turn completed; when it is the main loop's, the main agent goes idle. */
+export function noteTurnEnd(turnId: string): void {
+  if (turnId === mainTurn) mainTurn = null;
+}
+/** The main agent's state given how many crew members work now. */
+export function leadState(working: number): LeadState {
+  if (mainTurn !== null) return working > 0 ? "directing" : "working";
+  return working > 0 ? "waiting" : "resting";
+}
 
 const members = new Map<string, Member>();
 
 /** Forget every tracked agent. Tests call this so each starts from an empty roster. */
 export function resetCrew(): void {
   members.clear();
+  mainTurn = null;
 }
 
 function member(id: string, now: number): Member {

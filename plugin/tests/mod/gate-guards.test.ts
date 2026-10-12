@@ -33,6 +33,8 @@ test("gate gives an agent with no model the default model", () => {
 test("gate leaves a pinned agent type and an explicit model alone", () => {
   const cfg = section<GateSettings>("gate");
   expect(gate(cfg, { subagentType: "haiku-coder" }, passThrough)).toEqual({ next: { subagentType: "haiku-coder" } });
+  // The plugin's own agent arrives with its plugin prefix and is still pinned.
+  expect(gate(cfg, { subagentType: "haikrew:haiku-coder" }, passThrough)).toEqual({ next: { subagentType: "haikrew:haiku-coder" } });
   expect(gate(cfg, { subagentType: "general", model: "sonnet" }, passThrough))
     .toEqual({ next: { subagentType: "general", model: "sonnet" } });
 });

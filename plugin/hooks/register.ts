@@ -14,7 +14,7 @@ import { hookGuard, readGuard, squeeze } from "../src/mod/guards.ts";
 import type { ChecksSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
-import { noteSpawn, noteStop, noteTokens, noteToolCall } from "../src/mod/crew.ts";
+import { noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteTurnEnd } from "../src/mod/crew.ts";
 import { addRun, readState, runFromStop } from "../src/mod/ledger.ts";
 import { registerPane } from "../src/mod/pane.ts";
 import { delegationNote, withNote } from "../src/mod/delegate.ts";
@@ -51,9 +51,19 @@ export function register(on) {
     return next(note ? { ...e, blocks: withNote(e.blocks, note) } : e);
   });
 
+  // The main loop's turn is over: the main agent in the band rests, or waits on a crew still working.
+  on("turn.complete", async ($, e, next) => {
+    const reply = await next(e);
+    noteTurnEnd(String(e.turnId ?? ""));
+    $.ui.invalidate("ui.render");
+    return reply;
+  });
+
   // Subagent steps only: stepEffort leaves the main loop (no agentId) and untracked agents unchanged.
   // Each subagent step also adds its usage to the agent's running total, for the token warning.
   on("turn.step", async function* ($, e, next) {
+    // A main-loop step: the main agent in the band is busy until this turn completes.
+    if (!e.agentId && typeof e.turnId === "string" && noteMainStep(e.turnId)) $.ui.invalidate("ui.render");
     const result = yield* next(stepEffort(e));
     if (e.agentId && result?.usage) {
       const limit = Number((await loadSettings($)).checks.token_warning) || 0;

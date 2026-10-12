@@ -6,7 +6,7 @@
  */
 import type { Settings } from "../schema.ts";
 import { checkChanges, mergeChanges, settingsFrom } from "./config.ts";
-import { snapshot } from "./crew.ts";
+import { leadState, snapshot } from "./crew.ts";
 import type { Crew, LiveAgent } from "./crew.ts";
 import { readState, tokenTotals } from "./ledger.ts";
 import type { LedgerState } from "./ledger.ts";
@@ -64,10 +64,12 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
     if (!settings.pane.crew_band) return next(e);
     const ui = $.ui.resolve(e) as Ui;
     const crew = snapshot(await liveAgents($), Date.now());
+    crew.lead = { state: leadState(crew.working), model: String(await $.session.model().catch(() => "")) };
     if (crew.working > 0) startTimer($, true);
     // An SVG takes no clicks, so a button to open the pane sits over the scene, shown while the pointer is on it.
     return ui.Box({ key: "crew-band", flexDirection: "column", children: [
-      crewBand(ui, crew, Math.max(24, Number(e.props?.bodyColumns) || 80), await themeIsDark($)),
+      crewBand(ui, crew, Math.max(24, Number(e.props?.bodyColumns) || 80), await themeIsDark($),
+        { crown: Boolean(settings.pane.crown), messages: await latestMessages($, crew) }),
       ui.Box({ position: "absolute", top: 0, right: 1, display: "none", hover: { display: "flex" }, children: [
         ui.Button({ key: "band-open", label: "↗", variant: "primary",
           onPress: () => $.ui.open({ id: PANE, title: "HaiKrew", focus: true, closeOnEscape: true }) }),

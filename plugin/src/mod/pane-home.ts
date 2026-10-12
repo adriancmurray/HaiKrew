@@ -6,7 +6,7 @@
  */
 import type { Settings } from "../schema.ts";
 import { fmtElapsed, modelFamily } from "./crew.ts";
-import type { Crew, Row } from "./crew.ts";
+import type { Crew, Lead, LeadState, Row } from "./crew.ts";
 import { tokenTotals } from "./ledger.ts";
 import type { LedgerState } from "./ledger.ts";
 import { crewTab } from "./pane-crew.ts";
@@ -15,7 +15,7 @@ import { settingsSection } from "./pane-settings.ts";
 import { tokensTab } from "./pane-tokens.ts";
 import type { Usage } from "./pane-tokens.ts";
 import { title } from "./rules.ts";
-import { animatedSceneSvg, bannerSvg, PIXEL_ROWS } from "./sprites.ts";
+import { animatedSceneSvg, bannerSvg, SVG_ROWS } from "./sprites.ts";
 import { gauges, inkFor, table } from "./svg.ts";
 import type { Ink } from "./svg.ts";
 import { C, CARD_INSET, compact, fillColor, foldCard, hexOf, hrow, labelled, modelColor, modelName, onOff, pxOf, thousands, txt, vcol, view, when } from "./ui.ts";
@@ -55,18 +55,60 @@ export function desktopView(ui: Ui, act: Actions, data: HomeData, gate: unknown,
   ]);
 }
 
+/** What the band draws besides the crew: the main agent's crown, and each working agent's latest line for its card. */
+export type BandOpts = { crown: boolean; messages: Record<string, string> };
+
+// ponytail: desktop rows measured at about 27 px; a different font size shifts where the hover targets sit.
+const ROW_PX = 27;
+const LEAD_SAYS: Record<LeadState, string> = {
+  working: "Working on it myself.",
+  directing: "Directing the crew while I work.",
+  waiting: "My turn is done; waiting on the crew.",
+  resting: "Resting. Nothing is running.",
+};
+
 /**
- * The crew for the band above the prompt: the animated scene, edge to edge, on the panel's own background.
- * `cols` is the band's width in columns.
+ * The crew for the band above the prompt: the animated scene, edge to edge, on the panel's own background, with an
+ * invisible hover target over each critter that shows a card with who it is and what it is doing. `cols` is the
+ * band's width in columns. The cards are styles the surface applies on hover; no hook runs.
  */
-export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean): unknown {
+export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: BandOpts = { crown: true, messages: {} }): unknown {
   const full = pxOf(cols);
   // The scene's pixel grid follows the width, so a sprite pixel stays about five screen pixels wide.
   const sceneCols = Math.max(48, Math.min(240, Math.round(full / 5)));
-  const scene = animatedSceneSvg(crew, sceneCols, inkFor(dark));
+  const scene = animatedSceneSvg(crew, sceneCols, inkFor(dark), { crown: opts.crown });
+  const height = Math.round((full * SVG_ROWS) / sceneCols);
+  const rows = Math.max(2, Math.round(height / ROW_PX));
+  const lead = crew.lead ?? { state: crew.working > 0 ? "directing" : "resting", model: "opus" };
   const who = crew.working ? `${crew.working} working` : "resting";
-  return ui.Svg({ source: scene.svg, alt: `The crew, ${who}: one pixel critter per agent, the lead first`, width: full,
-    height: Math.round((full * PIXEL_ROWS) / sceneCols) });
+  const svg = ui.Svg({ source: scene.svg, alt: `The crew, ${who}: one pixel critter per agent, the main agent first`, width: full, height });
+  const cardWidth = Math.min(cols - 2, 64);
+  const targets = scene.spots.map((spot) => {
+    const left = Math.floor((spot.x * cols) / sceneCols);
+    const width = Math.max(2, Math.ceil((spot.w * cols) / sceneCols));
+    const top = Math.min(rows - 1, Math.floor((spot.top * rows) / SVG_ROWS));
+    const lines = spot.id === "lead" ? leadCard(lead, crew.working) : rowCard(crew.rows.find((r) => r.id === spot.id), opts.messages[spot.id]);
+    return ui.Box({ key: `band-${spot.id}`, position: "absolute", left, top, width, height: rows - top, children: [
+      ui.Box({ position: "absolute", top: -top, left: Math.max(0, Math.min(cols - cardWidth, left - 1)) - left, width: cardWidth,
+        display: "none", hover: { display: "flex" }, flexDirection: "column", paddingX: 1, backgroundColor: dark ? "#2b2a27" : "#f1efe8",
+        children: [txt(ui, { bold: true, wrap: "truncate-end" }, lines[0]), txt(ui, { dimColor: true, wrap: "truncate-end" }, lines[1])] }),
+    ] });
+  });
+  return ui.Box({ flexDirection: "column", children: [svg, ...targets] });
+}
+
+/** The main agent's card: its model and what it is doing. */
+function leadCard(lead: Lead, working: number): [string, string] {
+  const crewNote = working ? ` · ${working} ${working === 1 ? "agent" : "agents"} working` : "";
+  return [`Main agent · ${title(modelName(lead.model.replace(/\[.*\]$/, "")))} · ${lead.state}${crewNote}`, LEAD_SAYS[lead.state]];
+}
+
+/** A crew member's card: name, model and state, then its latest line, else its last tool or its task. */
+function rowCard(r: Row | undefined, message: string | undefined): [string, string] {
+  if (!r) return ["", ""];
+  const head = [r.name, r.model && r.model !== "unknown" ? modelName(r.model) : "", r.over ? "past the token warning" : r.state, fmtElapsed(r.elapsedMs)];
+  const body = r.state === "working" && message ? `“${message}”` : r.last ? `last used ${r.last}` : r.task;
+  return [head.filter(Boolean).join(" · "), body || " "];
 }
 
 /** The controls people reach for most, as a two-column form. Everything else is under Settings. */

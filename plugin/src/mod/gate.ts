@@ -59,7 +59,9 @@ export function resolveModel(cfg: GateSettings, e: Input, cwd = ""): Choice {
     return { deny: "Subagents can't start agents of their own here. Do the work yourself, or set " +
       "gate.allow_nested to true in haikrew settings." };
   }
-  if (cfg.pinned_types.includes(String(e.subagentType))) return {};
+  // A plugin's agent arrives as "<plugin>:<name>" (haikrew:haiku-coder); a pinned name matches it with or without the prefix.
+  const type = String(e.subagentType ?? "");
+  if (cfg.pinned_types.includes(type) || cfg.pinned_types.includes(type.slice(type.indexOf(":") + 1))) return {};
   const named = Boolean(e.model);
   const hit = named && !cfg.rules_override ? undefined : matchRule(cfg.rules, ctxFrom(e, cwd));
   // A caller-named model stands unless a rule matched and rules_override lets it replace the name.

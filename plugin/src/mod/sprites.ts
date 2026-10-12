@@ -4,17 +4,29 @@
  * glyph, top pixel as foreground, bottom as background), and desktop draws one SVG rect per pixel. Pure.
  */
 import { modelFamily } from "./crew.ts";
-import type { Crew } from "./crew.ts";
+import type { Crew, Lead, Row } from "./crew.ts";
 
 /** Pixel rows in the scene; the terminal shows half as many cell rows. */
 export const PIXEL_ROWS = 18;
 /** Terminal cell rows the scene occupies. */
 export const SCENE_ROWS = PIXEL_ROWS / 2;
+/** Pixel rows of the desktop band's animated scene, taller than the terminal's so critters can scale up. */
+export const SVG_ROWS = 22;
 const MAX_CRITTERS = 12;
 const SPACING = 8;
 const BASE_Y = 11;
 const LEAD_X = 2;
 const UPPER_HALF_BLOCK = 0x2580;
+const FEET = SVG_ROWS - 1;
+const GAP = 2;
+// Room after the lead for the indicator beside its head (baton, hourglass, bubble, z), clear of the next bubble.
+const LEAD_GAP = 8;
+const LEAD_SCALE = 1.35;
+const GOLD = 0xe8b931;
+
+type Family = ReturnType<typeof modelFamily>;
+/** How big each model family's critter stands on the desktop band. */
+const SCALE: Record<Family, number> = { haiku: 1, sonnet: 1.2, opus: 1.4, unknown: 1 };
 
 /** Sprite rows: o body, s shade (bottom edge and legs), e eye. Eyes close to shade. */
 const CRITTER = [
@@ -25,13 +37,16 @@ const CRITTER = [
   ".s.s.s.",
 ];
 const ZZZ = ["###", "..#", "###"];
+// The band's rising z: taller than the terminal's, so the diagonal reads at small sizes.
+const ZED = ["###", "..#", ".#.", "#..", "###"];
+const HOURGLASS = ["###", ".#.", ".#.", "###"];
 
 const NAVY = 0x0f1b33;
 const STARS = [0x26385e, 0x5a6e96, 0xdfe6f5];
 const CREAM = 0xffe9c7;
 const EYE = 0x1b1420;
-const LEAD_BODY = 0xd97757;
-const MODEL_BODY: Record<string, number> = { haiku: 0xd97757, sonnet: 0x4f9c98, opus: 0x9b7fc7, unknown: 0x8a8f9c };
+const ORANGE = 0xd97757;
+const MODEL_BODY: Record<Family, number> = { haiku: 0x9b7fc7, sonnet: 0x4f9c98, opus: ORANGE, unknown: 0x8a8f9c };
 
 /** One critter on the scene: its top-left pixel, colours, and whether it is dimmed or has its eyes shut. */
 export type Critter = { x: number; y: number; body: number; dim: boolean; asleep: boolean; alert?: boolean };
@@ -73,8 +88,8 @@ export function layout(crew: Crew, cols: number, frame: number): { critters: Cri
     };
   });
   const lead: Critter = {
-    x: LEAD_X, y: BASE_Y - (working && (frame >> 1) % 2 === 1 ? 1 : 0), body: LEAD_BODY,
-    dim: false, asleep: crew.rows.length === 0,
+    x: LEAD_X, y: BASE_Y - (working && (frame >> 1) % 2 === 1 ? 1 : 0),
+    body: MODEL_BODY[modelFamily(crew.lead?.model ?? "opus")], dim: false, asleep: crew.rows.length === 0,
   };
   return { critters: [...critters.reverse(), lead], overflow: crew.rows.length - drawn.length };
 }
@@ -148,46 +163,137 @@ function starRects(points: Array<[number, number, number]>, color: string): stri
 
 /** The scene's colours on one background: the ground line and stars from the ink, the bubble behind "…". */
 export type SceneInk = { star: string; ground: string; bubble: string; bubbleText: string };
+/** Options for the desktop band's scene: whether the lead wears its crown. */
+export type SceneOpts = { crown: boolean };
+/** Where one drawn critter stands on the desktop band, in scene pixels: its Row id, or "lead" for the lead. */
+export type Spot = { id: string; x: number; w: number; top: number };
 
 /**
- * The crew as one animated SVG on a transparent background, so the panel shows through: evenly spread stars
- * twinkle, working critters bob with a "…" bubble over them, awake critters blink, finished agents stand dimmed,
- * and with no agents the lead sleeps under a drifting Z. All motion is SMIL inside the drawing; no timer needed.
+ * The crew as one animated SVG on a transparent background, `SVG_ROWS` pixels tall, so the panel shows through. The
+ * lead stands at the left, sized by its model and a further `LEAD_SCALE`; each agent follows, sized by its model.
+ * Stars twinkle, the lead's state shows beside its head, working agents bob under a "…" bubble and finished ones stand
+ * dimmed. All motion is SMIL inside the drawing; no script or timer.
  */
-export function animatedSceneSvg(crew: Crew, cols: number, ink: SceneInk): { svg: string; overflow: number } {
-  const { critters, overflow } = layout(crew, cols, 0);
-  const pixel = (x: number, y: number, c: number): string => `<rect x="${x}" y="${y}" width="1" height="1" fill="${hex(c)}"/>`;
-  const parts: string[] = [starRects(starPoints(cols, 8, 6), ink.star)];
-  critters.forEach((c, i) => {
-    const lead = i === critters.length - 1;
-    const working = lead ? crew.working > 0 : !c.dim;
-    const body: string[] = [];
-    drawCritter((x, y, colour) => body.push(pixel(x, y, colour)), { ...c, dim: false, asleep: lead && c.asleep });
-    const lids: string[] = [];
-    if (!(lead && c.asleep)) {
-      CRITTER.forEach((line, dy) => [...line].forEach((ch, dx) => {
-        if (ch === "e") lids.push(pixel(c.x + dx, c.y + dy, shade(c.body)));
-      }));
-    }
-    const blink = lids.length ? `<g opacity="0">${lids.join("")}<animate attributeName="opacity" values="0;0;1;0" ` +
-      `keyTimes="0;0.92;0.96;1" dur="${(3.5 + (i % 4) * 0.7).toFixed(1)}s" repeatCount="indefinite"/></g>` : "";
-    const bob = working ? `<animateTransform attributeName="transform" type="translate" values="0 0;0 -1" calcMode="discrete" ` +
-      `dur="0.9s" begin="${(i * 0.17).toFixed(2)}s" repeatCount="indefinite"/>` : "";
-    const typing = c.alert ? warning(c.x + 3, c.y - 5, ink) : working && !lead ? bubble(c.x + 3, c.y - 5, i, ink) : "";
-    parts.push(`<g${c.dim ? ` opacity=".45"` : ""}>${body.join("")}${blink}${typing}${bob}</g>`);
-  });
-  if (crew.rows.length === 0) {
-    const z: string[] = [];
-    ZZZ.forEach((line, dy) => [...line].forEach((ch, dx) => {
-      if (ch === "#") z.push(`<rect x="${LEAD_X + 8 + dx}" y="${5 + dy}" width="1" height="1" fill="${ink.star}"/>`);
-    }));
-    parts.push(`<g>${z.join("")}<animate attributeName="opacity" values="0;1;1;0" dur="3s" repeatCount="indefinite"/>` +
-      `<animateTransform attributeName="transform" type="translate" values="0 2;0 0;0 -2" dur="3s" repeatCount="indefinite"/></g>`);
+export function animatedSceneSvg(crew: Crew, cols: number, ink: SceneInk, opts: SceneOpts = { crown: true }): { svg: string; overflow: number; spots: Spot[] } {
+  const lead: Lead = crew.lead ?? { state: crew.working > 0 ? "directing" : "resting", model: "opus" };
+  const leadK = SCALE[modelFamily(lead.model)] * LEAD_SCALE;
+  const spots: Spot[] = [{ id: "lead", x: LEAD_X, w: round2(7 * leadK), top: round2(FEET - (opts.crown ? 7 : 5) * leadK) }];
+  const parts = [starRects(starPoints(cols, 8, 6), ink.star)];
+  let right = LEAD_X + 7 * leadK;
+  let drawn = 0;
+  for (const row of crew.rows) {
+    const k = SCALE[modelFamily(row.model)];
+    const x = right + (drawn === 0 ? LEAD_GAP : GAP);
+    if (x + 7 * k > cols - 1) break;
+    parts.push(rowSvg(row, x, k, drawn, ink));
+    spots.push({ id: row.id, x: round2(x), w: round2(7 * k), top: round2(FEET - 5 * k) });
+    right = x + 7 * k;
+    drawn++;
   }
-  const ground = `<rect y="${PIXEL_ROWS - 1}" width="${cols}" height="1" fill="${ink.ground}"/>`;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${cols} ${PIXEL_ROWS}" shape-rendering="crispEdges">` +
+  // Last, so the lead's indicator beside its head is not hidden under the next agent's bubble.
+  parts.push(leadSvg(lead, opts.crown, ink));
+  const ground = `<rect y="${FEET}" width="${cols}" height="1" fill="${ink.ground}"/>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${cols} ${SVG_ROWS}" shape-rendering="crispEdges">` +
     `${ground}${parts.join("")}</svg>`;
-  return { svg, overflow };
+  return { svg, overflow: crew.rows.length - drawn, spots };
+}
+
+/** The lead: its critter at the left, and its state beside the head as a bubble, a baton, an hourglass or Zs. */
+function leadSvg(lead: Lead, crown: boolean, ink: SceneInk): string {
+  const family = modelFamily(lead.model);
+  const k = SCALE[family] * LEAD_SCALE;
+  const body = MODEL_BODY[family];
+  const cx = LEAD_X + 3.5 * k;
+  const ax = Math.round(LEAD_X + 7 * k) + 1;
+  const ay = Math.round(FEET - 5 * k);
+  const cap = crown ? crownSvg() : "";
+  switch (lead.state) {
+    case "working":
+      return `<g>${figure(body, k, cx, "open", 3.5, cap)}<g class="bubble">${bubble(ax, ay, 0, ink)}</g>${bob("0.9s")}</g>`;
+    case "directing":
+      return `<g>${figure(body, k, cx, "open", 3.5, cap + baton())}${bob("1.4s")}</g>`;
+    case "waiting":
+      return `<g>${figure(body, k, cx, "glance", 3.5, cap)}${hourglass(ax, ay)}</g>`;
+    case "resting":
+      return `<g>${figure(body, k, cx, "shut", 3.5, cap)}${zs(ax, ay, ink)}</g>`;
+  }
+}
+
+/** A crew member at `x`: its critter, bobbing under a "…" bubble while it works, dimmed once finished. */
+function rowSvg(row: Row, x: number, k: number, slot: number, ink: SceneInk): string {
+  const family = modelFamily(row.model);
+  const body = row.state === "failed" ? mix(MODEL_BODY[family], MODEL_BODY.unknown, 0.6) : MODEL_BODY[family];
+  const cx = x + 3.5 * k;
+  const bx = Math.round(cx - 3);
+  const by = Math.round(FEET - 5 * k) - 5;
+  const working = row.state === "working";
+  const indicator = row.over ? warning(bx, by, ink) : working ? bubble(bx, by, slot, ink) : "";
+  const eyes = row.state === "done" ? "shut" : "open";
+  return `<g${working ? "" : ` opacity=".55"`}>${figure(body, k, cx, eyes, 3.5 + (slot % 4) * 0.7, "")}${indicator}` +
+    `${working ? bob("0.9s", slot * 0.17) : ""}</g>`;
+}
+
+/**
+ * A critter in sprite coordinates, its feet on the ground line at `cx` and scaled by `k`. `eyes` is open (blinking
+ * every `blink` seconds), shut, or glancing side to side; `extra` is drawn on the sprite too.
+ */
+function figure(body: number, k: number, cx: number, eyes: "open" | "shut" | "glance", blink: number, extra: string): string {
+  const eye = eyes === "open" ? EYE : eyes === "shut" ? shade(body) : body;
+  const lids = eyes === "open" ? `<g opacity="0">${spritePixels("e", shade(body))}<animate attributeName="opacity" ` +
+    `values="0;0;1;0" keyTimes="0;0.92;0.96;1" dur="${blink.toFixed(1)}s" repeatCount="indefinite"/></g>` : "";
+  const glance = eyes === "glance" ? `<g><animateTransform attributeName="transform" type="translate" values="-0.5 0;0.5 0" ` +
+    `calcMode="discrete" dur="2s" repeatCount="indefinite"/>${spritePixels("e", EYE)}</g>` : "";
+  return `<g transform="translate(${round2(cx)} ${FEET}) scale(${round2(k)}) translate(-3.5 -5)">` +
+    `${spritePixels("o", body)}${spritePixels("s", shade(body))}${spritePixels("e", eye)}${lids}${glance}${extra}</g>`;
+}
+
+/** The sprite's pixels whose glyph is in `glyphs`, in colour `c`, as rects in sprite coordinates. */
+function spritePixels(glyphs: string, c: number): string {
+  return CRITTER.map((line, y) => [...line].map((ch, x) => (glyphs.includes(ch) ? rect(x, y, hex(c)) : "")).join("")).join("");
+}
+
+/** The gold crown over the lead's head, in sprite coordinates: three points, then a band. */
+function crownSvg(): string {
+  return `<g class="crown">${[1, 3, 5].map((x) => rect(x, -2, hex(GOLD))).join("")}` +
+    `${[1, 2, 3, 4, 5].map((x) => rect(x, -1, hex(GOLD))).join("")}</g>`;
+}
+
+/** The directing lead's baton: two cream pixels at its right side, swinging between two spots. */
+function baton(): string {
+  return `<g class="baton"><rect x="7" y="1" width="1" height="2" fill="${hex(CREAM)}"/>` +
+    `<animateTransform attributeName="transform" type="translate" values="0 0;0 1" calcMode="discrete" dur="0.6s" repeatCount="indefinite"/></g>`;
+}
+
+/** A small cream hourglass beside the head, pulsing: the lead waits for its crew. */
+function hourglass(x: number, y: number): string {
+  return `<g class="hourglass" transform="translate(${x} ${y})">${glyph(HOURGLASS, hex(CREAM))}` +
+    `<animate attributeName="opacity" values=".35;1;.35" dur="1.6s" repeatCount="indefinite"/></g>`;
+}
+
+/** The resting lead's three Zs: each rises from beside its head, fading in and out, a second apart. */
+function zs(x: number, y: number, ink: SceneInk): string {
+  return [0.6, 0.8, 1].map((s, n) => `<g class="z" opacity="0"><g transform="translate(${x} ${y}) scale(${s})">${glyph(ZED, ink.star)}</g>` +
+    `<animate attributeName="opacity" values="0;1;0" dur="3s" begin="${n}s" repeatCount="indefinite"/>` +
+    `<animateTransform attributeName="transform" type="translate" values="0 0;3 -6" dur="3s" begin="${n}s" repeatCount="indefinite"/></g>`).join("");
+}
+
+/** A one-pixel discrete bob up and back on `dur`, starting `begin` seconds in. */
+function bob(dur: string, begin = 0): string {
+  return `<animateTransform attributeName="transform" type="translate" values="0 0;0 -1" calcMode="discrete" ` +
+    `dur="${dur}" begin="${begin.toFixed(2)}s" repeatCount="indefinite"/>`;
+}
+
+/** A bitmap's lit pixels as rects from (0, 0), in `fill`. */
+function glyph(rows: string[], fill: string): string {
+  return rows.map((line, y) => [...line].map((ch, x) => (ch === "#" ? rect(x, y, fill) : "")).join("")).join("");
+}
+
+function rect(x: number, y: number, fill: string): string {
+  return `<rect x="${x}" y="${y}" width="1" height="1" fill="${fill}"/>`;
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 /** A small speech bubble with three dots that light in turn: the agent is working. */
@@ -230,8 +336,8 @@ export function bannerSvg(width: number, ink: SceneInk & { dark: boolean }): str
   const tw = title.length * 6 - 1;
   const tx = Math.floor((W - tw) / 2);
   const ty = 6;
-  const face = ink.dark ? hex(CREAM) : hex(LEAD_BODY);
-  const shadow = hex(shade(LEAD_BODY));
+  const face = ink.dark ? hex(CREAM) : hex(ORANGE);
+  const shadow = hex(shade(ORANGE));
   const glyph = (dx: number, dy: number, color: string): string => [...title].map((ch, n) => (GLYPHS[ch] ?? []).map((row, gy) =>
     [...row].map((bit, gx) => (bit === "1" ? `<rect x="${tx + n * 6 + gx + dx}" y="${ty + gy + dy}" width="1" height="1" fill="${color}"/>` : "")).join("")).join("")).join("");
   const stars = starRects(starPoints(W, H, 7, { x: tx - 3, y: ty - 2, w: tw + 6, h: 11 }), ink.star);
