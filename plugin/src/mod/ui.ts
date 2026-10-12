@@ -17,7 +17,7 @@ export type Actions = {
   /** Put a gate rule in the rules list: in place of `replaces` when given and present, else first. */
   addRule(rule: string, replaces?: string): Promise<void>;
   /** Ask the main conversation to run a finished subagent's task again on `model`. */
-  retry(agent: { name: string; task: string; model: string }, model: string): Promise<void>;
+  retry(agent: { type: string; task: string; model: string }, model: string): Promise<void>;
 };
 
 export const TABS = [["home", "Home"], ["ledger", "Ledger"], ["settings", "Settings"]] as const;

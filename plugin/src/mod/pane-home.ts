@@ -15,7 +15,8 @@ import { settingsSection } from "./pane-settings.ts";
 import { tokensTab } from "./pane-tokens.ts";
 import type { Usage } from "./pane-tokens.ts";
 import { title } from "./rules.ts";
-import { animatedSceneSvg, bannerSvg, SVG_ROWS } from "./sprites.ts";
+import { activityOf, animatedSceneSvg, bannerSvg, SVG_ROWS } from "./sprites.ts";
+import type { Activity } from "./sprites.ts";
 import { moonPhase, skyHour, skySvg } from "./sky.ts";
 import type { SkyMode } from "./sky.ts";
 import { gauges, inkFor, table } from "./svg.ts";
@@ -162,11 +163,22 @@ function leadCard(lead: Lead, working: number): [string, string] {
   return [`Main agent · ${title(modelName(lead.model.replace(/\[.*\]$/, "")))} · ${lead.state}${crewNote}`, LEAD_SAYS[lead.state]];
 }
 
-/** A crew member's card: name, model and state, then its latest line, else its last tool or its task. */
+/** What a crew member's activity reads as in words. */
+const ACTIVITY_WORDS: Record<Activity, string> = {
+  thinking: "thinking", reading: "reading", editing: "writing code", running: "running a command", web: "searching the web",
+  directing: "directing", done: "done", failed: "failed",
+};
+
+/**
+ * A crew member's card: name, model, what it is doing and for how long, and its tokens when it has used some; then
+ * its latest line while it works, else its task.
+ */
 function rowCard(r: Row | undefined, message: string | undefined): [string, string] {
   if (!r) return ["", ""];
-  const head = [r.name, r.model && r.model !== "unknown" ? modelName(r.model) : "", r.over ? "past the token warning" : r.state, fmtElapsed(r.elapsedMs)];
-  const body = r.state === "working" && message ? `“${message}”` : r.last ? `last used ${r.last}` : r.task;
+  const doing = r.over ? "past its token limit" : ACTIVITY_WORDS[activityOf(r)];
+  const head = [r.name, r.model && r.model !== "unknown" ? modelName(r.model) : "", doing, fmtElapsed(r.elapsedMs),
+    r.tokens ? `${compact(r.tokens)} tokens` : ""];
+  const body = r.state === "working" && message ? `“${message}”` : r.task;
   return [head.filter(Boolean).join(" · "), body || " "];
 }
 
@@ -217,6 +229,7 @@ function member(ui: Ui, act: Actions, r: Row, message: string, allowOpus: boolea
       hrow(ui, { columnGap: 1, flexShrink: 1 }, [
         txt(ui, { color: r.state === "failed" ? C.bad : live ? C.ok : C.muted }, "●"),
         txt(ui, live ? { bold: true, wrap: "truncate-end" } : { dimColor: true, wrap: "truncate-end" }, r.name),
+        txt(ui, { dimColor: true, wrap: "truncate-end" }, r.type),
         r.model && r.model !== "unknown" ? txt(ui, { color: modelColor(r.model) }, modelName(r.model)) : null,
         r.rule ? txt(ui, { dimColor: true }, `chosen by ${r.rule}`) : null,
         r.state === "failed" ? txt(ui, { color: C.bad }, "failed") : r.state === "done" ? txt(ui, { dimColor: true }, "done") : null,

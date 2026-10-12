@@ -5,6 +5,7 @@
  */
 import { isObject } from "./api.ts";
 import type { Input } from "./api.ts";
+import { nameFromTag, pickName } from "./names.ts";
 
 /** Finished agents stay on the roster this long, dimmed, before they drop. */
 export const DONE_LINGER_MS = 60_000;
@@ -13,6 +14,8 @@ const FAILED = ["fail", "blocked", "failed", "killed"];
 
 type Member = {
   id: string;
+  /** The name the roster shows: the spawn's `name=` tag, else one picked for the id. */
+  display: string;
   model: string;
   subagentType: string;
   description: string;
@@ -42,7 +45,10 @@ export type LiveAgent = { id: string; type?: string; description?: string; statu
 export type Row = {
   id: string;
   depth: number;
+  /** The display name: from the spawn's `name=` tag, else picked for the agent. */
   name: string;
+  /** The agent's type, e.g. "haiku-coder"; "agent" when none is known. */
+  type: string;
   model: string;
   /** The selector of the gate rule that chose the model, e.g. "job:review"; absent when no rule did. */
   rule?: string;
@@ -96,11 +102,16 @@ export function resetCrew(): void {
   mainTurn = null;
 }
 
+/** The display names the roster holds now. */
+function displayNames(): Set<string> {
+  return new Set([...members.values()].map((m) => m.display));
+}
+
 function member(id: string, now: number): Member {
   let m = members.get(id);
   if (!m) {
     m = {
-      id, model: "", subagentType: "", description: "", parentId: null, startedAt: now,
+      id, display: pickName(id, displayNames()), model: "", subagentType: "", description: "", parentId: null, startedAt: now,
       calls: 0, lastTool: "", lastTarget: "", endedAt: null, verdict: "", rule: "", tokens: 0,
       usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, over: false,
     };
@@ -111,11 +122,13 @@ function member(id: string, now: number): Member {
 
 /**
  * Remember a spawn the gate let through. `input` is what the gate passed on; `reply` is what the subagent started as;
- * `rule` is the gate rule text that chose the model, if one did.
+ * `rule` is the gate rule text that chose the model, if one did. The prompt's `name=` tag, when it has one, names it.
  */
 export function noteSpawn(input: Input, reply: unknown, now: number, rule?: string): void {
   if (!isObject(reply) || typeof reply.agentId !== "string" || !reply.agentId) return;
   const m = member(reply.agentId, now);
+  const tagged = nameFromTag(input.prompt);
+  if (tagged) m.display = tagged;
   m.model = String(reply.model ?? input.model ?? "");
   m.rule = rule ? rule.split("=")[0] : "";
   m.subagentType = String(input.subagentType ?? "");
@@ -235,7 +248,8 @@ function toRow(m: Member, depth: number, now: number): Row {
   return {
     id: m.id,
     depth,
-    name: m.subagentType || "agent",
+    name: m.display,
+    type: m.subagentType || "agent",
     model: m.model || "unknown",
     rule: m.rule || undefined,
     task: m.description,

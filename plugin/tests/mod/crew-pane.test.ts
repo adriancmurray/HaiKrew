@@ -1,6 +1,7 @@
 /** Crew tab checks on the mounted pane: both surfaces draw, the hooks feed the roster, and the empty state shows. */
 import { expect, test } from "claude-code/testing";
 import { resetCrew } from "../../src/mod/crew.ts";
+import { pickName } from "../../src/mod/names.ts";
 
 
 /** Answers the host reads the pane makes. Nothing touches the disk. */
@@ -47,6 +48,6 @@ test("a SubagentStop puts its agent on the roster", async (ctx: any, on: any) =>
   resetCrew();
   await ctx.classic.SubagentStop({ agent_id: "crew-h1", agent_type: "Explore", agent_transcript_path: "" });
   const text = await drawnText(await open(ctx, "terminal"));
-  expect(text).toContain("Explore");
+  expect(text).toContain(pickName("crew-h1", new Set()));
   expect(text).not.toContain("No agents working.");
 });

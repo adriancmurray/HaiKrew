@@ -8,7 +8,7 @@ const INK = { star: "#5a6e96", ground: "#26385e", bubble: "#ffffff", bubbleText:
 const NO_HEAD: SceneOpts = { headwear: "none" };
 
 function row(id: string, model: string, state: Row["state"] = "working", over = false, last = ""): Row {
-  return { id, depth: 0, name: "agent", model, task: "", state, elapsedMs: 0, calls: 0, last, tokens: 0, cached: 0, over };
+  return { id, depth: 0, name: "Ada Lovebytes", type: "agent", model, task: "", state, elapsedMs: 0, calls: 0, last, tokens: 0, cached: 0, over };
 }
 
 function crew(rows: Row[], lead?: Lead): Crew {

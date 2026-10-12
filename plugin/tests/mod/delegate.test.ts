@@ -16,6 +16,8 @@ test("no note while the gate or the switch is off", () => {
 test("the note reflects the gate settings", () => {
   const note = delegationNote(GATE);
   expect(note).toContain("standing request");
+  expect(note).toContain("`HAIKREW job=implement lang=ts name=Katherine_JSON`");
+  expect(note).toContain("Vincent van Go, Marie Curl, Ludwig van Buildhoven");
   expect(note).toContain("run on Haiku");
   expect(note).toContain("Opus subagents are refused");
   expect(note).toContain("`job:review=sonnet`");

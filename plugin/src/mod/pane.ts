@@ -154,7 +154,7 @@ function actions($: Api): Actions {
     retry: async (agent, model) => {
       // The main conversation runs the retry, so the main model still writes the spec and checks the result.
       const task = agent.task ? ` "${agent.task}"` : "";
-      await $.prompt.submit({ text: `HaiKrew: the ${agent.name} subagent${task} did not pass on ${agent.model}. ` +
+      await $.prompt.submit({ text: `HaiKrew: the ${agent.type} subagent${task} did not pass on ${agent.model}. ` +
         `Run the same task again as a subagent with model ${model}, then check its result.` });
       $.ui.toast(`HaiKrew: asked Claude to retry on ${model}`);
     },

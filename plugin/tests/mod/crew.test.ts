@@ -2,12 +2,13 @@
 import { expect, test } from "claude-code/testing";
 import { fmtElapsed, noteSpawn, noteStop, noteTokens, noteToolCall, resetCrew, snapshot } from "../../src/mod/crew.ts";
 import type { Row } from "../../src/mod/crew.ts";
+import { pickName } from "../../src/mod/names.ts";
 import { activityOf, layout, packCells, PIXEL_ROWS, scene, SCENE_ROWS } from "../../src/mod/sprites.ts";
 
 const EMPTY = { rows: [], working: 0 };
 
 function rowWith(state: Row["state"], last: string): Row {
-  return { id: "x", depth: 0, name: "agent", model: "haiku", task: "", state, elapsedMs: 0, calls: 0, last, tokens: 0, cached: 0, over: false };
+  return { id: "x", depth: 0, name: "Ada Lovebytes", type: "agent", model: "haiku", task: "", state, elapsedMs: 0, calls: 0, last, tokens: 0, cached: 0, over: false };
 }
 
 test("a tool call's family sets the activity, unknown or empty calls think, and an end state overrides both", () => {
@@ -50,13 +51,19 @@ test("a nested agent is indented under its parent", () => {
   noteSpawn({ subagentType: "helper", parentAgentId: "p" }, { model: "haiku", agentId: "c" }, 10);
   const crew = snapshot([], 100);
   expect(crew.rows.map((r) => r.depth)).toEqual([0, 1]);
-  expect(crew.rows[1].name).toBe("helper");
+  expect(crew.rows[1]).toMatchObject({ type: "helper", name: pickName("c", new Set([crew.rows[0].name])) });
+});
+
+test("a spawn's name tag names the row, and the type stays on the row", () => {
+  resetCrew();
+  noteSpawn({ subagentType: "haiku-coder", prompt: "HAIKREW job=implement lang=ts name=Katherine_JSON\nbody" }, { model: "haiku", agentId: "n1" }, 0);
+  expect(snapshot([], 1).rows[0]).toMatchObject({ name: "Katherine JSON", type: "haiku-coder" });
 });
 
 test("live agents merge in and elapsed time reads as m:ss", () => {
   resetCrew();
   const crew = snapshot([{ id: "x", type: "Explore", description: "look around", status: "running" }], 0);
-  expect(crew.rows[0]).toMatchObject({ name: "Explore", state: "working", task: "look around" });
+  expect(crew.rows[0]).toMatchObject({ name: pickName("x", new Set()), type: "Explore", state: "working", task: "look around" });
   expect(fmtElapsed(65_000)).toBe("1:05");
 });
 

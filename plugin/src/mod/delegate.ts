@@ -23,7 +23,9 @@ export function delegationNote(g: DelegateSettings): string {
       "`haiku-coder`, then verify the result yourself. Follow the crew-overseer skill. Several small agents beat one big one.",
     "- Web fact-finding: `haiku-scout`. Broad read-only code search: `Explore`.",
     "- Keep inline: design, decisions, reviewing anything security- or concurrency-sensitive, and edits of a few lines.",
-    "- Start each agent prompt with a tag line, e.g. `HAIKREW job=implement lang=ts`, so routing rules and the ledger can match it.",
+    "- Start each agent prompt with a tag line, e.g. `HAIKREW job=implement lang=ts name=Katherine_JSON`, so routing rules and " +
+      "the ledger can match it. Give each agent a name: a famous scientist, artist or inventor with a coding twist that suits " +
+      "its task (Vincent van Go, Marie Curl, Ludwig van Buildhoven), underscores for spaces; HaiKrew picks one if you don't.",
     `- Gate settings now: agents launched without a model run on ${name(g.default_model)}; ` +
       (g.allow_opus ? "Opus subagents are allowed; " : "Opus subagents are refused, so don't request them; ") +
       `routing rules (first match wins): ${rules}; ` +
