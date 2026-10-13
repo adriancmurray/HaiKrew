@@ -111,7 +111,7 @@ test("a write target with $ or a backtick is denied with the literal-path reason
 test("temp folders, scratchpads, reads and other agents are never denied", () => {
   expect(denyOf(ON, CHECKER, "echo x > /tmp/out.txt")).toBeUndefined();
   expect(denyOf(ON, CHECKER, "echo x > /private/var/folders/ab/T/out.txt")).toBeUndefined();
-  expect(denyOf(ON, CHECKER, "echo x > /private/tmp/s/scratchpad/out.txt")).toBeUndefined();
+  expect(denyOf(ON, CHECKER, "echo x > /Volumes/work/s/scratchpad/out.txt")).toBeUndefined();
   expect(denyOf(ON, CHECKER, "echo x > /Users/a/repo/scratchpad/out.txt")).toBeUndefined();
   expect(denyOf(ON, CHECKER, "cat src/a.ts")).toBeUndefined();
   expect(denyOf(ON, CHECKER, "echo x > /dev/null")).toBeUndefined();
