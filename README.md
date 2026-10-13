@@ -2,179 +2,200 @@
 
 ![HaiKrew: a crew of small orange robots under a pixel-art title](assets/header.gif)
 
-HaiKrew is a Claude Code mod (plugin) for token-efficient agent crews. The main model plans and reviews; cheaper Haiku subagents write code and do research; deterministic hooks gate which model a subagent runs on and trim noisy command output before it reaches the context.
+HaiKrew is a Claude Code mod (plugin) for token-efficient agent crews. A subagent launched without a `model` inherits the main model, so by default every helper runs on the most expensive one. HaiKrew sends code writing and research to Haiku, keeps the main model on planning and review, and shortens noisy command output with a hook instead of a model.
 
 Unofficial community plugin; not affiliated with Anthropic.
 
-## Why
-
-A subagent launched without a `model` inherits the main model, so every default agent runs on the most expensive model. HaiKrew routes code-writing and research to Haiku, keeps the main model on planning and review, and cuts noisy output deterministically (a hook shortens build logs; it does not ask a model to summarise them).
-
-## What's inside
-
-- **Model gate** (`agent.spawn`): off until you turn it on in `/haikrew` (the switch in the pane's header, hotkey `g`, or Settings). When on, it sets a model on every subagent launch that lacks one, and refuses Opus unless allowed.
-- **Effort** (`turn.step`): a rule ending in `@<effort>`, or `gate.default_effort`, sets how hard a subagent thinks. Main conversation untouched.
-- **Agent instructions** (`agent.spawn`): `gate.instructions` text is added to the prompt of matching subagents.
-- **Hook-bypass guard** (`tool.call` on Bash): refuses `--no-verify` and `core.hooksPath` overrides.
-- **Seam check** (`classic.SubagentStop`): when the last of two or more parallel agents in one folder finishes, says to run the full verify.
-- **Squeeze** (`tool.call` on Bash): runs noisy commands such as `cargo test` or `xcodebuild` through `haikrew squeeze`, which prints a short verdict and keeps the full log on disk.
-- **Read guard** (`tool.call` on Read): a large file read without a line range returns an outline and asks for a range.
-- **Ledger** (`classic.SubagentStop`): one row per finished subagent (model, job, language, time, tokens, verdict). The verdict is the last `VERDICT: PASS|FAIL` or `STATUS: done|blocked` line of its final message (done counts as pass, blocked as fail); a run with neither is unjudged and left out of pass rates. Tokens are new work: input, cache writes and output, with cache reads kept apart, counted live from each step. Output counts in subagent transcripts are often stream-start snapshots, lower than the final count, so live counts are used when available; a run known only from its transcript shows its output as a lower bound. On its first start, 0.6.3 re-reads the transcripts of kept runs once to repair their verdicts and input tokens; their output stays marked as an estimate. The newest 200 rows are kept in full; older rows fold into monthly averages, and monthly averages older than 12 months fold into yearly ones.
-- **`/haikrew` pane**: in the desktop app one page: a pixel-art banner with the model gate switch, then Controls, Your crew (each working agent's latest message), Token use, Track record and Settings, each a card that folds to one line. The band above the prompt (Settings › Prompt widget) shows the crew as Claude bots acting out their work: the main agent first, larger and in its model's colour (Haiku purple, Sonnet teal, Opus orange by default, colours your choice), directing, waiting, resting or working, wearing a crown, wizard hat or cap; each subagent reads, edits, runs a command, searches the web, thinks, finishes, fails, or shows an alarm past its token warning. Behind them a landscape (mountains, city, forest or hills) with its atmosphere: a sky that follows your clock, sunrise to night with twinkling stars and the real moon phase, optional clouds, and snow in winter or falling leaves in autumn over forests and hills. Hovering a bot shows who it is and its latest line, with a Transcript button that opens that agent's messages and tool calls in a HaiKrew pane; hovering the sun or moon shows a button that opens this pane. The terminal gets a plain three-tab version (Home, Ledger, Settings).
-- **Ledger advice**: the Track record suggests a stronger model for a tagged job that keeps failing (4+ judged runs under 60%) and a cheaper one for a job a stronger model nearly always passes (8+ judged runs at 90% or more, unless the cheaper model already fails it). Runs without a `HAIKREW job=` tag get a job inferred from the prompt's opening and the agent type, shown as "(inferred)"; inferred jobs get no rule suggestions, because the gate reads only tags.
-- **Retry one model up**: a failed agent in the crew card offers "Retry on Sonnet" (or Opus, when allowed). It asks the main conversation to run the same task again on that model, so the main model still checks the result.
-- **Review tiers** (`classic.SubagentStop`): each finished agent that changed files gets a tier (light, standard or deep) from its paths, size, job, tests and its model's record. Light, for docs and tests only, is checked by the main model with `record_verdict`; standard and deep go to a reviewer model and effort set in Settings › Review. See Review tiers under How the crew works.
-- **Agent tools** (off by default, Settings › General › Agent control): `status`, `set_setting`, `add_rule`, `remove_rule`, `review_packet`, `record_verdict`, listed as `mcp__haikrew__<name>`. "Read" allows `status` and `review_packet`; "Change" allows all six, settings and rules validated like the pane. Agents can never change the agent-control setting or turn on Allow Opus; every change shows a toast.
-- **`haiku-coder` agent**: implements a tightly written spec.
-- **`haiku-scout` agent**: answers one research question with a short cited brief.
-- **`crew-overseer` skill**: the overseer workflow: write the spec, dispatch Haiku, review by tier, verify.
-- **CLI** (`bin/haikrew.mjs`): `squeeze`, `verify`, `patterns check`.
-
-## What HaiKrew changes and touches
-
-- **`agent.spawn`** (every subagent launch passes through this hook): does nothing while `gate.enabled` is off, which is the default; the launch goes on exactly as requested. Once you turn the gate on, it sets the model when the caller named none (or, with `gate.rules_override` on, when a rule matches), choosing from `gate.rules` first, then the default. Refuses Opus subagents unless `gate.allow_opus` is on. Refuses nested spawns when `gate.allow_nested` is off. Adds `gate.instructions` text to the prompt of matching subagents, under the line "Instructions from HaiKrew settings:" (empty by default). Why: cost control is the plugin's purpose, and every rule is a setting you control in `/haikrew`. It never changes Claude Code's permission mode or answers a permission prompt; a refusal comes back to the caller with the reason and the setting that caused it.
-- **`prompt.context`** (the context Claude reads at the start of each request): while the gate is on and `gate.delegate` is on (the default), adds a short note to the end of the CLAUDE.md text of the main conversation, never a subagent's. The note is your standing request to hand spec-able work to `haiku-coder` and `haiku-scout` and to keep design and sensitive reviews inline, and it states the current default model, Opus setting, routing rules and nesting setting, and how to follow a review note. Why: the gate only picks a model once an agent is launched, and Claude Code's own default is to start agents only when you ask; the note is what makes the crew the default. Turn `gate.delegate` off to keep the gate without the note.
-- **`turn.step`** (every model request, the main conversation's and each subagent's, passes through this hook): sets the effort of a subagent's requests when the gate chose one for it at launch (a rule's `@effort` or `gate.default_effort`). Requests of the main conversation and of other agents pass on unchanged. Nothing happens while the gate is off.
-- **`tool.call`** (all tools): notes the tool name and time for the Crew tab's live roster, then passes the call on unchanged.
-- **`tool.call`** on Bash: refuses a command containing `--no-verify`, `core.hooksPath=` or `-c core.hooksPath`, with a reason (`checks.guard_hooks`, on by default). Refuses a command that matches a squeeze pattern, with a message suggesting the `haikrew squeeze` command instead.
-- **`tool.call`** on Read: refuses a whole-file read of a file longer than `read_guard.max_lines`, and returns an outline so the caller can ask for a range.
-- **`session.start`**: registers the `/haikrew` command.
-- **`command.run`** for `/haikrew` (`command.run` is also the name of the call that runs a command): opens the HaiKrew pane and returns "HaiKrew pane opened."; other commands pass through untouched.
-- **`ui.render`** and **`ui.close`**: draw the HaiKrew pane and stop its animation when it closes; other panes pass through untouched.
-- **`classic.SubagentStop`**: reads the finished subagent's transcript at the path Claude Code provides, to compute ledger fields. When the last of two or more agents that ran at the same time in one folder finishes, writes a reminder to run the full verify to the session log (`$.ui.log`). With `checks.seam_check` on (off by default), it also submits that reminder as a prompt (`$.prompt.submit`), which Claude Code runs once the session is idle. The prompt is exactly: `HaiKrew seam check: <n> agents ran in parallel in <folder>. Run the repo's full verify before trusting their reports.`, where `<n>` is the number of agents and `<folder>` is the session's folder. It carries no conversation text, file contents or agent output, and nothing is sent anywhere else. After a finished agent that changed files, it picks the review tier, stores the review packet and appends a one-line review note to the session. A review agent gets no tier of its own; its `VERDICT: PASS|FAIL for <name>` line records that verdict on the named run instead.
-- **Session folder**: `agent.spawn` reads the session's folder (`$.session.cwd()`) for `cwd:` selectors and the seam check. `~` in a selector is the `/Users/<name>` or `/home/<name>` part of that folder.
-- **Ledger suggestions**: the Ledger tab suggests a rule when a job and language on one model pass less than 60% of at least 4 runs. A suggestion is added to `gate.rules` only when you press its button twice.
-- **Storage**: the mod uses `$.store` only, for settings, the ledger and review packets (the spec and report of each reviewed agent; the newest 20 are kept). The mod writes no files.
-- **Update check**: once per 6 hours (at session start, the sky timer or the first pane render, never on an agent launch) the pane reads the latest `version` from `plugin.json` on GitHub (one request, nothing sent) and, when it is newer than the installed one, shows a strip at the top of the pane and a speech bubble from the main agent in the band; the Update button runs `claude plugin update haikrew@haikrew`, only when pressed. Turn it off with `pane.update_check`.
-- **Network**: none.
-- **Programs started by the mod**: none. The squeeze command is only suggested to Claude, which runs it through its normal permission checks. When Claude runs `haikrew squeeze`, the CLI writes the full log under `haikrew/logs` in the system temp folder.
-- **Session usage**: the Tokens tab shows this session's context size, rate-limit use and cost from Claude Code's `$.session.usage()`, on screen only. Nothing is stored or sent.
-- **Credentials**: none read. No environment variables or keychain entries are read by the mod or the CLI. Files under `~/.claude` are not read, except subagent transcripts: the one-time ledger repair re-reads the transcripts of kept runs under `~/.claude/projects` for their verdicts and token counts, and each finished subagent's transcript is read as described under `classic.SubagentStop`.
-
-## Layout
-
-The plugin bundle is in `plugin/` (manifest, hooks, mod source, CLI, agents, skills). The repository root holds this README, the license, assets, scripts, tests, and the marketplace manifest.
-
-## Requirements
-
-- Claude Code 2.1.287 or later (for mods and `plugin test`).
-- Node 22.18 or later for the CLI. The CLI runs TypeScript directly through Node's type stripping and has no build step or dependencies.
-
 ## Install
 
-Try it for one session, from a clone of this repository:
+Requirements:
 
-```sh
-claude --plugin-dir /path/to/HaiKrew/plugin
-```
+- Claude Code 2.1.287 or later (for mods and `plugin test`).
+- Node 22.18 or later for the CLI. It runs TypeScript directly and has no build step or dependencies.
 
-Install from GitHub:
+From GitHub, inside Claude Code:
 
 ```text
 /plugin marketplace add adriancmurray/HaiKrew
 /plugin install haikrew@haikrew
 ```
 
-The marketplace is named `haikrew` and lists `haikrew` (source `./plugin`) and the optional `clefkit` (a subdirectory of its own repository) in `.claude-plugin/marketplace.json`.
+The marketplace also lists `clefkit`, an optional decision backend (see [Clefkit](#clefkit-companion)).
 
-## CLI
+To try a clone for one session:
 
-`bin/haikrew.mjs` runs anywhere Node 22.18 or later runs:
+```sh
+claude --plugin-dir /path/to/HaiKrew/plugin
+```
 
-- `squeeze [--max-lines N] [--wrap PREFIX] -- <cmd...>`: runs a command, prints a short verdict and keeps the full log on disk.
-- `verify`: runs `.haikrew/verify` if present, or an inferred build and test, and prints one `VERDICT:` line.
-- `patterns check [--dir PATH] [--max-files N] [--max-lines N]`: counts the `.md` files in a patterns folder and their lines. The folder is `--dir`, resolved against the current directory, or `./patterns` by default. The caps default to 20 files and 40 lines. Exit 0 within caps, 1 with one `violation:` line per problem, 2 when the folder is missing or is not a directory (`patterns: no patterns folder at <path> (pass --dir)` on stderr). An empty folder passes.
+### Update
 
-## Settings
+```text
+/plugin marketplace update haikrew
+```
 
-Settings are kept in the mod store (`$.store`, key `settings`), not in a file, and apply to every session. Edit them in `/haikrew`: rules and instructions are built there as sentences from dropdowns and buttons, default effort is a row of buttons per model, and the squeeze patterns are named switches; the stored values keep the formats below. Defaults come from `plugin/src/schema.ts`. Values are validated on save.
+Then restart Claude Code. From a terminal, `claude plugin update haikrew@haikrew` does the same. The pane's Update button runs that command when you press it.
 
-| Key | Default | What it does |
-|---|---|---|
-| `gate.enabled` | `false` | Turn the gate on. Off by default: until you turn it on, agent launches pass through unchanged. |
-| `gate.delegate` | `true` | While the gate is on, add the delegation note to the main conversation's CLAUDE.md text (see `prompt.context` above). |
-| `gate.default_model` | `"haiku"` | Model given to an agent launched without one. |
-| `gate.allow_opus` | `false` | Allow subagents to run on Opus at all. Off: an Opus request is refused with a reason. |
-| `gate.pinned_types` | `["haiku-coder"]` | Agent types whose own definition sets the model; the gate leaves them alone. |
-| `gate.allow_nested` | `true` | Let a subagent start agents of its own. |
-| `gate.nested_model` | `"haiku"` | Model given to an agent a subagent starts without naming one. |
-| `gate.rules` | `["job:review=sonnet", "job:research=haiku", "type:Explore=haiku"]` | Ordered rules, first match wins: selectors joined by `+`, then `=haiku`, `=sonnet` or `=opus`, optionally `@low` to `@max`. Selectors: `job:<tag>`, `lang:<tag>`, `type:<agent type>`, `desc:<words>`, `cwd:<glob>`. |
-| `gate.rules_override` | `false` | Let rules replace a model the caller named. |
-| `gate.default_effort` | `[]` | Effort for subagents on a model when no rule sets one, e.g. `sonnet=high`. Empty: effort is left as it is. |
-| `gate.instructions` | `[]` | Text added to matching subagents' prompts: `<selectors>: <text>`, one entry per row in the pane. |
-| `checks.guard_hooks` | `true` | Refuse Bash commands that skip git hooks. |
-| `checks.seam_check` | `false` | Also send the seam reminder as a prompt; off: it is only logged. |
-| `checks.token_limits` | `haiku=800000`, `sonnet=400000`, `opus=200000` | Warn when one subagent's new work (input, cache writes and output; cache reads not counted) passes its model's limit: a toast, a mark in the crew and a `!` above it in the band. A model left out, or `0`, never warns; an unknown model uses the lowest limit. |
-| `checks.token_effort_scale` | `true` | Multiply each limit by the agent's effort: low ×0.5, medium ×1, high ×1.5, xhigh ×2, max ×3. |
-| `review.enabled` | `true` | Pick a review tier for each finished agent that changed files. Off: finished agents are not reviewed. |
-| `review.sensitive_paths` | `["**/hooks/**", "**/auth/**", "**/*auth*", "**/*secur*", "**/*crypt*", "**/migrations/**", "**/*.lock", "**/.github/**", "**/Package.swift", "**/Cargo.toml", "**/package.json"]` | Path globs whose change always means a deep review. `**` is any folders, `*` one name, `?` one character. |
-| `review.light_paths` | `["**/*.md", "**/docs/**", "**/tests/**", "**/*.test.*", "**/*.spec.*", "**/test_*"]` | Path globs. Only changes to these can get a light review. |
-| `review.light_lines` | `60` | A light review needs fewer lines than this, and only light paths changed. |
-| `review.deep_lines` | `400` | Changes of at least this many lines always get a deep review. |
-| `review.standard_reviewer` | `"sonnet@medium"` | Model and effort of the reviewer for a standard review, as `model@effort`. |
-| `review.deep_reviewer` | `"sonnet@high"` | Model and effort of the reviewer for a deep review. Opus needs `gate.allow_opus`; without it, Sonnet at high effort reviews. |
-| `review.deep_inline` | `false` | On: the main model reviews a deep change itself when it is at least as strong as the deep reviewer, and no reviewer runs. Off: a reviewer agent does it. |
-| `review.deep_jobs` | `["security", "migration", "concurrency", "protocol"]` | Jobs (the `HAIKREW job=` tag) that always get a deep review. |
-| `squeeze.enabled` | `true` | Redirect matching commands. |
-| `squeeze.patterns` | 7 regexes (cargo, swift, xcodebuild, pytest, npm/pnpm/yarn/bun, go, make) | Regexes matched against the start of a Bash command. |
-| `squeeze.max_lines` | `20` | Most lines a summary prints. Passed to the CLI as `--max-lines`. |
-| `squeeze.wrap_prefix` | `""` | Optional command prefixed to every squeezed run, e.g. a build lock wrapper. Passed to the CLI as `--wrap`. |
-| `read_guard.enabled` | `true` | Turn the guard on or off. |
-| `read_guard.max_lines` | `600` | Files longer than this need an offset/limit. |
-| `ledger.enabled` | `true` | Record finished subagents. |
-| `ledger.raw_limit` | `200` | Newest rows kept in full; older rows fold into monthly averages. |
-| `ledger.yearly_after_months` | `12` | Monthly averages older than this fold into yearly ones. |
-| `pane.open_on_start` | `false` | Open the `/haikrew` pane by itself whenever a session starts. |
-| `pane.time_style` | `"relative"` | How limit resets and past runs are shown: `relative` (in 2 h 14 min, 3 h ago), `clock` (at 6:00 PM, your time zone) or `both`. |
-| `pane.update_check` | `true` | Show when a newer HaiKrew is available. One GitHub request every 6 hours reads the latest version number; nothing is sent. |
-| `band.show` | `true` | In the desktop app, show the animated crew in the band above the prompt. |
-| `band.sky` | `"live"` | The sky behind the crew: `live` (your clock), `dawn`, `day`, `dusk` or `night`. |
-| `band.scenery` | `"mountains"` | The landscape behind the crew: `mountains`, `city`, `forest` or `hills`. |
-| `band.season` | `"auto"` | Snow in `winter`; falling leaves in `autumn` over forests and hills. `auto` picks the season by month; `spring`, `summer` and `none` draw neither. |
-| `band.clouds` | `true` | Pixel clouds drifting across the sky. |
-| `band.headwear` | `"crown"` | What the main agent wears: `crown`, `wizard`, `cap` or `none`. |
-| `band.haiku_color`, `band.sonnet_color`, `band.opus_color` | `#9b7fc7`, `#4f9c98`, `#d97757` | Each model's colour in the band, as `#rrggbb`. |
-| `agents.control` | `"off"` | What agents may do through HaiKrew's tools: `off`, `read` (status, settings, ledger) or `change` (also settings and rules; never agent control or Allow Opus). |
+## Quick start
 
-Example: `"rules": ["job:review=sonnet", "desc:migration=sonnet"]` runs a spec headed `HAIKREW job=review` on Sonnet, and any task whose description mentions "migration" on Sonnet too. `job:implement+lang:rust=sonnet@high` runs Rust implementation specs on Sonnet at high effort; `cwd:~/projects/*=haiku` matches any session under `~/projects`. A rule that picks Opus is refused unless `gate.allow_opus` is on.
+1. Run `/haikrew`. The pane opens with the model gate switch in its header (hotkey `g`). The gate is off after install.
+2. Turn the gate on. From then on, subagents launched without a model are routed (see [Model gate](#model-gate)).
+3. Give the main model a task that means writing more than a few lines. With the gate on, it is asked to hand the spec to `haiku-coder`, and the Your crew card lists each working agent.
 
-## How the crew works
+What you see:
 
-1. The overseer (the main model) writes a spec that fits on one screen. Its first line is the header `HAIKREW job=<word> lang=<word>`.
-2. `haiku-coder` implements the spec in a worktree, runs `haikrew verify`, and reports in 120 words or fewer.
-3. `haikrew verify` runs the repo's `.haikrew/verify` script if present, or an inferred build and test, and prints one `VERDICT:` line. The overseer reads that line and the risky diff hunks, not the transcript.
+- **The pane** has cards for Controls, Your crew, Token use, Track record, Insights and Settings; each folds to one line. The terminal shows a plain three-tab version: Home, Ledger, Settings.
+- **The band** (desktop app, above the prompt) shows the crew as small Claude bots. The main agent stands larger, in its model's colour (Haiku purple, Sonnet teal, Opus orange), wearing a crown, wizard hat or cap. Hover a bot for its name and latest line; its Transcript button opens the agent's messages in a HaiKrew pane.
+- Hide the band with `band.show` set to off.
+
+## How it works
+
+### Model gate
+
+- Off by default (`gate.enabled`). Turn it on with the header switch, `g`, or Settings.
+- A subagent launched with no model gets one: the first matching rule in `gate.rules`, else `gate.default_model` (Haiku).
+- A model the caller names is kept, unless `gate.rules_override` is on. Opus is refused unless `gate.allow_opus` is on; the refusal returns to the caller with the reason and the setting.
+- Pinned agent types (`haiku-coder` by default) keep their own model. Forks inherit the parent's model, so rules do not apply to them.
+- A rule's `@low` to `@max` suffix, or `gate.default_effort`, sets how hard the subagent thinks. The main conversation is never changed.
+- With `gate.delegate` on (the default), a short note in the main conversation's context asks it to hand spec-able work to the crew.
+
+### The crew
+
+- `haiku-coder` implements a tightly written spec, runs `haikrew verify` and reports in 120 words or fewer.
+- `haiku-scout` answers one research question with a short cited brief. It has web search and fetch, read-only.
+- `haiku-checker` is an adversarial checker. It checks each spec item, runs the checks and tries to break the change. It is read-only on the repo.
+- `sonnet-reviewer` reviews the risky hunks of a standard or deep change, runs the tests and ends with a `VERDICT` line.
+- Skills: `crew-overseer` is the workflow (spec, dispatch, review by tier, verify). `bench` shows how to measure setups or models on the bench in `bench/`.
+- Each subagent gets a name, from its tag line or a list, shown in the crew card and transcript.
 
 ### Review tiers
 
-Each finished agent that changed files gets a tier, and the main conversation gets a one-line review note saying which. There is no tier when `review.enabled` is off or the agent changed no files.
+When a finished agent changes files, it gets a tier and the main conversation gets a one-line note. No tier is set when `review.enabled` is off or nothing changed.
 
-- **Light**: only light paths changed (`review.light_paths`), fewer than `review.light_lines` lines, and tests not failing. The main model glances at the diff and calls `record_verdict`.
-- **Standard**: anything else. The reviewer named by `review.standard_reviewer` checks the work.
-- **Deep**: a sensitive path (`review.sensitive_paths`), at least `review.deep_lines` lines, a job in `review.deep_jobs`, failing tests, or a model that passes under 60% of its judged runs at that job and language (4 or more). The reviewer is `review.deep_reviewer`.
+- **Light**: only `review.light_paths` changed (docs, tests), fewer than `review.light_lines` lines, and tests not failing. The checker checks it; with `review.light_reviewer` set to `inline`, the main model glances at the diff and calls `record_verdict` instead.
+- **Standard**: anything else. `sonnet-reviewer` at `review.standard_reviewer` (Sonnet, medium effort).
+- **Deep**: a sensitive path, `review.deep_lines` or more lines, a job in `review.deep_jobs`, failing tests, or a model under 60% over 4 or more judged runs at that job and language. The reviewer is `review.deep_reviewer` (Sonnet, high effort). With `review.deep_inline` on, the main model reviews it itself when it is at least as strong.
+- For standard and deep, the note tells the main model to launch the reviewer with `HAIKREW job=review name=<name>`. Its `VERDICT: PASS|FAIL for <name>` line sets the verdict of the run it reviewed.
 
-For standard and deep, the note tells the main model to launch the reviewer with `HAIKREW job=review name=<name>`. The reviewer calls `review_packet` for the packet (the spec, the agent's final report, the files changed and its test claim) and ends with `VERDICT: PASS|FAIL for <name>`. That line sets the reviewed run's verdict in the ledger, marked with the reviewer's name. The two review tools need Agent control set to read or change; the verdict line works without it.
+### Checker
 
-### Deliberate behaviours
+- The checker is the default light reviewer (`review.light_reviewer` is `checker`). It lists its break cases on one `BROKE` line; a case whose result names a failure counts as a defect.
+- Defects are counted on the checked run. The Insights card and `haikrew analyze` show the catch rate per job, language and size.
+- After `review.checker_skip_after` (15) checked light runs of one job, language and size with no defect, the checker is skipped for that kind and the main model glances instead. Every `review.checker_recheck_every`th (5) skipped run is checked again. A defect resets the skip. Setting either to 0 turns that part off.
 
-- **Forks inherit the parent's model.** The gate does not re-route a fork, so `gate.rules` and `gate.default_model` do not apply to it.
-- **Reviewer effort is advisory.** The review note names the effort from `review.standard_reviewer` or `review.deep_reviewer`, but HaiKrew has no channel to force a reviewer to that effort. A reviewer launched at another effort is not stopped or corrected.
+### Ledger and insights
 
-## Decisions with Clef (optional)
+- One row per finished subagent: model, job, language, time, tokens and verdict. Tokens are new work (input, cache writes and output); cache reads are kept apart.
+- A run is judged by the last `VERDICT:` or `STATUS: done|blocked` line of its final message. Runs with neither are unjudged and left out of pass rates.
+- The newest `ledger.raw_limit` (200) rows are kept in full. Older rows fold into monthly averages, and those older than `ledger.yearly_after_months` (12) into yearly ones.
+- Track record suggests a stronger model for a tagged job under 60% over 4 or more judged runs, and a cheaper one for a job at 90% or more over 8 or more. Untagged runs get an inferred job, marked "(inferred)", which gets no rule suggestions.
+- A suggested rule is added to `gate.rules` only after its button is pressed twice.
+- The Insights card and `haikrew analyze` show checked pass rates, late failures, escalations, tokens per accepted result and the checker catch rate.
+- The ledger and review packets live in the mod's store. The mod reads no credentials and writes no other files.
 
-The decider can ask a Clef decision model which model a task needs. [Clefkit](https://github.com/adriancmurray/Clefkit) provides the endpoint: Cloudflare Workers AI through a local wrangler proxy, any SystemOne/Jev URL, or a local server. Install it from this marketplace with `/plugin install clefkit@haikrew`, start a backend as its README describes, then set `decider.url` to the backend's base URL (HaiKrew posts to `<url>/v1/systemone`) and `decider.mode` to `shadow`. Shadow mode records the pick without acting on it. The `clefkit` entry's source uses `git-subdir` with path `plugin`; that install path has not been tried against the published repository.
+### Decider (shadow mode)
 
-## Working on the pane
+- `decider.mode` is `off` by default. In `shadow`, the decider asks the endpoint at `decider.url` which model, effort and review a launch needs, and records the answer without acting on it. `decide` applies a confident answer; Opus still needs `gate.allow_opus`.
+- It is asked only about launches that name no model and match no rule.
+- It sends the first 4000 characters of the task, the `HAIKREW` tag, the session folder's name and a table of past results to `<url>/v1/systemone`. Errors and timeouts leave the launch as the gate set it.
+- While the mode is on, `<url>/health` is checked. A failed check shows a warning on the Decider settings card.
 
-The mod code is in `plugin/src/mod`. Every `$` call stays in `pane.ts`, `agents.ts` and `hooks/register.ts`, because the engine follows `$` only within one file; the other `pane-*.ts`, `ui.ts`, `svg.ts`, `sprites.ts` and `rules.ts` files take plain values and return element trees or SVG text, so they can change without touching the hooks. A setting added to `plugin/src/schema.ts` appears in the pane's Settings card with its label and help, and is validated on save, with no pane code. There is one copy of HaiKrew to run: the installed plugin. Installed from this repository as a folder marketplace (`claude plugin marketplace add <this folder>`), the terminal CLI reads it straight from `plugin/`, but the desktop app runs the copy cached at install time, which a new version refreshes. Work happens in a git worktree; `scripts/try.sh` runs the checks on the committed branch, stamps a dev version (`0.6.3-dev.1`, ...), fast-forwards the main checkout's `main` to it and refreshes the install (nothing is pushed; restart the app afterwards), and `scripts/release.sh <version> <message file>` sets the version, does the same and pushes `main`. Run the mod tests with `claude plugin test plugin`.
+### Late failures
 
-## Limitations
+- A run that passed is flagged `late_fail` when, within `ledger.late_fail_days` (5), a later commit in the same repo touches one of its files and its message says fix, revert, bug, broke or regress.
+- `haikrew late-failures [--days N]` writes the flags to `~/.claude/plugins/store/haikrew-late.json`. A SessionStart hook runs it in the background.
+- The mod merges that file where it cannot run git itself, which is the desktop app. Without the file, the Insights card says detection is off.
 
-- The desktop pane picks light or dark colours from Claude Code's `theme` setting; if the desktop app's appearance differs from that setting, the stars and chart text use the other palette. The crew, bubbles and switches show on either.
-- The agent tools (`agents.control`), the review tiers and the crew above the prompt are covered by mod tests; none has been run by a live agent yet.
-- The gate has had one live check (an agent launched with no model ran on Haiku). Per-task rules, effort, instructions and the seam check are covered by mod tests only; they have not been watched with real agents mid-run.
-- The mod parts (gate, guards, ledger, pane) run only in Claude Code. The CLI (`squeeze`, `verify`, `patterns check`) runs anywhere Node 22.18 or later runs.
-- The squeeze hook matches the start of a command with a regex.
-- The read guard and squeeze are heuristics. They can truncate output a caller needed; the full log stays on disk for squeezed runs.
+### Update notice
+
+- At most once every 6 hours, at session start, on the sky timer or on the first pane render, the mod reads `version` from `plugin.json` on GitHub. That is one request; nothing is sent.
+- When a newer version exists, the pane shows a strip with an Update button, and the main agent says so in a speech bubble in the band.
+- The button runs `claude plugin update haikrew@haikrew` when pressed, then asks for a restart. Turn the check off with `pane.update_check`.
+
+## Settings
+
+Settings are stored in the mod's store and apply to every session. Edit them in `/haikrew`, where rules are built from dropdowns and validated on save. Defaults are in `plugin/src/schema.ts`.
+
+| Name | Default | What it does |
+|---|---|---|
+| `gate.enabled` | `false` | Turn the model gate on. |
+| `gate.default_model` | `haiku` | Model for a subagent launched with none, when no rule matches. |
+| `gate.rules` | `job:review=sonnet`, `job:research=haiku`, `type:Explore=haiku` | Ordered rules, first match wins: `selectors=model[@effort]`. Selectors: `job:`, `lang:`, `type:`, `desc:`, `cwd:`. |
+| `gate.allow_opus` | `false` | Allow Opus subagents at all. |
+| `gate.rules_override` | `false` | Let rules replace a model the caller named. |
+| `gate.pinned_types` | `haiku-coder` | Agent types that keep their own model. |
+| `gate.default_effort` | empty | Effort per model when no rule sets one, e.g. `sonnet=high`. |
+| `gate.allow_nested` | `true` | Let a subagent start agents of its own. |
+| `gate.delegate` | `true` | Add the delegation note to the main conversation's context. |
+| `gate.instructions` | empty | Extra prompt text for matching subagents, as `<selectors>: <text>`. |
+| `decider.mode` | `off` | `off`, `shadow` (record only) or `decide` (apply a confident pick). |
+| `decider.url` | `http://127.0.0.1:8790` | Base URL of the decision endpoint. |
+| `review.enabled` | `true` | Give each finished agent that changed files a review tier. |
+| `review.light_reviewer` | `checker` | `checker` (haiku-checker) or `inline` (the main model glances). |
+| `review.light_lines` | `60` | Light reviews need fewer changed lines than this. |
+| `review.deep_lines` | `400` | Changes of at least this many lines get a deep review. |
+| `review.standard_reviewer` | `sonnet@medium` | Reviewer model and effort for standard reviews. |
+| `review.deep_reviewer` | `sonnet@high` | Reviewer model and effort for deep reviews. |
+| `review.deep_inline` | `false` | The main model reviews deep changes itself when at least as strong. |
+| `review.checker_skip_after` | `15` | Skip the checker for a light kind after this many runs with no defect. 0 never skips. |
+| `review.checker_recheck_every` | `5` | While skipped, check every Nth light run. 0 never re-checks. |
+| `checks.guard_hooks` | `true` | Refuse Bash commands that skip git hooks (`--no-verify`, `core.hooksPath`). |
+| `checks.seam_check` | `false` | Also submit the seam reminder as a prompt when parallel agents finish. |
+| `checks.token_limits` | `haiku=800000`, `sonnet=400000`, `opus=200000` | Warn when one subagent's new work passes its model's limit. |
+| `checks.token_effort_scale` | `true` | Scale token limits by effort, from 0.5x (low) to 3x (max). |
+| `squeeze.enabled` | `true` | Route matching build and test commands through `haikrew squeeze`. |
+| `squeeze.max_lines` | `20` | Lines a squeezed summary prints. |
+| `read_guard.max_lines` | `600` | Whole-file reads of longer files return an outline and ask for a range. |
+| `ledger.enabled` | `true` | Record finished subagents. |
+| `ledger.raw_limit` | `200` | Newest rows kept in full. |
+| `ledger.late_fail_days` | `5` | Window for late-failure flags. |
+| `agents.control` | `off` | What agents may do through HaiKrew's tools: `off`, `read` or `change`. Agents can never change this setting or Allow Opus. |
+| `pane.update_check` | `true` | Check GitHub every 6 hours for a newer version. |
+| `pane.open_on_start` | `false` | Open the pane when a session starts. |
+| `band.show` | `true` | Show the crew above the prompt (desktop app). |
+| `band.sky` | `live` | `live` (your clock), `dawn`, `day`, `dusk` or `night`. |
+| `band.scenery` | `mountains` | `mountains`, `city`, `forest` or `hills`. |
+| `band.headwear` | `crown` | The main agent's headwear: `crown`, `wizard`, `cap` or `none`. |
+| `band.haiku_color`, `band.sonnet_color`, `band.opus_color` | `#9b7fc7`, `#4f9c98`, `#d97757` | Each model's colour in the band. |
+
+Example: `"job:implement+lang:rust=sonnet@high"` runs Rust implementation specs on Sonnet at high effort. `"cwd:~/projects/*=haiku"` matches any session under `~/projects`. A rule that picks Opus is refused unless `gate.allow_opus` is on.
+
+## CLI
+
+The CLI runs anywhere Node 22.18 or later runs. The examples use `haikrew`, the launcher in `plugin/bin/`; `node plugin/bin/haikrew.mjs` is the same.
+
+| Command | What it does |
+|---|---|
+| `haikrew squeeze [--max-lines N] [--wrap PREFIX] -- <cmd...>` | Run a command, print a short verdict and keep the full log under `haikrew/logs` in the system temp folder. |
+| `haikrew verify` | Run `.haikrew/verify` if present, or an inferred build and test. Prints one `VERDICT:` line. |
+| `haikrew patterns check [--dir PATH] [--max-files N] [--max-lines N]` | Check a folder of `.md` pattern files against the caps (20 files, 40 lines). Exit 0 within caps, 1 on violations, 2 if the folder is missing. |
+| `haikrew analyze [--store PATH]` | Print the routing analysis shown in the Insights card, as a table. |
+| `haikrew late-failures [--days N]` | Flag late failures in the newest ledger store file (window 5 days by default) and write `haikrew-late.json`. |
+
+## Clefkit (companion)
+
+[Clefkit](https://github.com/adriancmurray/Clefkit) provides typed decisions from Clef models and is the usual backend for the decider.
+
+1. Install it: `/plugin install clefkit@haikrew`.
+2. Start a backend as its README describes: Cloudflare Workers AI through a local wrangler proxy, a SystemOne or Jev URL, or a local server.
+3. Set `decider.url` to the backend's base URL, and `decider.mode` to `shadow`.
+
+The `clefkit` entry uses a `git-subdir` source with path `plugin`. That install path has not been tried against the published repository.
+
+## Troubleshooting
+
+- **A subagent ran on the main model.** It named a model of its own (kept unless `gate.rules_override` is on), it is a pinned type, or it is a fork, which inherits the parent's model.
+- **Opus is refused.** Turn on `gate.allow_opus`, or use a rule that picks Sonnet.
+- **The desktop app shows an old version.** It runs the copy cached at install. Update (see [Update](#update)), then restart the app.
+- **No band, or no pane.** The band is desktop-only and needs `band.show`. The terminal shows the three-tab pane.
+- **Insights says late-failure detection is off.** Run `haikrew late-failures` from a terminal. It needs at least one ledger store file, which exists once a subagent has finished, and git in the repo.
+- **The Settings card warns about the decider.** The endpoint at `decider.url` did not answer `<url>/health`. Start the backend.
+
+Known limits:
+
+- Reviewer effort is advisory. The review note names it, but HaiKrew cannot force a reviewer to that effort.
+- The gate has had one live check: an agent launched with no model ran on Haiku. Rules, effort, instructions and the seam check are covered by mod tests only.
+- The read guard and squeeze are heuristics. They can truncate output a caller needed; a squeezed run's full log stays on disk.
 
 ## License
 
