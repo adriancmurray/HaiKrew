@@ -81,7 +81,7 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
     if (!settings.band.show) return next(e);
     const ui = $.ui.resolve(e) as Ui;
     startUpdateCheck($, settings, true);
-    const latest = await updateOf($, settings);
+    const latest = await updateOf($, settings, "desktop");
     const crew = snapshot(await liveAgents($), Date.now());
     crew.lead = { state: leadState(crew.working), model: String(await $.session.model().catch(() => "")), activity: leadActivity() };
     // No timer here: the band's loops run inside its SVG, and it redraws only when what it shows changes.
@@ -108,7 +108,7 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
     const settings = await loadSettings($);
     const ledger = readState(await $.store.get("ledger"));
     startUpdateCheck($, settings, true);
-    const update = await updateOf($, settings);
+    const update = await updateOf($, settings, surface);
     const crew = snapshot(await liveAgents($), Date.now());
     if (crew.working > 0 && (surface !== "terminal" || view.tab === "home")) startTimer($, surface !== "terminal");
     if (surface !== "terminal") {
@@ -178,7 +178,7 @@ function actions($: Api): Actions {
       $.ui.toast(`HaiKrew: asked Claude to retry on ${model}`);
     },
     update: async () => {
-      if (view.updating || typeof $.process?.run !== "function") return;
+      if (view.updating) return;
       const latest = recordOf(await $.store.get("update"))?.latest ?? "";
       view.updating = true;
       view.updateNote = "";
@@ -199,12 +199,13 @@ async function installedOf($: Api): Promise<string> {
 }
 
 /** A newer release than the installed one, when the check is on and has found one. */
-async function updateOf($: Api, settings: Settings): Promise<{ latest: string; installed: string; manual: boolean } | undefined> {
+// $.process is CLI only and the engine refuses it read as a value, so the surface stands in for it: the terminal runs the update, the desktop shows the steps.
+async function updateOf($: Api, settings: Settings, surface: string): Promise<{ latest: string; installed: string; manual: boolean } | undefined> {
   if (!settings.pane.update_check) return undefined;
   try {
     const installed = await installedOf($);
     const latest = availableUpdate(installed, recordOf(await $.store.get("update")));
-    return latest ? { latest, installed, manual: typeof $.process?.run !== "function" } : undefined;
+    return latest ? { latest, installed, manual: surface !== "terminal" } : undefined;
   } catch {
     return undefined;
   }
