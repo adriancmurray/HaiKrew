@@ -29,7 +29,7 @@ test("a passed run is a late failure when a fix commit within the window touches
     commit(dir, "d.ts", "add d", "2026-10-10T13:00:00Z");
     commit(dir, "d.ts", "fix d much later", "2026-10-20T13:00:00Z"); // outside 5 days
     const run = (agent_id: string, files: string[], ts = "2026-10-10T12:00:00Z", verdict = "pass") =>
-      ({ ts, agent_id, verdict, repo: dir, files }) as never;
+      ({ ts, agent_id, self_verdict: verdict, repo: dir, files }) as never;
     const runs = [run("hit", ["a.ts"]), run("far", ["d.ts"], "2026-10-10T14:00:00Z"), run("failed", ["a.ts"], undefined, "fail")];
     const out = await flagLate(runs, Date.parse("2026-10-13T00:00:00Z"), 5, git);
     assert.deepEqual(out.runs.filter((r: { late_fail?: boolean }) => r.late_fail).map((r: { agent_id: string }) => r.agent_id), ["hit"]);
