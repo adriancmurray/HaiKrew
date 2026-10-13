@@ -31,6 +31,13 @@ function input(over: Partial<ReviewInput> = {}): ReviewInput {
 /** A change that is deep by its path, so the deep reviewer decides how it is checked. */
 const SENSITIVE = { paths: ["plugin/hooks/register.ts"], lines: 10 };
 
+test("a run that changed only scratch files gets no review", () => {
+  const scratch = reviewPlan(input({ paths: ["/private/tmp/x/a.ts", "/Users/me/.claude/scratchpad/b.ts"] }), CFG, false);
+  expect(scratch.tier).toBe("none");
+  expect(scratch.reasons).toEqual(["changed only scratch files"]);
+  expect(reviewPlan(input({ paths: ["/private/tmp/x/a.ts", "src/mod/review.ts"] }), CFG, false).tier).not.toBe("none");
+});
+
 test("a docs-only small change gets a light review, checked by the Haiku checker agent", () => {
   const plan = reviewPlan(input({ paths: ["docs/guide.md", "README.md"], lines: 20 }), CFG, false);
   expect(plan.tier).toBe("light");

@@ -1,5 +1,11 @@
 HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gate), adds squeeze and read guards on tool calls, keeps a ledger of agent runs, and shows the crew in a `/haikrew` pane. Release 0.1.0 introduced the gate, guards, ledger, pane, the haiku-coder and haiku-scout agents and the crew-overseer skill. Releases 0.4.0 to 0.5.5 added per-task model rules, rule effort and selectors, checks, ledger suggestions and a packaging change. Releases 0.6.0 to 0.6.5 redesigned the `/haikrew` pane and the band above the prompt, made the crew the default route for spec-able work, gave subagents names, set token warnings per model and added review tiers. The newest release covered here is 0.6.12, dated 2026-10-12.
 
+## Unreleased
+
+- `board` tool (crew board Phases 2 and 4): `query` returns claims and decisions on given paths (default 40 lines, `limit` up to 400, end directories with "/"), `decide` appends to the per-repo decision log (200 lines, older moved to an archive), `status` shows an agent its own state, `summary` gives a director one screen of its subtree (agents, conflicts, new decisions, unattributed changes). Not gated by `agents.control`. Settings `board.decisions`, `board.decisions_max`.
+- Runs whose files are all in temp or scratchpad folders get no review note.
+- Contracts (Phase 3) are on hold: the seams bench baseline scored 12 of 12 integration suites on the first try, so the current tasks cannot show a gain.
+
 ## 0.6.12 — 2026-10-13
 
 First round of the crew board (docs/specs/crew-board.md, Phases 0 and 1).

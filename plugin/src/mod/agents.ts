@@ -8,7 +8,11 @@
 import { SCHEMA, validate } from "../schema.ts";
 import type { Settings } from "../schema.ts";
 import { checkChanges, mergeChanges, settingsFrom } from "./config.ts";
-import { snapshot } from "./crew.ts";
+import { rowFor, snapshot, touched } from "./crew.ts";
+import { claimBook, liveClaims, normalise } from "./claims.ts";
+import type { BoardSettings } from "./claims.ts";
+import { addDecision, decisionTextError, limitOf, queryText, readConflicts, readRepo, scopeRows, statusText, summaryText } from "./board.ts";
+import type { Store } from "./board.ts";
 import { suggestions } from "./advice.ts";
 import { isObject } from "./api.ts";
 import { applyChecked, byModel, readState, summary, tokenTotals } from "./ledger.ts";
@@ -87,12 +91,31 @@ export const AGENT_TOOLS = [
       required: ["agent", "verdict"],
     },
   },
+  {
+    name: "board",
+    description: "The crew board. action: query (live claims, decisions and notes on absolute paths: paths; end a directory with "/"), decide (log one " +
+      "line of text for paths, as a decision), status (your own crew row), summary (one screen: agents in scope, conflicts, " +
+      "decisions and unattributed changes since your last summary; scope is an agent id, default your own subtree).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["query", "decide", "status", "summary"] },
+        paths: { type: "array", items: { type: "string" }, description: "Absolute paths." },
+        text: { type: "string", description: "The decision, one line of at most 200 characters." },
+        limit: { type: "number", description: "Most lines query returns: default 40, at most 400." },
+        scope: { type: "string", description: "summary: an agent id; its subtree is summarised." },
+      },
+      required: ["action"],
+    },
+  },
 ];
 
 const CHANGES = new Set(["set_setting", "add_rule", "remove_rule", "record_verdict"]);
 
 /** Whether `tool` may run under the person's agent-control setting, or why not. */
 export function allowed(settings: Settings, tool: string): string | null {
+  // The board reads the crew and logs decisions; it changes no setting, rule or verdict, so agent control does not gate it.
+  if (tool === "board") return null;
   const mode = String(settings.agents?.control ?? "off");
   if (mode === "off") return "Agent control is off. The person can allow it in /haikrew: Settings › General › Agent control.";
   if (mode === "read" && CHANGES.has(tool)) return "Agent control is read-only. The person can allow changes in /haikrew: Settings › General › Agent control.";
@@ -187,6 +210,144 @@ async function reviewTool(tool: string, input: Api, $: Api): Promise<{ deny: str
   return { result: `Recorded ${verdict} for ${agent}.` };
 }
 
+/** Folder walks past the path's own folder stop here: a path nested this deep is not a real project tree. */
+const WALK_MAX = 64;
+
+/** The absolute, normalised paths a tool call names; relative ones are dropped. */
+function pathsOf(value: unknown): string[] {
+  const list = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  return [...new Set(list.map((p) => normalise(String(p), "")).filter(Boolean))];
+}
+
+/** Runs git in `cwd` and returns its stdout, or "" when it fails or the surface has no process runner. */
+async function gitRun($: Api, argv: string[], cwd: string): Promise<string> {
+  try {
+    const r = await $.process.run(argv, { cwd, timeoutMs: 15000 });
+    return r.exitCode === 0 ? r.stdout : "";
+  } catch {
+    return "";
+  }
+}
+
+/** The repo root holding `path`, walking up past folders that do not exist yet (a new file's folder); "" when none does. */
+async function rootOfPath($: Api, path: string): Promise<string> {
+  let dir = path.endsWith("/") ? path : path.slice(0, path.lastIndexOf("/") + 1);
+  for (let i = 0; i < WALK_MAX && dir; i++) {
+    const top = (await gitRun($, ["git", "rev-parse", "--show-toplevel"], dir)).trim();
+    if (top) return top;
+    const bare = dir.replace(/\/+$/, "");
+    if (bare === "") break;
+    dir = bare.slice(0, bare.lastIndexOf("/") + 1) || "/";
+  }
+  return "";
+}
+
+/** The paths grouped by the repo that holds them; `loose` are the paths no repo holds. */
+async function groupByRoot($: Api, paths: string[]): Promise<{ roots: Map<string, string[]>; loose: string[] }> {
+  const roots = new Map<string, string[]>();
+  const loose: string[] = [];
+  for (const p of paths) {
+    const root = await rootOfPath($, p);
+    if (root) roots.set(root, [...(roots.get(root) ?? []), p]);
+    else loose.push(p);
+  }
+  return { roots, loose };
+}
+
+/** The caller's own repo root: where its spawn ran, else the session folder's repo. "" when none. */
+async function callerRoot($: Api, callerId: string): Promise<string> {
+  const known = claimBook.roots.get(callerId);
+  if (known) return known;
+  let cwd = "";
+  try {
+    cwd = await $.session.cwd();
+  } catch {
+    cwd = "";
+  }
+  return (await gitRun($, ["git", "rev-parse", "--show-toplevel"], cwd)).trim();
+}
+
+/** The mod store in the shape the board takes: `$` itself is not passed across an import. */
+function boardStore($: Api): Store {
+  return { get: (key: string) => $.store.get(key), set: (key: string, value: unknown) => $.store.set(key, value) };
+}
+
+/** The board's `board` settings as the claims module reads them. */
+const boardSettings = (settings: Settings): BoardSettings => settings.board as unknown as BoardSettings;
+
+/** Last summary time per caller (a subagent's id, or "main"); in memory, so a restart starts every caller over. */
+const lastSummary = new Map<string, number>();
+
+/** `board summary`: one screen for the caller's scope, covering what changed since its last summary. */
+async function boardSummary($: Api, root: string, e: Api, callerId: string, settings: Settings, now: number): Promise<string> {
+  const key = callerId || "main";
+  const scope = typeof e.scope === "string" && e.scope ? e.scope : (callerId || null);
+  const rows = snapshot([], now).rows;
+  const scoped = scopeRows(rows, scope);
+  const scopeIds = scope === null ? null : new Set(scoped.map((r) => r.id));
+  const names = new Map(rows.map((r) => [r.id, r.name]));
+  const files = new Map(rows.map((r) => [r.id, touched(r.id).paths] as const));
+  const recent = summary(readState(await $.store.get("ledger"))).recent;
+  const runs = recent.filter((r) => scopeIds === null || scopeIds.has(r.agent_id))
+    .map((r) => ({ name: names.get(r.agent_id) ?? r.agent_id, unattributed: r.unattributed }));
+  const decisionsOn = settings.board?.decisions !== false;
+  const text = summaryText({ rows: scoped, files, scopeIds, conflicts: await readConflicts(boardStore($)),
+    decisions: decisionsOn ? (await readRepo(boardStore($), root)).decisions : [], decisionsOn, runs, since: lastSummary.get(key) ?? 0 });
+  lastSummary.set(key, now);
+  return text;
+}
+
+/** `board query`: each repo's claims and decisions on its paths, one block per repo; paths no repo holds are named. */
+async function boardQuery($: Api, e: Api, paths: string[], settings: Settings): Promise<string> {
+  const limit = limitOf(e.limit);
+  const decisionsOn = settings.board?.decisions !== false;
+  const { roots, loose } = await groupByRoot($, paths);
+  const blocks: string[] = [];
+  for (const [root, own] of roots) {
+    const decisions = decisionsOn ? (await readRepo(boardStore($), root)).decisions : [];
+    const body = queryText(own, liveClaims(claimBook, root, boardSettings(settings)), decisions, limit);
+    blocks.push(roots.size > 1 ? `repo ${root}\n${body}` : body);
+  }
+  for (const p of loose) blocks.push(`skipped ${p}: no git repo holds it`);
+  return blocks.join("\n");
+}
+
+/** `board decide`: appends the decision to the one repo all its paths are in; the author is the caller's crew name or "main". */
+async function boardDecide($: Api, e: Api, paths: string[], callerId: string, settings: Settings, now: number): Promise<{ deny: string } | { result: string }> {
+  const { roots, loose } = await groupByRoot($, paths);
+  if (loose.length > 0) return { deny: `No git repo holds ${loose.join(", ")}.` };
+  if (roots.size !== 1) return { deny: "The paths span more than one repo; decide for one repo at a time." };
+  const [root] = [...roots.keys()];
+  const author = callerId ? (rowFor(callerId, now)?.name ?? callerId) : "main";
+  const max = Number(settings.board?.decisions_max) || 200;
+  const decision = await addDecision(boardStore($), root, { text: String(e.text ?? ""), paths, author }, max, now);
+  return { result: `Recorded ${decision.id}.` };
+}
+
+/** The board tool: query, decide, status or summary for the calling agent (or the main thread when it has no agent id). */
+async function boardTool(e: Api, $: Api, settings: Settings): Promise<{ deny: string } | { result: string }> {
+  const action = String(e.action ?? "");
+  if (!["query", "decide", "status", "summary"].includes(action)) return { deny: "The action is query, decide, status or summary." };
+  const callerId = typeof e.agentId === "string" ? e.agentId : "";
+  const now = Date.now();
+  if (action === "status") {
+    if (!callerId) return { result: "The main thread has no crew row of its own; use summary." };
+    return { result: statusText(rowFor(callerId, now), touched(callerId).paths) };
+  }
+  if (action === "summary") {
+    const root = await callerRoot($, callerId);
+    if (!root) return { deny: "The board needs a git repo; run from inside one." };
+    return { result: await boardSummary($, root, e, callerId, settings, now) };
+  }
+  const paths = pathsOf(e.paths);
+  if (paths.length === 0) return { deny: "Give the absolute paths." };
+  if (action === "query") return { result: await boardQuery($, e, paths, settings) };
+  if (settings.board?.decisions === false) return { deny: "The decision log is off. The person can turn it on in /haikrew: Settings › Claims." };
+  const error = decisionTextError(String(e.text ?? ""));
+  if (error) return { deny: error };
+  return boardDecide($, e, paths, callerId, settings, now);
+}
+
 /** Serve the tools as `mcp__<plugin>__<name>`. pane.ts registers them at session start (one hook per event). */
 export function registerAgentTools(on: (...args: unknown[]) => void, plugin: string): void {
   for (const spec of AGENT_TOOLS) {
@@ -200,6 +361,7 @@ export function registerAgentTools(on: (...args: unknown[]) => void, plugin: str
         return { result: JSON.stringify(statusReport(settings, readState(await $.store.get("ledger")), working), null, 2) };
       }
       if (spec.name === "review_packet" || spec.name === "record_verdict") return reviewTool(spec.name, e, $);
+      if (spec.name === "board") return boardTool(e, $, settings);
       const reply = answer(spec.name, e, settings);
       if (!reply.ok) return { deny: reply.reason };
       await $.store.set("settings", reply.settings);

@@ -140,6 +140,10 @@ export const SCHEMA: Record<string, Section> = {
           "director is told. deny refuses every such write. off makes no claims." },
       claim_grace_min: { label: "Claim grace", type: "int", default: 30, min: 0, max: 1440,
         help: "Minutes a finished agent's files stay claimed, so a resumed agent keeps them." },
+      decisions: { label: "Decision log", type: "bool", default: true,
+        help: "Keep the decision log the board tool reads and writes. Off: decisions are refused and left out of queries and summaries." },
+      decisions_max: { label: "Live decisions", type: "int", default: 200, min: 10, max: 10000,
+        help: "Decisions kept live per repo. Past this, the oldest move to an archive that nothing reads by default." },
     },
   },
   review: {

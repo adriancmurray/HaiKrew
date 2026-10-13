@@ -35,15 +35,12 @@ import { flagLate, mergeLate, repoOf } from "../src/mod/late.ts";
 import type { LateFields, RunGit } from "../src/mod/late.ts";
 import { applyLateFile, parseLateFile, setLateOff } from "../src/mod/late-file.ts";
 import { registerAgentTools } from "../src/mod/agents.ts";
-import { bashPaths, checkWrite, claimSpawn, editPaths, logConflicts, newBook, stopAgent } from "../src/mod/claims.ts";
+import { bashPaths, checkWrite, claimBook, claimSpawn, editPaths, logConflicts, stopAgent } from "../src/mod/claims.ts";
 import type { BoardSettings } from "../src/mod/claims.ts";
 import type { Settings } from "../src/schema.ts";
 
 /** Set at the first agent launch: the late-failure check runs once per load (the pane owns the one session.start hook). */
 let startChecked = false;
-
-/** The file claims of this session's subagents, per repo root (see src/mod/claims.ts). */
-const claimBook = newBook(Date.now);
 
 /** Claude Code calls this once when the mod loads, with the `on` that attaches hooks. */
 export function register(on) {

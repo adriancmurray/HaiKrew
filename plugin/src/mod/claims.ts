@@ -5,9 +5,8 @@
  * within the retry window goes through, with the director told. Claims are kept per repo root, in memory. Pure logic:
  * the clock and the store come in from the hook (plugin/hooks/register.ts).
  */
-import { isObject } from "./api.ts";
 import type { Input } from "./api.ts";
-import { serial } from "./serial.ts";
+import { appendConflicts } from "./board.ts";
 import { commandDir, resolvePath } from "./guards.ts";
 import { DYNAMIC_WRITE, outsideTree, REPO_WRITE, shellWrites } from "./shell-writes.ts";
 
@@ -57,7 +56,6 @@ export type Book = {
 /** Store access the log needs: the mod store's get and set. */
 export type Store = { get(key: string): Promise<unknown>; set(key: string, value: unknown): Promise<void> };
 
-const CONFLICTS_MAX = 200;
 const MINUTE_MS = 60_000;
 const ANCESTOR_STEPS = 100;
 /** How long after a warned refusal a retry of the same write still goes through. */
@@ -112,7 +110,7 @@ function sweep(book: Book, root: string, grace: number): Map<string, Claim> {
   }
   const now = book.clock();
   for (const [key, claim] of held) {
-    if (claim.endedAt !== undefined && now - claim.endedAt > grace) held.delete(key);
+    if (expired(claim, now, grace)) held.delete(key);
   }
   return held;
 }
@@ -271,20 +269,22 @@ export function bashPaths(command: string): string[] {
   return paths;
 }
 
-const LOG_KEY = "board";
-/** Serialises the board's read-modify-write of the store. */
-const boardLock = serial();
+/** The file claims of this session's subagents, kept per repo root. The board tool reads its live claims from here. */
+export const claimBook = newBook(Date.now);
 
-/** Adds logged conflicts to the store's board list, newest last, capped at 200. */
-export async function logConflicts(store: Store, conflicts: Conflict[]): Promise<void> {
-  if (conflicts.length === 0) return;
-  await boardLock(async () => {
-    const list = conflictsOf(await store.get(LOG_KEY));
-    await store.set(LOG_KEY, { conflicts: [...list, ...conflicts].slice(-CONFLICTS_MAX) });
-  });
+/** Whether a finished holder's claim has outlived its grace window at `now`; a live holder's claim never has. */
+export function expired(claim: Claim, now: number, grace: number): boolean {
+  return claim.endedAt !== undefined && now - claim.endedAt > grace;
 }
 
-/** The stored conflict list, or [] when the store holds none. */
-function conflictsOf(value: unknown): Conflict[] {
-  return isObject(value) && Array.isArray(value.conflicts) ? (value.conflicts as Conflict[]) : [];
+/** The claims on `root` still in force: live holders, and finished ones inside the grace window. */
+export function liveClaims(book: Book, root: string, settings: BoardSettings): Claim[] {
+  const now = book.clock();
+  const grace = graceMs(settings);
+  return [...(book.claims.get(root)?.values() ?? [])].filter((c) => !expired(c, now, grace));
+}
+
+/** Logs conflicts to the board's list in the store. */
+export async function logConflicts(store: Store, conflicts: Conflict[]): Promise<void> {
+  await appendConflicts(store, conflicts);
 }
