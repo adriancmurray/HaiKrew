@@ -12,7 +12,7 @@ const BROKE_RE = /^[\s*`]*BROKE\b(.*)$/;
 const BROKE_LEAD_RE = /^[\s:*`\-–—]+/;
 const ARROW_SPLIT_RE = /→|->/;
 const LEAD_NON_WORD_RE = /^[^\p{L}\p{N}]+/u;
-const OK_RE = /^(ok|pass|passed|held|holds|fine|none|no defect|no issue|handled|correct)\b/;
+const OK_RE = /^(ok|pass|passed|held|holds|fine|none|no defect|no issue|handled|correct)(?![\p{L}\p{N}-])/u;
 
 /** True when an entry's result (text after its last arrow, or the whole entry) does not start with an ok word. */
 function isDefect(entry: string): boolean {
