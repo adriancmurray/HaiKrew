@@ -58,3 +58,19 @@ test("applyDefects returns the same state when neither the checker nor the check
 test("an ok word must be a whole word: 'pass-through bug' and 'passive' are defects", () => {
   expect(countDefects("BROKE  a → pass-through bug; b → passive leak; c → ok")).toBe(2);
 });
+
+test("an entry whose result is more than a bare ok word is a defect", () => {
+  expect(countDefects("BROKE: x → ok but throws on empty")).toBe(1);
+});
+
+test("a result naming a failure is a defect even when it starts with ok", () => {
+  expect(countDefects("BROKE: a → ok, hangs; b → ok (timeout); c → fails quietly")).toBe(3);
+});
+
+test("a FAIL verdict counts at least one defect, even when the BROKE line is none or missing", () => {
+  expect(countDefects("BROKE: none", true)).toBe(1);
+  expect(countDefects("All cases held.", true)).toBe(1);
+  expect(countDefects("BROKE: a → ok", true)).toBe(1);
+  expect(countDefects("BROKE: a → x; b → y", true)).toBe(2);
+  expect(countDefects("BROKE: none")).toBe(0);
+});

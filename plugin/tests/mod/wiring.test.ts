@@ -406,3 +406,35 @@ test("a stopped job=check run with BROKE defects sets checker_defects on the che
   expect(runs.find((r: any) => r.name === "Isaac Newline").checker_defects).toBe(2);
   expect(runs.find((r: any) => r.agent_id === "k1").defects_found).toBe(2);
 });
+
+test("a resumed agent that stops again is noted only when its touched lines grew, and its packet still updates", async (ctx: any, on: any) => {
+  resetCrew();
+  resetEffort();
+  resetSeams();
+  on("session.cwd", async () => ({ value: "/Users/someone/projects/app" }));
+  on("agent.spawn", async (_$: any, e: any) => ({ model: e.model ?? "haiku", agentId: "r1" }));
+  on("classic.SubagentStop", async () => ({ value: null }));
+  on("tool.call", async () => ({ result: "ok" }));
+  const stored: Record<string, any> = { settings: SETTINGS };
+  const appended: any[] = [];
+  on("store.get", async (_$: any, e: any) => ({ value: stored[e.key] }));
+  on("store.set", async (_$: any, e: any) => { stored[e.key] = e.value; return { value: undefined }; });
+  on("fs.read", async () => ({ value: transcriptOf("HAIKREW job=implement lang=ts name=Isaac_Newline\nedit it", "Done. 5 passed, 0 failed.") }));
+  on("ui.invalidate", async () => ({ value: undefined }));
+  on("session.append", async (_$: any, e: any, next: any) => { appended.push(e); return next(e); });
+  const coder = await ctx.agent.spawn({
+    prompt: "HAIKREW job=implement lang=ts name=Isaac_Newline\nedit it", description: "edit", subagentType: "haiku-coder",
+    parentModel: "opus", background: false, fork: false,
+  });
+  const stop = () => ctx.classic.SubagentStop({ agent_id: coder.agentId, agent_type: "haiku-coder", agent_transcript_path: "/t.jsonl" });
+  await ctx.tool.call({ tool: "Edit", agentId: coder.agentId, file_path: "/repo/plugin/hooks/register.ts", new_string: "a\nb" });
+  await stop();
+  expect(appended.length).toBe(1);
+  await stop();
+  expect(appended.length).toBe(1);
+  await ctx.tool.call({ tool: "Edit", agentId: coder.agentId, file_path: "/repo/plugin/hooks/register.ts", new_string: "c\nd\ne\nf" });
+  await stop();
+  expect(appended.length).toBe(2);
+  expect(stored.review_noted).toEqual({ [coder.agentId]: expect.any(Number) });
+  expect(stored.review_packets["Isaac Newline"]).toContain("hooks/register.ts");
+});

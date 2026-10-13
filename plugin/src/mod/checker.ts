@@ -1,6 +1,7 @@
 /**
  * Defect counts from a haiku-checker's report. The checker lists its break cases on one `BROKE` line as
- * `<case> → <result>` entries separated by `;`. An entry is a defect unless its result starts with an "ok" word.
+ * `<case> → <result>` entries separated by `;`. An entry is a defect unless its whole result is an ok word, and a
+ * result naming a failure (throws, crash, wrong, fails, hang, timeout) is a defect even when it starts with "ok".
  * applyDefects() records the count on the checker's own run and on the newest run of the checked crew member.
  */
 import type { LedgerState } from "./ledger.ts";
@@ -11,26 +12,30 @@ const BROKE_RE = /^[\s*`]*BROKE\b(.*)$/;
 // Leading separators left after the BROKE word, such as the colon in "**BROKE:**".
 const BROKE_LEAD_RE = /^[\s:*`\-–—]+/;
 const ARROW_SPLIT_RE = /→|->/;
-const LEAD_NON_WORD_RE = /^[^\p{L}\p{N}]+/u;
-const OK_RE = /^(ok|pass|passed|held|holds|fine|none|no defect|no issue|handled|correct)(?![\p{L}\p{N}-])/u;
+// Matched at a word start, so "change" is not read as "hang".
+const FAILURE_RE = /\b(throw|crash|wrong|fail|hang|timeout)/;
+const OK_RE = /^[^\p{L}\p{N}]*(ok|pass|passed|held|holds|fine|none|no defect|no issue|handled|correct)[^\p{L}\p{N}]*$/u;
 
-/** True when an entry's result (text after its last arrow, or the whole entry) does not start with an ok word. */
+/** True when an entry's result (text after its last arrow, or the whole entry) is not a bare ok word, or names a failure. */
 function isDefect(entry: string): boolean {
   const parts = entry.split(ARROW_SPLIT_RE);
-  const result = (parts[parts.length - 1] ?? "").trim().toLowerCase().replace(LEAD_NON_WORD_RE, "");
-  return !OK_RE.test(result);
+  const result = (parts[parts.length - 1] ?? "").trim().toLowerCase();
+  return FAILURE_RE.test(result) || !OK_RE.test(result);
 }
 
-/** The number of defect entries on the last `BROKE` line of a checker's report. 0 when there is no such line. */
-export function countDefects(report: string): number {
+/**
+ * The number of defect entries on the last `BROKE` line of a checker's report. 0 when there is no such line. A FAIL
+ * verdict (`failed`) counts as at least one defect, so a report that names no break still breaks a clean streak.
+ */
+export function countDefects(report: string, failed = false): number {
   let body: string | null = null;
   for (const line of report.split(LINE_SPLIT)) {
     const m = BROKE_RE.exec(line);
     if (m) body = m[1] ?? "";
   }
-  if (body === null) return 0;
-  return body.replace(BROKE_LEAD_RE, "").split(";")
+  const count = body === null ? 0 : body.replace(BROKE_LEAD_RE, "").split(";")
     .filter((entry) => entry.trim() !== "" && isDefect(entry)).length;
+  return failed ? Math.max(count, 1) : count;
 }
 
 /**

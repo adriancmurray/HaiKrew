@@ -319,7 +319,8 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
   if (checked) {
     await ledgerLock(async () => {
       const marked = applyChecked(readState(await $.store.get("ledger")), { name: checked.name }, checked.verdict, name);
-      await $.store.set("ledger", applyDefects(marked, { checkerId: id, checkedName: checked.name }, countDefects(run.report)));
+      await $.store.set("ledger", applyDefects(marked, { checkerId: id, checkedName: checked.name },
+        countDefects(run.report, checked.verdict === "fail")));
     });
     return;
   }
@@ -356,14 +357,23 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
     await $.store.set("review_packets", Object.fromEntries(keep.map((k) => [k, packets[k]])));
     await $.store.set("review_packet_ids", Object.fromEntries(Object.entries(ids).filter(([, n]) => keep.includes(n))));
   });
+  // A resumed agent that stops again is noted once more only when its touched lines grew; the packet above still updates.
+  const noted = notedLines(await $.store.get("review_noted"));
+  if (typeof noted[id] === "number" && lines <= noted[id]) return;
   // Without agent tools the reviewer cannot fetch the packet, so the note carries it.
   const text = reviewNote(name, plan, paths, lines, { toolsOn: toolsOn(cfg), packet: String(packet) });
   if (!text) return;
   try {
     // A plugin's append takes the row alone; the engine stamps its origin (this plugin) and door itself.
     await $.session.append({ message: { type: "user", content: [{ type: "text", text }] } });
+    await ledgerLock(async () => {
+      const kept = notedLines(await $.store.get("review_noted"));
+      delete kept[id];
+      kept[id] = lines;
+      await $.store.set("review_noted", Object.fromEntries(Object.entries(kept).slice(-200)));
+    });
   } catch {
-    // A refused append only loses the note.
+    // A refused append only loses the note, and the next stop of this agent notes it again.
   }
 }
 
@@ -376,4 +386,9 @@ type StopRun = { verdict: string; model: string; job: string; lang: string; repo
 
 function asRecord(v: unknown): Record<string, string> {
   return typeof v === "object" && v !== null && !Array.isArray(v) ? { ...(v as Record<string, string>) } : {};
+}
+
+/** The review_noted store value: agent id -> touched lines when that agent was last noted. */
+function notedLines(v: unknown): Record<string, number> {
+  return typeof v === "object" && v !== null && !Array.isArray(v) ? { ...(v as Record<string, number>) } : {};
 }
