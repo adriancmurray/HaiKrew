@@ -1,6 +1,25 @@
 {
   "name": "haikrew",
-  "owner": { "name": "Adrian Murray" },
-  "metadata": { "description": "HaiKrew: token-efficient agent crews for Claude Code. Cheap models write, the main model specs and verifies." },
-  "plugins": [{ "name": "haikrew", "source": "./plugin", "description": "Token-efficient agent crews for Claude Code." }]
+  "owner": {
+    "name": "Adrian Murray"
+  },
+  "metadata": {
+    "description": "HaiKrew: token-efficient agent crews for Claude Code. Cheap models write, the main model specs and verifies."
+  },
+  "plugins": [
+    {
+      "name": "haikrew",
+      "source": "./plugin",
+      "description": "Token-efficient agent crews for Claude Code."
+    },
+    {
+      "name": "clefkit",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/adriancmurray/Clefkit.git",
+        "path": "plugin"
+      },
+      "description": "Typed decisions (yes/no, choice, score) from Clef decision models. Optional: backs HaiKrew's decider."
+    }
+  ]
 }

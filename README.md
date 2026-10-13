@@ -74,7 +74,7 @@ Install from GitHub:
 /plugin install haikrew@haikrew
 ```
 
-The marketplace is named `haikrew` and lists one plugin, `haikrew`, whose source is `./plugin` in `.claude-plugin/marketplace.json`.
+The marketplace is named `haikrew` and lists `haikrew` (source `./plugin`) and the optional `clefkit` (a subdirectory of its own repository) in `.claude-plugin/marketplace.json`.
 
 ## CLI
 
@@ -156,6 +156,10 @@ For standard and deep, the note tells the main model to launch the reviewer with
 
 - **Forks inherit the parent's model.** The gate does not re-route a fork, so `gate.rules` and `gate.default_model` do not apply to it.
 - **Reviewer effort is advisory.** The review note names the effort from `review.standard_reviewer` or `review.deep_reviewer`, but HaiKrew has no channel to force a reviewer to that effort. A reviewer launched at another effort is not stopped or corrected.
+
+## Decisions with Clef (optional)
+
+The decider can ask a Clef decision model which model a task needs. [Clefkit](https://github.com/adriancmurray/Clefkit) provides the endpoint: Cloudflare Workers AI through a local wrangler proxy, any SystemOne/Jev URL, or a local server. Install it from this marketplace with `/plugin install clefkit@haikrew`, start a backend as its README describes, then set `decider.url` to the backend's base URL (HaiKrew posts to `<url>/v1/systemone`) and `decider.mode` to `shadow`. Shadow mode records the pick without acting on it. The `clefkit` entry's source uses `git-subdir` with path `plugin`; that install path has not been tried against the published repository.
 
 ## Working on the pane
 
