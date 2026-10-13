@@ -6,6 +6,7 @@
 import { SCHEMA, validate } from "../schema.ts";
 import type { Field, Settings } from "../schema.ts";
 import { specialEditor } from "./pane-rules.ts";
+import { healthLine } from "./health.ts";
 import { title } from "./rules.ts";
 import { C, foldCard, hrow, onOff, textAndControls, txt, vcol, view } from "./ui.ts";
 import type { Actions, CardFrame, Ui } from "./ui.ts";
@@ -86,6 +87,7 @@ function sectionCard(ui: Ui, act: Actions, settings: Settings, section: string, 
     vcol(ui, {}, [
       textAndControls(ui, [txt(ui, { bold: true }, sec.title)], [toggle]),
       txt(ui, { dimColor: true }, off ? `${sec.help} Off: the settings below are kept and apply once it is on.` : sec.help),
+      ...(section === "decider" && values.mode !== "off" && healthLine() ? [txt(ui, { color: C.warn }, healthLine())] : []),
     ]),
     ...fields.map(([key, field]) => fieldRow(act, ui, section, key, field, values[key], width, Boolean(settings.gate.allow_opus))),
   ]);

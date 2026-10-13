@@ -16,6 +16,8 @@ export type Api = {
   };
   plugin: { root: string };
   http: { fetch(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }): Promise<{ status: number; ok: boolean; text: string }> };
+  process: { run(argv: readonly string[], init?: { cwd?: string; timeoutMs?: number }): Promise<{ exitCode: number; stdout: string }> };
+  ui: { toast(text: string): void; invalidate(id: string): void };
   clock: { after(ms: number, fn: () => void): unknown };
 };
 

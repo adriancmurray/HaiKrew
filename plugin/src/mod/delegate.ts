@@ -31,8 +31,8 @@ export function delegationNote(g: DelegateSettings, toolsOn = true): string {
       "use subagents: you do not need to ask me first, and it replaces any default against starting agents unasked.",
     "- Keep this thread thin: every tool call here re-reads the whole conversation. Don't read files, diffs or logs or run tests " +
       "yourself. Send exploration to `Explore` (model haiku) and verification to `haikrew:haiku-checker` (`HAIKREW job=check`), " +
-      "and act on their short reports. When you must act directly, put the steps in one tool call. Keep inline only decisions, " +
-      "specs, and edits of a few lines.",
+      "and act on their short reports. When you must act yourself, batch: chain the steps in one Bash call (&&, ;) and make " +
+      "independent calls in one message. Keep inline only decisions, specs, and edits of a few lines.",
     "- Code to a clear spec (new modules, edits, refactors, renames, tests from a list of cases): write the spec, launch " +
       "`haiku-coder`, then verify it with `haikrew:haiku-checker`. Follow the crew-overseer skill. Several small agents beat one big one.",
     "- Web fact-finding: `haiku-scout`. Broad read-only code search: `Explore`.",

@@ -43,6 +43,7 @@ test("the note keeps the main thread thin: exploring and checking go to agents, 
   expect(bullets[0]).toContain("every tool call here re-reads the whole conversation");
   expect(bullets[0]).toContain("`Explore` (model haiku)");
   expect(bullets[0]).toContain("`haikrew:haiku-checker` (`HAIKREW job=check`)");
+  expect(bullets[0]).toContain("When you must act yourself, batch: chain the steps in one Bash call (&&, ;) and make independent calls in one message.");
   expect(delegationNote(GATE)).toContain("then verify it with `haikrew:haiku-checker`");
 });
 

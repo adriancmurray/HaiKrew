@@ -1,5 +1,11 @@
 HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gate), adds squeeze and read guards on tool calls, keeps a ledger of agent runs, and shows the crew in a `/haikrew` pane. Release 0.1.0 introduced the gate, guards, ledger, pane, the haiku-coder and haiku-scout agents and the crew-overseer skill. Releases 0.4.0 to 0.5.5 added per-task model rules, rule effort and selectors, checks, ledger suggestions and a packaging change. Releases 0.6.0 to 0.6.5 redesigned the `/haikrew` pane and the band above the prompt, made the crew the default route for spec-able work, gave subagents names, set token warnings per model and added review tiers. The newest release covered here is 0.6.5, dated 2026-10-12.
 
+## Unreleased
+
+- Late failures: a run that passed is flagged `late_fail` (with `late_fail_commit`) when, within `ledger.late_fail_days` days (default 5), a later commit in the same repo touches a file it changed and its message says fix, revert, bug, broke or regress. When a run is recorded it keeps its repo root and repo-relative paths; at the first agent launch of a session the mod runs one `git log --since` per repo for runs from the last window. Older runs without those fields are skipped.
+- Decider health: with `decider.mode` on, the first agent launch (then at most every 10 minutes) checks `<url>/health` with a 1.5 s timeout. A failure shows one toast and a warning line on the Decider settings card, with the command to start the server; the line clears when the check passes.
+- The delegation note tells the main model to batch when it must act itself.
+
 ## 0.6.6 — 2026-10-12
 
 Fixes from a full audit (five auditors, one checker, every fix reviewed), plus a decider slot for decision models.

@@ -27,8 +27,14 @@ import { registerPane } from "../src/mod/pane.ts";
 import { delegationNote, withNote } from "../src/mod/delegate.ts";
 import type { DelegateSettings } from "../src/mod/delegate.ts";
 import { ledgerLock } from "../src/mod/serial.ts";
+import { checkHealth } from "../src/mod/health.ts";
+import { flagLate, repoOf } from "../src/mod/late.ts";
+import type { RunGit } from "../src/mod/late.ts";
 import { registerAgentTools } from "../src/mod/agents.ts";
 import type { Settings } from "../src/schema.ts";
+
+/** Set at the first agent launch: the late-failure check runs once per load (the pane owns the one session.start hook). */
+let startChecked = false;
 
 /** Claude Code calls this once when the mod loads, with the `on` that attaches hooks. */
 export function register(on) {
@@ -40,6 +46,8 @@ export function register(on) {
     let record: DecisionRecord | undefined;
     let named = e;
     const dcfg = cfg.decider as unknown as DeciderSettings;
+    if (dcfg.mode !== "off") await deciderHealth($, dcfg);
+    if (!startChecked) { startChecked = true; void lateFailures($, cfg).catch(() => undefined); }
     if (dcfg.mode !== "off" && gateCfg.enabled) {
       const found = await decide($, dcfg, gateCfg, e, choice, cwd);
       if (found) {
@@ -194,6 +202,48 @@ async function decide($: Api, dcfg: DeciderSettings, gateCfg: GateSettings, e: R
   }
 }
 
+/** git (any command) through the mod's process runner; its stdout, or "" on any failure. */
+function gitOf($: Api): RunGit {
+  return async (argv, cwd) => {
+    try {
+      const r = await $.process.run(argv, { cwd, timeoutMs: 15000 });
+      return r.exitCode === 0 ? r.stdout : "";
+    } catch {
+      return "";
+    }
+  };
+}
+
+/** Flags passed runs of the last ledger.late_fail_days days that a later fix commit touched (see late.ts). */
+async function lateFailures($: Api, cfg: Settings): Promise<void> {
+  if (!cfg.ledger.enabled) return;
+  const state = readState(await $.store.get("ledger"));
+  const found = await flagLate(state.runs, Date.now(), Number(cfg.ledger.late_fail_days), gitOf($));
+  if (!found.changed) return;
+  // Merge by agent id and time into the freshest ledger, so runs added while git ran are kept.
+  await ledgerLock(async () => {
+    const fresh = readState(await $.store.get("ledger"));
+    const hit = new Map(found.runs.filter((r) => r.late_fail).map((r) => [r.agent_id + "|" + r.ts, r]));
+    await $.store.set("ledger", { ...fresh, runs: fresh.runs.map((r) => hit.get(r.agent_id + "|" + r.ts) ?? r) });
+  });
+}
+
+/** Checks the decider's /health (at most every 10 minutes); one toast when it is down. Never throws. */
+async function deciderHealth($: Api, dcfg: DeciderSettings): Promise<void> {
+  if (dcfg.mode === "off") return;
+  try {
+    const get = (url: string, ms: number) => Promise.race([
+      $.http.fetch(url).then((r) => r.ok),
+      new Promise<boolean>((resolve) => { $.clock.after(ms, () => resolve(false)); }),
+    ]);
+    const text = await checkHealth(dcfg.url, Date.now(), get);
+    $.ui.invalidate("ui.render");
+    if (text) $.ui.toast(text);
+  } catch {
+    // A health check never blocks a launch.
+  }
+}
+
 /** The session's folder, or "" when Claude Code cannot say. */
 async function sessionCwd($): Promise<string> {
   try {
@@ -241,7 +291,7 @@ async function recordStop($: Api, e: Record<string, unknown>): Promise<StopRun |
   const live = liveUsage(String(e.agent_id ?? ""));
   const run = live ? combineUsage(parsed, live) : parsed;
   const decision = decisionFor(run.agent_id);
-  const entry = { ...run, name: rowFor(run.agent_id, Date.now())?.name, ...(decision ? { decision } : {}) };
+  const entry = { ...run, ...(await repoOf(touched(run.agent_id).paths, gitOf($)).catch(() => ({}))), name: rowFor(run.agent_id, Date.now())?.name, ...(decision ? { decision } : {}) };
   await ledgerLock(async () => {
     await $.store.set("ledger", addRun(readState(await $.store.get("ledger")), entry, cfg));
   });

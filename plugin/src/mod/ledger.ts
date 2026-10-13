@@ -13,6 +13,7 @@ import { inferJob } from "./infer.ts";
 import type { LiveUsage } from "./crew.ts";
 import type { DecisionRecord } from "./decider.ts";
 import { normName } from "./names.ts";
+import type { LateFields } from "./late.ts";
 
 /** One finished subagent. */
 export type Run = {
@@ -39,7 +40,7 @@ export type Run = {
   checked_by?: string;
   /** What the decider said about this launch, when it was asked. Folded away with the run by condense(). */
   decision?: DecisionRecord;
-};
+} & LateFields;
 
 /** Sums of runs for one (period, model, agent_type, job, lang); period is 'YYYY-MM', 'YYYY', or ''. */
 export type Bucket = {

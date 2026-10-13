@@ -161,6 +161,8 @@ export const SCHEMA: Record<string, Section> = {
         help: "Newest rows kept in full; older rows fold into monthly averages." },
       yearly_after_months: { label: "Months before yearly fold", type: "int", default: 12, min: 1, max: 120,
         help: "Monthly averages older than this fold into yearly ones." },
+      late_fail_days: { label: "Late failure window (days)", type: "int", default: 5, min: 1, max: 60,
+        help: "A passed run counts as a late failure when a commit within this many days touches its files and reads as a fix or revert." },
     },
   },
   agents: {
