@@ -110,3 +110,16 @@ test("runUpdate runs the plugin update command and reports its outcome, or a thr
   const boom = async (): Promise<RunResult> => { throw new Error("spawn claude ENOENT\nstack"); };
   expect(await runUpdate(boom, "0.6.9")).toBe("spawn claude ENOENT");
 });
+
+test("a checkedAt in the future does not refetch before 6 real hours pass", async () => {
+  resetUpdate();
+  let gets = 0;
+  const now = 10_000_000_000;
+  const io = (at: number) => ({ now: at, load: async () => ({ latest: "1.0.0", checkedAt: now + 3600_000 }), save: async () => {}, get: async () => { gets++; return "{}"; } });
+  await checkUpdate(io(now));
+  expect(gets).toBe(0);
+  await checkUpdate(io(now + UPDATE_EVERY_MS - 1));
+  expect(gets).toBe(0);
+  await checkUpdate(io(now + UPDATE_EVERY_MS + 3600_000));
+  expect(gets).toBe(1);
+});

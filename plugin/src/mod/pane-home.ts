@@ -19,6 +19,7 @@ import { settingsSection } from "./pane-settings.ts";
 import { tokensTab } from "./pane-tokens.ts";
 import type { Usage } from "./pane-tokens.ts";
 import { title } from "./rules.ts";
+import { MANUAL_UPDATE } from "./update.ts";
 import { bannerSvg } from "./sprites.ts";
 import { anchorAnimations, gauges, inkFor, table } from "./svg.ts";
 import type { Ink } from "./svg.ts";
@@ -33,19 +34,20 @@ export type HomeData = {
   /** Whether the app's theme is dark, as far as its theme setting says. */
   dark: boolean;
   /** A newer release than the installed one, when there is one and the check is on. */
-  update?: { latest: string; installed: string };
+  update?: { latest: string; installed: string; manual?: boolean };
 };
 
 const NOTES_URL = "https://github.com/adriancmurray/HaiKrew/blob/main/CHANGELOG.md";
 
 /** The strip at the top of the home page: a newer release, its notes link, and the Update button (gone once updated). */
-export function updateStrip(ui: Ui, act: Actions, u: { latest: string; installed: string }): unknown {
+export function updateStrip(ui: Ui, act: Actions, u: { latest: string; installed: string; manual?: boolean }): unknown {
   const done = view.updateNote.startsWith("Updated.");
   return vcol(ui, { key: "update-strip", borderStyle: "round", borderColor: C.accent, paddingX: 2 }, [
     textAndControls(ui, [
       txt(ui, { bold: true, wrap: "wrap" }, view.updateNote || `HaiKrew ${u.latest} is available (you have ${u.installed})`),
+      u.manual ? txt(ui, { dimColor: true, wrap: "wrap" }, MANUAL_UPDATE) : null,
       view.updateNote ? null : ui.Link({ href: NOTES_URL, label: "Release notes" }),
-    ], [done ? null : ui.Button({ key: "update-now", label: view.updating ? "Updating…" : "Update", variant: "primary",
+    ], [done || u.manual ? null : ui.Button({ key: "update-now", label: view.updating ? "Updating…" : "Update", variant: "primary",
       onPress: () => (view.updating ? undefined : act.update()) })]),
   ]);
 }
@@ -85,7 +87,7 @@ export type BandOpts = {
   /** Opens a subagent's transcript in HaiKrew's agent pane. */
   openAgent: (row: Row) => unknown;
   /** A newer release: the main agent says so in a speech bubble; hovering the bubble or the main agent offers the update. */
-  update?: { latest: string; run: () => unknown };
+  update?: { latest: string; run: () => unknown; manual?: boolean };
 };
 
 // ponytail: desktop rows measured at about 27 px; a different font size shifts where the hover targets sit.
@@ -163,8 +165,8 @@ export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: 
 }
 
 /** The Update button of the band's cards: gone once the update has run. */
-function updateButton(ui: Ui, u: { latest: string; run: () => unknown }): unknown {
-  if (view.updateNote.startsWith("Updated.")) return null;
+function updateButton(ui: Ui, u: { latest: string; run: () => unknown; manual?: boolean }): unknown {
+  if (u.manual || view.updateNote.startsWith("Updated.")) return null;
   return ui.Button({ key: "band-update-now", label: view.updating ? "Updating…" : "Update", variant: "primary",
     onPress: () => (view.updating ? undefined : u.run()) });
 }
@@ -173,12 +175,12 @@ function updateButton(ui: Ui, u: { latest: string; run: () => unknown }): unknow
  * The hover target over the update bubble (scene pixels `b`, on the band's top rows, clear of every bot's target).
  * Its card covers the bubble and says which release is out, with the Update button until it has run (then the outcome).
  */
-function updateBubble(ui: Ui, dark: boolean, u: { latest: string; run: () => unknown }, b: { x: number; w: number }, toCol: (x: number) => number): unknown {
+function updateBubble(ui: Ui, dark: boolean, u: { latest: string; run: () => unknown; manual?: boolean }, b: { x: number; w: number }, toCol: (x: number) => number): unknown {
   const left = toCol(b.x), width = Math.max(2, toCol(b.x + b.w) - left + 1);
   return ui.Box({ key: "band-update", position: "absolute", left, top: 0, width, height: 1, children: [
     ui.Box({ position: "absolute", top: 0, left: 0, display: "none", hover: { display: "flex" }, flexDirection: "row", columnGap: 1,
       alignItems: "center", paddingX: 1, backgroundColor: dark ? "#2b2a27" : "#f1efe8", children: [
-        txt(ui, { bold: true }, view.updateNote || `Update to ${u.latest}`),
+        txt(ui, { bold: true, wrap: "wrap" }, view.updateNote || (u.manual ? `Update to ${u.latest}. ${MANUAL_UPDATE}` : `Update to ${u.latest}`)),
         updateButton(ui, u),
       ].filter((x) => x !== null) }),
   ] });

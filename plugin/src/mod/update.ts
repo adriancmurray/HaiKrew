@@ -83,7 +83,8 @@ async function refresh(io: UpdateIo): Promise<UpdateRecord | null> {
   } catch {
     return null;
   }
-  if (stored && io.now - stored.checkedAt >= 0 && io.now - stored.checkedAt < UPDATE_EVERY_MS) return stored;
+  // A checkedAt in the future (clock skew) counts as just now, so it never refetches before 6 real hours pass.
+  if (stored && io.now - Math.min(stored.checkedAt, io.now) < UPDATE_EVERY_MS) return stored;
   let version = "";
   try {
     version = versionOf(await io.get(UPDATE_URL, UPDATE_TIMEOUT_MS));
@@ -121,3 +122,6 @@ export async function runUpdate(run: (argv: string[]) => Promise<RunResult>, lat
     return updateOutcome(e instanceof Error ? e : new Error(String(e)), latest);
   }
 }
+
+/** What the pane says where `$.process` (CLI only) is missing and the update cannot run from a button. */
+export const MANUAL_UPDATE = "Update from Claude: /plugin marketplace update haikrew, then restart. Or in a terminal: claude plugin update haikrew@haikrew";

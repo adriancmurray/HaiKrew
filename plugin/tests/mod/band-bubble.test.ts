@@ -94,3 +94,15 @@ test("the strip shows the release and an Update button that runs the update; the
   expect(page({ latest: "0.6.9", installed: "0.6.8" })).toBe(true);
   expect(page()).toBe(false);
 });
+
+test("without $.process (the desktop app) the strip and the bubble card hide the button and give the manual steps", () => {
+  view.updateNote = "";
+  const act = { update: async () => undefined } as unknown as Actions;
+  const strip = all(updateStrip(UI, act, { latest: "0.6.9", installed: "0.6.8", manual: true }));
+  expect(strip.some((e) => e.key === "update-now")).toBe(false);
+  expect(strip.some((e) => String(e.children).startsWith("Update from Claude: /plugin marketplace update haikrew"))).toBe(true);
+  const base = { band: band("city"), messages: {}, now: NOW, open: () => null, openAgent: () => null };
+  const els = all(crewBand(UI, crew(1), 131, true, { ...base, update: { latest: "0.6.9", manual: true, run: () => null } }));
+  expect(els.some((e) => e.key === "band-update-now")).toBe(false);
+  expect(els.some((e) => String(e.children).includes("claude plugin update haikrew@haikrew"))).toBe(true);
+});

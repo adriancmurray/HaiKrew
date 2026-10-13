@@ -88,7 +88,7 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
     return crewBand(ui, crew, Math.max(24, Number(e.props?.bodyColumns) || 80), await themeIsDark($), {
       band: settings.band, messages: await latestMessages($, crew), now: Date.now(),
       open: () => $.ui.open({ id: PANE, title: "HaiKrew", focus: true, closeOnEscape: true }),
-      update: latest ? { latest: latest.latest, run: () => actions($).update() } : undefined,
+      update: latest ? { latest: latest.latest, manual: latest.manual, run: () => actions($).update() } : undefined,
       openAgent: (row) => {
         agentInView = row.id;
         $.ui.invalidate("ui.render");
@@ -178,7 +178,7 @@ function actions($: Api): Actions {
       $.ui.toast(`HaiKrew: asked Claude to retry on ${model}`);
     },
     update: async () => {
-      if (view.updating) return;
+      if (view.updating || typeof $.process?.run !== "function") return;
       const latest = recordOf(await $.store.get("update"))?.latest ?? "";
       view.updating = true;
       view.updateNote = "";
@@ -199,12 +199,12 @@ async function installedOf($: Api): Promise<string> {
 }
 
 /** A newer release than the installed one, when the check is on and has found one. */
-async function updateOf($: Api, settings: Settings): Promise<{ latest: string; installed: string } | undefined> {
+async function updateOf($: Api, settings: Settings): Promise<{ latest: string; installed: string; manual: boolean } | undefined> {
   if (!settings.pane.update_check) return undefined;
   try {
     const installed = await installedOf($);
     const latest = availableUpdate(installed, recordOf(await $.store.get("update")));
-    return latest ? { latest, installed } : undefined;
+    return latest ? { latest, installed, manual: typeof $.process?.run !== "function" } : undefined;
   } catch {
     return undefined;
   }
