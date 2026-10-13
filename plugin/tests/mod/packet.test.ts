@@ -50,6 +50,7 @@ test("reviewNote words each tier", () => {
   const d = reviewNote("Isaac Newline", deep, ["a", "b", "c"], 140);
   expect(d).toContain("HaiKrew review: Isaac Newline finished (3 files, ~140 lines)");
   expect(d).toContain("Tier deep: touches hooks/register.ts");
+  expect(d).toContain("subagent_type `haikrew:sonnet-reviewer`");
   expect(d).toContain("opus at high effort");
   expect(d).toContain("HAIKREW job=review name=<a name>");
   expect(d).toContain('mcp__haikrew__review_packet with agent "Isaac Newline"');

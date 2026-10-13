@@ -1,5 +1,5 @@
 /** The review packet for a finished subagent and the one-line note that points the main conversation at it. Pure. */
-import { CHECKER_AGENT } from "./review.ts";
+import { CHECKER_AGENT, REVIEWER_AGENT } from "./review.ts";
 import type { ReviewPlan } from "./review.ts";
 
 export type PacketInput = {
@@ -83,8 +83,8 @@ function action(name: string, plan: ReviewPlan, toolsOn: boolean, packet: string
       ? "Glance at the diff and call mcp__haikrew__record_verdict."
       : "Glance at the diff and say in your reply whether it passes.";
   }
-  const who = plan.reviewer ? `on ${plan.reviewer.model} at ${plan.reviewer.effort} effort ` : "";
-  const start = `Launch a reviewer ${who}with prompt starting \`HAIKREW job=review name=<a name>\``;
+  const who = plan.reviewer ? ` on ${plan.reviewer.model} at ${plan.reviewer.effort} effort` : "";
+  const start = `Launch a reviewer with subagent_type \`${REVIEWER_AGENT}\`${who} and prompt starting \`HAIKREW job=review name=<a name>\``;
   return toolsOn
     ? `${start} and telling it to call mcp__haikrew__review_packet with agent "${name}" first.`
     : `${start} and put this review packet in its prompt:\n\n${packet}`;

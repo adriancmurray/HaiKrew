@@ -11,7 +11,7 @@ description: Overseer workflow for getting code written by cheap haiku-coder sub
 | Work | Who |
 |---|---|
 | Design, decisions, contracts | Main model (Opus), inline, no subagent |
-| Reviewing diffs that touch security, protocol or concurrency | A deep reviewer agent (see Review tiers) |
+| Reviewing diffs that touch security, protocol or concurrency | `haikrew:sonnet-reviewer` at the deep model the note names (see Review tiers) |
 | Writing code to a spec, mechanical refactors, renames, tests from a list of cases, codegen adoption | `haiku-coder` |
 | A task Haiku blocked on twice, or one needing judgment across many files | `Agent` with `model: "sonnet"`, same spec |
 | Broad read-only search | `Explore` with `model: "haiku"` |
@@ -31,7 +31,7 @@ Split work so each spec is one crate or module and about 300 lines of output or 
 ## Review tiers (keep it cheap)
 When a subagent finishes, HaiKrew writes a review packet (spec, report, files changed, test claim) and posts a review note naming a tier. Don't open the agent's transcript; the packet and the report (120 words at most) are enough. The note says what to do. If HaiKrew's review tools are on (Settings › General › Agent control set to read or change), it names them; if they are off, the note carries the packet text and names no tool.
 - **Light** (only docs or tests, a small diff, tests not failing): launch the checker the note names, `haikrew:haiku-checker`, with `HAIKREW job=check name=<Name>`. It is an adversarial Haiku checker: it checks each spec item, runs verify and tries to break the change, and ends with `VERDICT: PASS|FAIL for <Name>`, which sets the run's verdict. Its `job=check` tag keeps it off the `job:review` routing rule. With `review.light_reviewer` set to inline, glance at the diff and call `record_verdict` with pass or fail instead (with the tools off, say pass or fail in your reply).
-- **Standard** (everything else): launch the reviewer the note names with `HAIKREW job=review name=<Name>`. With the tools on, tell it to call `review_packet` first; with them off, paste the packet from the note into its prompt. Either way it ends with `VERDICT: PASS|FAIL for <Name>`.
+- **Standard** (everything else): launch `haikrew:sonnet-reviewer` (read-only; it reviews the risky hunks, runs the tests and reports in 120 words) with the model and effort the note names and `HAIKREW job=review name=<Name>`. With the tools on, tell it to call `review_packet` first; with them off, paste the packet from the note into its prompt. Either way it ends with `VERDICT: PASS|FAIL for <Name>`.
 - **Deep** (a sensitive path, a large diff, a job such as security, migration, concurrency or protocol (`security-review` counts too), failing tests, or a model with a weak record on this job): the same as standard, with the deep reviewer the note names. Only when `review.deep_inline` is on and the main model is at least as strong as that reviewer (haiku < sonnet < opus) does the note say the review is inline. Then review the risky hunks yourself (public API, security, concurrency, permissions, data loss), record the result, and launch no reviewer.
 
 The checker's verdict replaces the run's own in the ledger, marked with the checker's name. Then:

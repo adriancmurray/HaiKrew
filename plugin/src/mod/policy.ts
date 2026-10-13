@@ -19,7 +19,7 @@ export type BucketStat = { model: string; runs: number; judged: number; passes: 
 
 /** The fields of a ledger run the policy reads. Every ledger run has them. */
 export type PolicyRun = {
-  model: string; job: string; lang: string; verdict: string; late_fail?: number;
+  model: string; job: string; lang: string; verdict: string; late_fail?: boolean;
   decision?: { features?: { size_level?: string } };
 };
 
@@ -95,7 +95,7 @@ export function bucketStats(runs: PolicyRun[], bucket: Bucket): BucketStat[] {
     s.runs += 1;
     if (r.verdict === "pass" || r.verdict === "fail") s.judged += 1;
     if (r.verdict === "pass") s.passes += 1;
-    s.late_fails += r.late_fail ?? 0;
+    if (r.late_fail) s.late_fails += 1;
     byModel.set(r.model, s);
   }
   return [...byModel.values()];

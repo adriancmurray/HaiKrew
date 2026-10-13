@@ -39,6 +39,7 @@ export type Tier = "none" | "light" | "standard" | "deep";
 
 /** The agent type that checks a light change when `light_reviewer` is "checker". */
 export const CHECKER_AGENT = "haikrew:haiku-checker";
+export const REVIEWER_AGENT = "haikrew:sonnet-reviewer";
 
 /**
  * The chosen tier, the reviewer's model and effort, "inline" when the main model reviews the risky hunks itself,

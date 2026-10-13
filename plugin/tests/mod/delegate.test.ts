@@ -44,6 +44,8 @@ test("the note keeps the main thread thin: exploring and checking go to agents, 
   expect(bullets[0]).toContain("`Explore` (model haiku)");
   expect(bullets[0]).toContain("`haikrew:haiku-checker` (`HAIKREW job=check`)");
   expect(bullets[0]).toContain("When you must act yourself, batch: chain the steps in one Bash call (&&, ;) and make independent calls in one message.");
+  expect(bullets[0]).toContain("Delegate when a step needs more than about 5 tool calls at a 200k-token context (about 10 at 100k) or would read more than about 20k tokens; otherwise do it inline in one batched call.");
+  expect(bullets[0]).toContain("a general-purpose agent starts at about 50k tokens, a dedicated one at about 10k");
   expect(delegationNote(GATE)).toContain("then verify it with `haikrew:haiku-checker`");
 });
 

@@ -23,7 +23,7 @@ export function delegationNote(g: DelegateSettings, toolsOn = true): string {
       "diff and call `record_verdict` when the note asks you to; standard/deep → launch the named reviewer model and effort " +
       "with `HAIKREW job=review name=...`, telling it to call `review_packet` first and to end with `VERDICT: PASS|FAIL for <name>`"
     : "light → launch the `haikrew:haiku-checker` agent with `HAIKREW job=check name=...` and the packet from the note, or " +
-      "glance at the diff when the note asks you to; standard/deep → launch the named reviewer model and effort with `HAIKREW job=review name=...`, " +
+      "glance at the diff when the note asks you to; standard/deep → launch `haikrew:sonnet-reviewer` with the named model and effort and `HAIKREW job=review name=...`, " +
       "with the packet from the note in its prompt, and let it end with `VERDICT: PASS|FAIL for <name>`";
   return [
     "# HaiKrew: delegate to the crew (standing request from the user)",
@@ -32,7 +32,9 @@ export function delegationNote(g: DelegateSettings, toolsOn = true): string {
     "- Keep this thread thin: every tool call here re-reads the whole conversation. Don't read files, diffs or logs or run tests " +
       "yourself. Send exploration to `Explore` (model haiku) and verification to `haikrew:haiku-checker` (`HAIKREW job=check`), " +
       "and act on their short reports. When you must act yourself, batch: chain the steps in one Bash call (&&, ;) and make " +
-      "independent calls in one message. Keep inline only decisions, specs, and edits of a few lines.",
+      "independent calls in one message. Keep inline only decisions, specs, and edits of a few lines. " +
+      "Delegate when a step needs more than about 5 tool calls at a 200k-token context (about 10 at 100k) or would read more than about 20k tokens; otherwise do it inline in one batched call. " +
+      "Prefer dedicated agent types (haiku-coder, haiku-checker, sonnet-reviewer, Explore): a general-purpose agent starts at about 50k tokens, a dedicated one at about 10k.",
     "- Code to a clear spec (new modules, edits, refactors, renames, tests from a list of cases): write the spec, launch " +
       "`haiku-coder`, then verify it with `haikrew:haiku-checker`. Follow the crew-overseer skill. Several small agents beat one big one.",
     "- Web fact-finding: `haiku-scout`. Broad read-only code search: `Explore`.",
