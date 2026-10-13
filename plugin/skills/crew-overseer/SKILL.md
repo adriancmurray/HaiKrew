@@ -21,8 +21,8 @@ Never launch an agent without `subagent_type: "haiku-coder"` or an explicit `mod
 ## Writing the spec (the overseer's real job)
 A good spec makes Haiku's job mechanical. Each one fits on one screen and contains:
 1. **Where:** the worktree path (a `git worktree add` for the branch, so the agent never touches the main checkout).
-2. **What:** files to create or edit; the exact public signatures, types and Operation names; the behaviour in numbered rules.
-3. **Done when:** the named tests pass under `haikrew verify` (with no verify command: one runnable check you name, such as `node --check` plus a small assert script). Prefer writing the tests (or the list of test cases with expected results) yourself, then letting Haiku implement against them.
+2. **What:** for a fix, the root cause with file:line (find it first with a read-only `Explore`, not by the coder); files to create or edit; the exact public signatures, types and Operation names; the behaviour in numbered rules.
+3. **Done when:** the named tests pass under `haikrew verify`, the same checks the release runs; don't name a narrower test command (with no verify command: one runnable check you name, such as `node --check` plus a small assert script). Prefer writing the tests (or the list of test cases with expected results) yourself, then letting Haiku implement against them.
 4. **Out of scope:** what not to touch.
 5. **Commit:** whether to commit on the branch.
 
@@ -37,6 +37,7 @@ When a subagent finishes, HaiKrew writes a review packet (spec, report, files ch
 The checker's verdict replaces the run's own in the ledger, marked with the checker's name. Then:
 1. Launch `haikrew:haiku-checker` with the spec and the agent's name, and read only its five-line report. Do not run `haikrew verify` or read diff hunks yourself.
 2. On FAIL, SendMessage the worker the failing lines. After two failed corrections, re-run the work on the next model up.
+3. When fixes keep landing in the same area (a third fix/review round on the same module), stop the loop: that is a design problem, not a run of bugs. Read that area yourself once, then fix it inline or write one spec that redesigns it, and review that once.
 
 ## Thin main thread
 Every tool call re-reads the whole conversation, so the main thread must not explore, read diffs or logs, or run tests. Send exploration to `Explore` (model haiku) and verification to `haikrew:haiku-checker`, act on their short reports, put the steps of any direct action in one tool call, and keep inline only decisions, specs and edits of a few lines.

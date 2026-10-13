@@ -258,8 +258,8 @@ function fromRun(run: Run): Bucket {
     n: 1, sum_quality: run.quality, sumsq_quality: run.quality * run.quality,
     sum_tokens_in: run.tokens_in, sum_tokens_out: run.tokens_out, sum_duration: run.duration_s,
     sum_cache_read: run.cache_read,
-    passes: judged(run) === "pass" ? 1 : 0,
-    fails: judged(run) === "fail" ? 1 : 0,
+    passes: outcome(run) === "pass" ? 1 : 0,
+    fails: outcome(run) === "fail" ? 1 : 0,
   };
 }
 
@@ -270,6 +270,17 @@ function fromRun(run: Run): Bucket {
  */
 export function judged(run: Pick<Run, "verdict" | "checked_by">): string | null {
   return run.checked_by ? (run.verdict ?? null) : null;
+}
+
+/**
+ * How a run turned out, for every pass rate, track record, routing and insight: "fail" when a later fix commit flagged
+ * it (late_fail), whoever judged it; else the checker's or reviewer's "pass" or "fail"; else null (not judged). The one
+ * place that decides; readers count a run as judged exactly when this is not null.
+ */
+export function outcome(run: Pick<Run, "verdict" | "checked_by"> & { late_fail?: boolean }): "pass" | "fail" | null {
+  if (run.late_fail) return "fail";
+  const v = judged(run);
+  return v === "pass" || v === "fail" ? v : null;
 }
 
 /** 'YYYY-MM' of the month `months` before `now` (UTC). */

@@ -23,7 +23,8 @@ if git grep --cached -nE "$private" -- plugin README.md CHANGELOG.md scripts .cl
   exit 1
 fi
 git diff --cached --check
-git commit -q -F "$message"
+# A re-run after try.sh failed finds the version commit already made, and goes on to try.sh and the push.
+git diff --cached --quiet || git commit -q -F "$message"
 "$here/scripts/try.sh" --keep-version
 git -C "$main" push -q origin main
 echo "released $(git -C "$main" log --oneline -1 origin/main)"

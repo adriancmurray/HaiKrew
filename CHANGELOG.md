@@ -1,4 +1,11 @@
-HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gate), adds squeeze and read guards on tool calls, keeps a ledger of agent runs, and shows the crew in a `/haikrew` pane. Release 0.1.0 introduced the gate, guards, ledger, pane, the haiku-coder and haiku-scout agents and the crew-overseer skill. Releases 0.4.0 to 0.5.5 added per-task model rules, rule effort and selectors, checks, ledger suggestions and a packaging change. Releases 0.6.0 to 0.6.5 redesigned the `/haikrew` pane and the band above the prompt, made the crew the default route for spec-able work, gave subagents names, set token warnings per model and added review tiers. The newest release covered here is 0.6.10, dated 2026-10-12.
+HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gate), adds squeeze and read guards on tool calls, keeps a ledger of agent runs, and shows the crew in a `/haikrew` pane. Release 0.1.0 introduced the gate, guards, ledger, pane, the haiku-coder and haiku-scout agents and the crew-overseer skill. Releases 0.4.0 to 0.5.5 added per-task model rules, rule effort and selectors, checks, ledger suggestions and a packaging change. Releases 0.6.0 to 0.6.5 redesigned the `/haikrew` pane and the band above the prompt, made the crew the default route for spec-able work, gave subagents names, set token warnings per model and added review tiers. The newest release covered here is 0.6.11, dated 2026-10-12.
+
+## 0.6.11 — 2026-10-12
+
+- One definition of a run's result: `outcome()` in ledger.ts. A late failure is a failure whoever judged the run; otherwise the checker's or reviewer's verdict; otherwise unjudged. Pass rates, track records, routing, the outcome table, insights and the decider's calibration all read it. Before, routing counted a checked pass that later failed as a failure while the outcome table, insights and track records counted it as a pass.
+- `haikrew verify` in this repo also runs the bench reference check, so it runs the same checks as a release.
+- crew-overseer: fix specs carry the root cause with file:line; specs name `haikrew verify`, not a narrower test command; after a third fix round on the same module the overseer reads that area itself and fixes or redesigns it once.
+- release.sh can be re-run after its try step fails: it skips the version commit that is already made.
 
 ## 0.6.10 — 2026-10-12
 

@@ -4,7 +4,7 @@
  * Every number is counted from the runs; nothing is estimated. Only the runs the ledger keeps raw are counted.
  */
 import { modelFamily } from "./crew.ts";
-import { judged } from "./ledger.ts";
+import { outcome } from "./ledger.ts";
 import type { Run } from "./ledger.ts";
 
 /** Models cheapest first: the order a routing rule should try them in. */
@@ -71,9 +71,9 @@ type Tally = {
 };
 
 function addRun(t: Tally, run: Run, escalated: boolean): void {
-  const verdict = judged(run);
-  const isJudged = verdict === "pass" || verdict === "fail";
-  const passed = verdict === "pass";
+  const result = outcome(run as Run & { late_fail?: boolean });
+  const isJudged = result !== null;
+  const passed = result === "pass";
   t.runs += 1;
   if (isJudged) {
     t.judged += 1;

@@ -4,7 +4,7 @@
  * confident pick stands, and otherwise the gate's default is kept. A choice above Haiku is sometimes run one model cheaper
  * instead, so the ledger learns what that model can do. Pure: the exploration draw is an input.
  */
-import { judged } from "./ledger.ts";
+import { outcome } from "./ledger.ts";
 
 /** The models, cheapest first. */
 const MODELS = ["haiku", "sonnet", "opus"];
@@ -96,10 +96,9 @@ export function bucketStats(runs: PolicyRun[], bucket: Bucket): BucketStat[] {
     if (r.job !== bucket.job || r.lang !== bucket.lang || (r.decision?.features?.size_level || "?") !== bucket.size) continue;
     const s = byModel.get(r.model) ?? { model: r.model, runs: 0, judged: 0, passes: 0, late_fails: 0 };
     s.runs += 1;
-    const verdict = judged(r);
-    const isJudged = verdict === "pass" || verdict === "fail";
-    if (isJudged || r.late_fail) s.judged += 1;
-    if (verdict === "pass" && !r.late_fail) s.passes += 1;
+    const result = outcome(r);
+    if (result) s.judged += 1;
+    if (result === "pass") s.passes += 1;
     if (r.late_fail) s.late_fails += 1;
     byModel.set(r.model, s);
   }

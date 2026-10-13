@@ -43,7 +43,8 @@ test("checked counts runs with a checker and rates them over their judged verdic
   expect(row.checked).toBe(2);
   expect(row.checked_pass_rate).toBe(0.5);
   expect(row.late_fail).toBe(1);
-  expect(row.pass_rate).toBe(0.5);
+  // The late failure is a judged failure (outcome()), so pass, fail, late fail: one pass in three.
+  expect(row.pass_rate).toBe(1 / 3);
 });
 
 test("a run whose crew name reappears on a bigger model later counts as escalated, on the smaller model's group", () => {
