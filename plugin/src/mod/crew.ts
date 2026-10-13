@@ -148,19 +148,34 @@ export function leadState(working: number): LeadState {
 
 const members = new Map<string, Member>();
 
+// Display names of members dropped from the roster, by agent id. SendMessage resumes a finished agent without a spawn,
+// so its member is rebuilt; without this it would take a hash-picked name and its verdicts would match no run.
+const droppedNames = new Map<string, string>();
+const DROPPED_NAMES_MAX = 200;
+
 /** Forget every tracked agent (tests call this). */
 export function resetCrew(): void {
   members.clear();
+  droppedNames.clear();
   resetNames();
   mainTurn = null;
   activity = "other";
+}
+
+/** Remove a finished member from the roster, keeping its name; the oldest kept name goes past DROPPED_NAMES_MAX. */
+function drop(m: Member): void {
+  members.delete(m.id);
+  droppedNames.delete(m.id);
+  droppedNames.set(m.id, m.display);
+  const oldest = droppedNames.keys().next();
+  if (droppedNames.size > DROPPED_NAMES_MAX && !oldest.done) droppedNames.delete(oldest.value);
 }
 
 function member(id: string, now: number): Member {
   let m = members.get(id);
   if (!m) {
     m = {
-      id, display: claimName(id, pickName(id, takenNames())), model: "", subagentType: "", description: "", parentId: null, startedAt: now,
+      id, display: claimName(id, droppedNames.get(id) ?? pickName(id, takenNames())), model: "", subagentType: "", description: "", parentId: null, startedAt: now,
       calls: 0, lastTool: "", lastTarget: "", endedAt: null, verdict: "", rule: "", tokens: 0,
       usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, over: false, paths: new Set(), lines: 0, shellLines: 0, spec: "",
     };
@@ -332,7 +347,7 @@ export function activityOf(row: Row): Activity {
 export function snapshot(live: LiveAgent[], now: number): Crew {
   for (const a of live) mergeLive(a, now);
   for (const m of [...members.values()]) {
-    if (m.endedAt !== null && now - m.endedAt > DONE_LINGER_MS) members.delete(m.id);
+    if (m.endedAt !== null && now - m.endedAt > DONE_LINGER_MS) drop(m);
   }
   const rows = tree([...members.values()]).map(([m, depth]) => toRow(m, depth, now));
   return { rows, working: rows.filter((r) => r.state === "working").length };

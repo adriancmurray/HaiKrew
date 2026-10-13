@@ -158,7 +158,7 @@ test("the ledger leads with one row per model", async (ctx: any, on: any) => {
   const h = host(on);
   const run = (verdict: string) => ({ ts: "2026-10-12T14:02:00Z", session: "s", agent_id: "a", agent_type: "haiku-coder",
     model: "claude-haiku-5-5", job: "implement", lang: "ts", duration_s: 72, tokens_in: 9000, tokens_out: 1000,
-    cache_read: 0, tool_calls: 3, attempts: 1, verdict, quality: verdict === "pass" ? 1 : 0 });
+    cache_read: 0, tool_calls: 3, attempts: 1, verdict, checked_by: "Rev", quality: verdict === "pass" ? 1 : 0 });
   h.store.set("ledger", { runs: [run("pass"), run("pass"), run("pass"), run("fail")], buckets: [] });
   const m = await open(ctx);
   await m.press({ key: "tab-ledger" });
@@ -201,7 +201,7 @@ test("the desktop draws one page: banner, controls, crew, tokens, track record a
   const h = host(on);
   const run = { ts: "2026-10-12T14:02:00Z", session: "s", agent_id: "a", agent_type: "haiku-coder", model: "claude-haiku-5-5",
     job: "implement", lang: "ts", duration_s: 72, tokens_in: 9000, tokens_out: 1000, cache_read: 0, tool_calls: 3, attempts: 1,
-    verdict: "pass", quality: 1 };
+    verdict: "pass", checked_by: "Rev", quality: 1 };
   h.store.set("ledger", { runs: [run], buckets: [] });
   await ctx.command.run({ command: "haikrew" });
   const m = await ctx.ui.mount({ plugin: "haikrew", surface: "desktop", component: "Pane", props: { bodyColumns: 49, scroll: { offset: 0, bodyRows: 41 } },
@@ -321,7 +321,7 @@ test("the desktop's Insights card suggests a routing rule, and its Add rule butt
   const h = host(on);
   const run = (verdict: string) => ({ ts: "2026-10-12T14:02:00Z", session: "s", agent_id: "", agent_type: "haiku-coder",
     model: "claude-haiku-5-5", job: "implement", lang: "rust", duration_s: 72, tokens_in: 900, tokens_out: 100, cache_read: 0,
-    tool_calls: 3, attempts: 1, verdict, quality: verdict === "pass" ? 1 : 0, tokens_estimated: true });
+    tool_calls: 3, attempts: 1, verdict, checked_by: "Rev", quality: verdict === "pass" ? 1 : 0, tokens_estimated: true });
   h.store.set("ledger", { runs: [...Array.from({ length: 8 }, () => run("pass")), run("fail")], buckets: [] });
   h.store.set("settings", { gate: { default_model: "sonnet" } });
   await ctx.command.run({ command: "haikrew" });

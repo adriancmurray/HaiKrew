@@ -42,9 +42,12 @@ export function lateCommit(run: LateFields & { ts: string }, commits: Commit[], 
     .sort((a, b) => a.ts - b.ts)[0];
 }
 
-/** Passed runs from the last `days` days that carry a repo and files and are not flagged yet. */
+/**
+ * Passed runs from the last `days` days that carry a repo and files and are not flagged yet. A run counts as passed when
+ * its checker passed it, else by its own final message: a late failure is about what was marked passed, not judged.
+ */
 export function candidates(runs: Run[], now: number, days: number): Run[] {
-  return runs.filter((r) => r.verdict === "pass" && r.repo && r.files?.length && !r.late_fail && now - Date.parse(r.ts) <= days * DAY_MS);
+  return runs.filter((r) => (r.checked_by ? r.verdict : r.self_verdict) === "pass" && r.repo && r.files?.length && !r.late_fail && now - Date.parse(r.ts) <= days * DAY_MS);
 }
 
 /** `runs` with late failures flagged; `changed` is false when nothing was. One git log per repo. */

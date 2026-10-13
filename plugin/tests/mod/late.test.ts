@@ -7,7 +7,7 @@ import type { RunGit } from "../../src/mod/late.ts";
 import { readState } from "../../src/mod/ledger.ts";
 import type { Run } from "../../src/mod/ledger.ts";
 
-const run = (over: Partial<Run>): Run => ({ ts: "2026-10-10T12:00:00Z", agent_id: "a", verdict: "pass", ...over }) as Run;
+const run = (over: Partial<Run>): Run => ({ ts: "2026-10-10T12:00:00Z", agent_id: "a", self_verdict: "pass", ...over }) as Run;
 const LOG = "\x01abc\x011791000000\x01Fix crash in a\n\na.ts\nb.ts\n\x01def\x011791000100\x01add c\n\nc.ts\n";
 
 test("parseLog reads commits with their files", () => {
@@ -26,7 +26,7 @@ test("flagLate asks git once per repo and flags only passed runs with a fix comm
   const out = await flagLate([
     run({ agent_id: "hit", repo: "/r", files: ["a.ts"] }),
     run({ agent_id: "miss", repo: "/r", files: ["c.ts"] }), // touched, but not by a fix
-    run({ agent_id: "failed", repo: "/r", files: ["a.ts"], verdict: "fail" }),
+    run({ agent_id: "failed", repo: "/r", files: ["a.ts"], self_verdict: "fail" }),
     run({ agent_id: "legacy" }), // recorded before repo/files existed
   ], base + 2 * 3600_000, 5, async (argv, cwd) => { asked.push(cwd); return log; });
   expect(asked).toEqual(["/r"]);

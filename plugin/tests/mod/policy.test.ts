@@ -8,10 +8,22 @@ const stat = (model: string, judged: number, passes: number, late_fails = 0): Bu
   ({ model, runs: judged, judged, passes, late_fails });
 const clef = (model: string) => ({ model });
 
-test("successRate smooths by one pass and two judged runs, and discounts late fails", () => {
+test("successRate smooths by one pass and two counted runs, and counts late fails as runs that did not pass", () => {
   expect(successRate(stat("haiku", 0, 0))).toBe(0.5);
   expect(successRate(stat("haiku", 8, 8))).toBe(0.9);
-  expect(successRate(stat("haiku", 8, 8, 2))).toBe(0.7);
+  expect(successRate(stat("haiku", 11, 8, 3))).toBe(9 / 13);
+});
+
+test("8 judged passes and 3 self-only late fails is 8 of 11 counted, never negative", () => {
+  const runs: PolicyRun[] = [
+    ...Array.from({ length: 8 }, () => run({ verdict: "pass", decision: small })),
+    ...Array.from({ length: 3 }, () => run({ verdict: undefined, checked_by: undefined, late_fail: true, decision: small })),
+  ];
+  const [s] = bucketStats(runs, { job: "implement", lang: "ts", size: "small" });
+  expect(s).toMatchObject({ judged: 11, passes: 8, late_fails: 3 });
+  expect(successRate(s)).toBe(9 / 13);
+  const onlyLate = bucketStats(runs.slice(8), { job: "implement", lang: "ts", size: "small" })[0];
+  expect(successRate(onlyLate)).toBe(1 / 5);
 });
 
 test("the cheapest model at or above target_pass wins once some model has min_runs judged", () => {
@@ -49,8 +61,8 @@ test("when data exists but no model reaches the target, Clef's pick stands", () 
   expect(p.source).toBe("clef");
 });
 
-test("late fails lower the rate: 9 passes with 2 late fails is 0.67, below the target", () => {
-  const p = chooseModel({ clef: clef("sonnet"), bucketStats: [stat("haiku", 10, 9, 2)], explore: 1, cfg: NO_EXPLORE });
+test("late fails lower the rate: 8 passes and 3 late fails of 11 counted is 0.69, below the target", () => {
+  const p = chooseModel({ clef: clef("sonnet"), bucketStats: [stat("haiku", 11, 8, 3)], explore: 1, cfg: NO_EXPLORE });
   expect(p.source).toBe("clef");
   expect(p.model).toBe("sonnet");
 });
@@ -98,8 +110,14 @@ test("haiku is never explored, and a pick is kept when explore_rate is 0", () =>
   expect(chooseModel({ clef: clef("sonnet"), bucketStats: [], explore: 0, cfg: NO_EXPLORE })).toMatchObject({ model: "sonnet", explored: false });
 });
 
-const run = (over: Partial<PolicyRun>): PolicyRun => ({ model: "haiku", job: "implement", lang: "ts", verdict: "pass", ...over });
+const run = (over: Partial<PolicyRun>): PolicyRun => ({ model: "haiku", job: "implement", lang: "ts", verdict: "pass", checked_by: "Rev", ...over });
 const small = { features: { size_level: "small" } };
+
+test("bucketStats leaves out a run's own self-reported verdict, which no checker has judged", () => {
+  const selfOnly: PolicyRun = { model: "haiku", job: "implement", lang: "ts", self_verdict: "pass", decision: small } as PolicyRun;
+  const [stat] = bucketStats([selfOnly, run({ verdict: "pass", decision: small })], { job: "implement", lang: "ts", size: "small" });
+  expect(stat).toMatchObject({ runs: 2, judged: 1, passes: 1 });
+});
 
 test("bucketStats counts only runs in the job, lang and size bucket, by model", () => {
   const runs: PolicyRun[] = [
@@ -114,7 +132,7 @@ test("bucketStats counts only runs in the job, lang and size bucket, by model", 
   ];
   const stats = bucketStats(runs, { job: "implement", lang: "ts", size: "small" });
   expect(stats.find((s) => s.model === "haiku")).toEqual({ model: "haiku", runs: 3, judged: 2, passes: 1, late_fails: 0 });
-  expect(stats.find((s) => s.model === "sonnet")).toEqual({ model: "sonnet", runs: 1, judged: 1, passes: 1, late_fails: 1 });
+  expect(stats.find((s) => s.model === "sonnet")).toEqual({ model: "sonnet", runs: 1, judged: 1, passes: 0, late_fails: 1 });
   expect(stats.length).toBe(2);
 });
 

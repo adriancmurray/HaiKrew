@@ -1,8 +1,8 @@
 /** Mod tests for the ledger: transcript parsing, verdicts, token counts, condensing and the summary, on inline transcript text. */
 import { expect, test } from "claude-code/testing";
 import { suggestions } from "../../src/mod/advice.ts";
-import { addRun, applyChecked, parseCheckerVerdict, byModel, combineUsage, condense, mergeRescanned, parseTranscriptText, readState, rescanRun, runFromStop,
-  summary, tokenTotals, withLiveUsage } from "../../src/mod/ledger.ts";
+import { addRun, applyChecked, applyOrHold, parseCheckerVerdict, byModel, combineUsage, condense, mergeRescanned, parseTranscriptText, readState, rescanRun, runFromStop,
+  judged, summary, tokenTotals, withLiveUsage } from "../../src/mod/ledger.ts";
 import { inferJob, jobLabel } from "../../src/mod/infer.ts";
 import type { Bucket, KeyStats, LedgerState, Run } from "../../src/mod/ledger.ts";
 import { defaults } from "../../src/schema.ts";
@@ -22,11 +22,11 @@ const TRANSCRIPT = [
 const run = (ts: string, quality: number, verdict: string): Run => ({
   ts, session: "s", agent_id: "a-" + ts, agent_type: "haiku-coder", model: "haiku", job: "build", lang: "rust",
   duration_s: 10, tokens_in: 5, tokens_out: 2, cache_read: 0, cache_write: 0, tokens_estimated: true, tool_calls: 1,
-  attempts: 1, verdict, quality,
+  attempts: 1, self_verdict: verdict, quality,
 });
 
 const finalMessage = (text: string): string => JSON.stringify({ type: "assistant", message: { content: text } });
-const verdictOf = (text: string): string => parseTranscriptText(finalMessage(text)).verdict;
+const verdictOf = (text: string): string => parseTranscriptText(finalMessage(text)).self_verdict ?? "none";
 
 test("parseTranscriptText reads fields once per message id and skips meta user lines", () => {
   const t = parseTranscriptText(TRANSCRIPT);
@@ -38,14 +38,14 @@ test("parseTranscriptText reads fields once per message id and skips meta user l
   expect(t.tool_calls).toBe(1);
   expect(t.attempts).toBe(1);
   expect(t.duration_s).toBe(9);
-  expect(t.verdict).toBe("pass");
+  expect(t.self_verdict).toBe("pass");
   expect(t.quality).toBe(1);
   expect(t.tokens_estimated).toBe(true);
 });
 
 test("parseTranscriptText reads STATUS: blocked as fail and gives unknown defaults for empty text", () => {
   const t = parseTranscriptText(finalMessage("STATUS: blocked"));
-  expect(t.verdict).toBe("fail");
+  expect(t.self_verdict).toBe("fail");
   expect(t.job).toBe("unknown");
   expect(t.quality).toBe(0);
 });
@@ -81,24 +81,24 @@ test("interrupted turns and tool results are not attempts, and a real follow-up 
     JSON.stringify({ type: "assistant", timestamp: "2026-10-08T09:00:06.000Z",
       message: { id: "m5", content: [{ type: "text", text: "VERDICT: PASS" }] } }),
   ].join("\n");
-  expect(parseTranscriptText(text)).toMatchObject({ attempts: 2, verdict: "pass", quality: 0.5, job: "fix", lang: "ts" });
+  expect(parseTranscriptText(text)).toMatchObject({ attempts: 2, self_verdict: "pass", quality: 0.5, job: "fix", lang: "ts" });
 });
 
 test("only the final assistant message with text sets the verdict", () => {
   const text = [finalMessage("VERDICT: PASS"), finalMessage("STATUS: blocked")].join("\n");
-  expect(parseTranscriptText(text).verdict).toBe("fail");
+  expect(parseTranscriptText(text).self_verdict).toBe("fail");
 });
 
 test("a report handed back through SubagentHandback sets the verdict and the final report", () => {
   const handback = JSON.stringify({ type: "assistant", message: { id: "h1", content: [
     { type: "tool_use", id: "t9", name: "SubagentHandback", input: { message: "Built it.\nSTATUS: done\nVERDICT: PASS (all three)." } }] } });
   const text = [finalMessage("Let me check the tests."), handback].join("\n");
-  expect(parseTranscriptText(text).verdict).toBe("pass");
-  expect(parseTranscriptText(text.replace("VERDICT: PASS", "VERDICT: FAIL")).verdict).toBe("fail");
+  expect(parseTranscriptText(text).self_verdict).toBe("pass");
+  expect(parseTranscriptText(text.replace("VERDICT: PASS", "VERDICT: FAIL")).self_verdict).toBe("fail");
 });
 
 test("rescanRun keeps a reviewer's verdict", () => {
-  const checked = { ...run("2026-10-08T09:00:00.000Z", 0, "fail"), checked_by: "Ada" };
+  const checked = { ...run("2026-10-08T09:00:00.000Z", 0, "fail"), verdict: "fail", checked_by: "Ada" };
   expect(rescanRun(checked, TRANSCRIPT)).toMatchObject({ verdict: "fail", quality: 0 });
 });
 
@@ -117,10 +117,10 @@ test("withLiveUsage takes live counts as final and folds cache writes into token
 test("rescanRun takes the transcript's output count only for runs not counted live", () => {
   const stored = { ...run("2026-10-08T09:00:00.000Z", 0, "none"), tokens_out: 2 };
   const rescanned = rescanRun(stored, TRANSCRIPT);
-  expect(rescanned).toMatchObject({ ts: stored.ts, agent_id: stored.agent_id, verdict: "pass", quality: 1, tokens_out: 4,
+  expect(rescanned).toMatchObject({ ts: stored.ts, agent_id: stored.agent_id, self_verdict: "pass", quality: 1, tokens_out: 4,
     tokens_estimated: true });
   const live = withLiveUsage(stored, { input: 1, cacheWrite: 0, cacheRead: 0, output: 9 });
-  expect(rescanRun(live, TRANSCRIPT)).toMatchObject({ verdict: "pass", quality: 1, tokens_out: 9, tokens_estimated: false });
+  expect(rescanRun(live, TRANSCRIPT)).toMatchObject({ self_verdict: "pass", quality: 1, tokens_out: 9, tokens_estimated: false });
 });
 
 test("combineUsage takes the live counts when the transcript saw no more input than they did", () => {
@@ -175,11 +175,28 @@ test("condense keeps the newest raw_limit runs and folds older ones by month, th
 test("summary merges runs and buckets per model, job and lang, newest run first", () => {
   const settings: Settings = { ...defaults(), ledger: { ...defaults().ledger, raw_limit: 1 } };
   const state = [run("2026-10-01T00:00:00Z", 1, "pass"), run("2026-10-02T00:00:00Z", 0, "fail")]
+    .map((r) => ({ ...r, verdict: r.self_verdict, checked_by: "Rev" }))
     .reduce((s, r) => addRun(s, r, settings), { runs: [], buckets: [] } as LedgerState);
   const out = summary(state);
   expect(out.recent.map((r) => r.ts)).toEqual(["2026-10-02T00:00:00Z"]);
   expect(out.by_key).toEqual([expect.objectContaining({ model: "haiku", job: "build", lang: "rust", n: 2, judged: 2,
     quality_mean: 0.5, pass_rate: 0.5 })]);
+});
+
+test("a run's own VERDICT: PASS is a self_verdict that judged() ignores until a checker passes it", () => {
+  const own = run("2026-10-08T09:00:00.000Z", 1, "pass");
+  expect(own.self_verdict).toBe("pass");
+  expect(judged(own)).toBe(null);
+  const checked = applyChecked({ runs: [own], buckets: [] }, { agentId: own.agent_id }, "pass", "Rev").runs[0];
+  expect(judged(checked as Run)).toBe("pass");
+  expect(checked).toMatchObject({ self_verdict: "pass", verdict: "pass", checked_by: "Rev" });
+});
+
+test("summary's pass rate counts checked runs only, so a self-reported pass is not a judged one", () => {
+  const selfOnly = run("2026-10-08T09:00:00.000Z", 1, "pass");
+  const checked = { ...run("2026-10-08T10:00:00.000Z", 0, "fail"), verdict: "fail", checked_by: "Rev" };
+  const out = summary({ runs: [selfOnly, checked], buckets: [] });
+  expect(out.by_key).toEqual([expect.objectContaining({ n: 2, judged: 1, pass_rate: 0 })]);
 });
 
 test("addRun replaces an earlier record for the same agent", () => {
@@ -254,7 +271,7 @@ test("readState reads an old stored run with verdict blocked as fail, and fills 
   const oldBucket = { period: "2026-09", model: "claude-haiku-5-5", agent_type: "haiku-coder", job: "build", lang: "rust",
     n: 4, sum_quality: 1, sumsq_quality: 1, sum_tokens_in: 9, sum_tokens_out: 9, sum_duration: 9, passes: 1 };
   const state = readState({ runs: [oldRun], buckets: [oldBucket] });
-  expect(state.runs[0]).toMatchObject({ verdict: "fail", cache_write: 0, tokens_estimated: true });
+  expect(state.runs[0]).toMatchObject({ verdict: "fail", self_verdict: "fail", cache_write: 0, tokens_estimated: true });
   // Folded before fails were counted: its runs read as unjudged, so its one pass does not become a 100% pass rate.
   expect(state.buckets[0]).toMatchObject({ n: 4, passes: 0, fails: 0, sum_cache_read: 0 });
   expect(readState("not a ledger")).toEqual({ runs: [], buckets: [] });
@@ -363,4 +380,45 @@ test("applyChecked sets the newest matching run's verdict, quality and checker",
   expect(applyChecked(out, { name: "Ada" }, "fail", "Rev").runs[1]).toMatchObject({ verdict: "fail", quality: 0 });
   expect(applyChecked(state, { name: "Nobody" }, "pass", "Rev")).toEqual(state);
   expect(applyChecked(state, { agentId: c.agent_id }, "fail", "Rev").runs[2]).toMatchObject({ verdict: "fail" });
+});
+
+test("a resumed agent's record keeps its name, counts the resume, keeps the first checker verdict, and a later PASS applies", () => {
+  const settings = defaults() as never;
+  const base = { ts: "2026-10-08T00:00:00Z", session: "s", agent_type: "haiku-coder", model: "haiku", job: "build",
+    lang: "ts", duration_s: 0, tokens_in: 0, tokens_out: 0, cache_read: 0, tool_calls: 0, attempts: 1, verdict: "none", quality: 0 };
+  let state = addRun({ runs: [], buckets: [] }, { ...base, agent_id: "a1", name: "Ada Readmelace" } as never, settings);
+  state = applyChecked(state, { agentId: "a1" }, "fail", "Rev");
+  state = addRun(state, { ...base, ts: "2026-10-08T01:00:00Z", agent_id: "a1", name: "Wolfgang Amadebug", verdict: "pass", quality: 1 } as never, settings);
+  expect(state.runs).toHaveLength(1);
+  expect(state.runs[0]).toMatchObject({ name: "Ada Readmelace", resumes: 1, first_checked: { verdict: "fail", checked_by: "Rev" } });
+  expect(state.runs[0].checked_by).toBeUndefined();
+  state = addRun(state, { ...base, ts: "2026-10-08T02:00:00Z", agent_id: "a1", name: "Wolfgang Amadebug", verdict: "pass", quality: 1 } as never, settings);
+  expect(state.runs[0]).toMatchObject({ resumes: 2, first_checked: { verdict: "fail", checked_by: "Rev" } });
+  state = applyOrHold(state, { name: "Ada Readmelace", verdict: "pass", checker: "Rev2" }, new Date());
+  expect(state.runs[0]).toMatchObject({ name: "Ada Readmelace", verdict: "pass", checked_by: "Rev2", first_checked: { verdict: "fail" } });
+});
+
+test("a repeated stop of the same transcript keeps the resume count, and a real resume adds one", () => {
+  const settings = defaults() as never;
+  const base = { ts: "2026-10-08T00:00:00Z", session: "s", agent_type: "haiku-coder", model: "haiku", job: "build",
+    lang: "ts", duration_s: 0, tokens_in: 0, tokens_out: 0, cache_read: 0, tool_calls: 0, attempts: 1, verdict: "none", quality: 0 };
+  let state = addRun({ runs: [], buckets: [] }, { ...base, agent_id: "a2", name: "Ada Readmelace" } as never, settings);
+  state = addRun(state, { ...base, agent_id: "a2", name: "Ada Readmelace" } as never, settings);
+  expect(state.runs[0].resumes).toBeUndefined();
+  state = addRun(state, { ...base, ts: "2026-10-08T01:00:00Z", agent_id: "a2", name: "Wolfgang Amadebug" } as never, settings);
+  expect(state.runs[0]).toMatchObject({ name: "Ada Readmelace", resumes: 1 });
+  state = addRun(state, { ...base, ts: "2026-10-08T01:00:00Z", agent_id: "a2", name: "Wolfgang Amadebug" } as never, settings);
+  expect(state.runs[0]).toMatchObject({ resumes: 1 });
+});
+
+test("a duplicate stop keeps the checker's verdict on the row it repeats", () => {
+  const settings = defaults() as never;
+  const base = { ts: "2026-10-08T00:00:00Z", session: "s", agent_type: "haiku-coder", model: "haiku", job: "build",
+    lang: "ts", duration_s: 0, tokens_in: 0, tokens_out: 0, cache_read: 0, tool_calls: 0, attempts: 1, verdict: "none", quality: 0 };
+  let state = addRun({ runs: [], buckets: [] }, { ...base, agent_id: "a3", name: "Ada Readmelace" } as never, settings);
+  state = applyChecked(state, { agentId: "a3" }, "pass", "Rev");
+  state = addRun(state, { ...base, agent_id: "a3", name: "Ada Readmelace", verdict: "fail" } as never, settings);
+  expect(state.runs[0]).toMatchObject({ verdict: "pass", checked_by: "Rev", name: "Ada Readmelace" });
+  expect(state.runs[0].resumes).toBeUndefined();
+  expect(state.runs[0].first_checked).toBeUndefined();
 });

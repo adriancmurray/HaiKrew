@@ -6,7 +6,7 @@ import type { AnalyzeIo, StoreFile } from "../../src/analyze.ts";
 const run = (verdict: string, model = "claude-haiku-5-5", extra: Record<string, unknown> = {}) => ({
   ts: "2026-10-08T09:00:00Z", session: "s", agent_id: "", agent_type: "haiku-coder", model, job: "implement", lang: "rust",
   duration_s: 10, tokens_in: 100, tokens_out: 50, cache_read: 0, cache_write: 0, tokens_estimated: true, tool_calls: 1,
-  attempts: 1, verdict, quality: verdict === "pass" ? 1 : 0, ...extra,
+  attempts: 1, verdict, checked_by: "Rev", quality: verdict === "pass" ? 1 : 0, ...extra,
 });
 
 /** A store file's parsed JSON with a ledger of `runs`; the default model is Sonnet, so a Haiku-passing bucket is a proposal. */

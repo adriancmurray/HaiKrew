@@ -4,6 +4,7 @@
  * confident pick stands, and otherwise the gate's default is kept. A choice above Haiku is sometimes run one model cheaper
  * instead, so the ledger learns what that model can do. Pure: the exploration draw is an input.
  */
+import { judged } from "./ledger.ts";
 
 /** The models, cheapest first. */
 const MODELS = ["haiku", "sonnet", "opus"];
@@ -14,12 +15,15 @@ const CLEF_EXPLORE_MIN_PROB = 0.25;
 /** Where the chosen model came from: the ledger's record of the bucket, the decider's confident pick, or the gate's default. */
 export type PickSource = "data" | "clef" | "default";
 
-/** A model's record in one bucket. `late_fails` counts passes that were later found to be failures. */
+/**
+ * A model's record in one bucket. `judged` counts the runs a rate is over: those a checker judged, and any run later
+ * found to be a failure. `passes` are the judged passes not later found to be failures; `late_fails` counts the runs found late.
+ */
 export type BucketStat = { model: string; runs: number; judged: number; passes: number; late_fails: number };
 
 /** The fields of a ledger run the policy reads. Every ledger run has them. */
 export type PolicyRun = {
-  model: string; job: string; lang: string; verdict: string; late_fail?: boolean;
+  model: string; job: string; lang: string; verdict?: string; checked_by?: string; late_fail?: boolean;
   decision?: { features?: { size_level?: string } };
 };
 
@@ -35,9 +39,9 @@ export type PolicyPick = { model: string | null; source: PickSource; explored: b
 /** `clef` is the decider's answer: its model is set only when the answer was confident, and `probs` are its model probabilities. */
 export type PolicyInput = { clef: { model?: string; probs?: Record<string, number> } | null; bucketStats: BucketStat[]; explore: number; cfg: PolicyCfg };
 
-/** The smoothed success rate of a model in a bucket: (passes - late_fails + 1) / (judged + 2). */
+/** The smoothed success rate of a model in a bucket: (passes + 1) / (judged + 2), where judged counts the late fails too. */
 export function successRate(s: BucketStat): number {
-  return (s.passes - s.late_fails + 1) / (s.judged + 2);
+  return (s.passes + 1) / (s.judged + 2);
 }
 
 /** The next cheaper model, or null for haiku and for a model the policy does not know. */
@@ -92,8 +96,10 @@ export function bucketStats(runs: PolicyRun[], bucket: Bucket): BucketStat[] {
     if (r.job !== bucket.job || r.lang !== bucket.lang || (r.decision?.features?.size_level || "?") !== bucket.size) continue;
     const s = byModel.get(r.model) ?? { model: r.model, runs: 0, judged: 0, passes: 0, late_fails: 0 };
     s.runs += 1;
-    if (r.verdict === "pass" || r.verdict === "fail") s.judged += 1;
-    if (r.verdict === "pass") s.passes += 1;
+    const verdict = judged(r);
+    const isJudged = verdict === "pass" || verdict === "fail";
+    if (isJudged || r.late_fail) s.judged += 1;
+    if (verdict === "pass" && !r.late_fail) s.passes += 1;
     if (r.late_fail) s.late_fails += 1;
     byModel.set(r.model, s);
   }

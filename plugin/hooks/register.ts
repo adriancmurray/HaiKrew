@@ -176,7 +176,7 @@ export function register(on) {
     } catch {
       // A review note never blocks a subagent from finishing either.
     }
-    noteStop(String(e.agent_id ?? ""), String(e.agent_type ?? ""), run?.verdict ?? null, Date.now(), run?.model ?? "");
+    noteStop(String(e.agent_id ?? ""), String(e.agent_type ?? ""), run?.self_verdict ?? null, Date.now(), run?.model ?? "");
     $.ui.invalidate("ui.render"); // crew changed: the band and pane redraw
     const seam = noteSeamStop(String(e.agent_id ?? ""));
     if (seam) {
@@ -326,7 +326,7 @@ async function recordStop($: Api, e: Record<string, unknown>): Promise<StopRun |
   await ledgerLock(async () => {
     await $.store.set("ledger", addRun(readState(await $.store.get("ledger")), entry, cfg));
   });
-  return { verdict: run.verdict, model: run.model, job: run.job, lang: run.lang, report: finalReport(transcript) };
+  return { self_verdict: run.self_verdict ?? "none", model: run.model, job: run.job, lang: run.lang, report: finalReport(transcript) };
 }
 
 /**
@@ -406,7 +406,7 @@ function toolsOn(cfg: unknown): boolean {
   return (cfg as { agents?: { control?: string } }).agents?.control === "change";
 }
 
-type StopRun = { verdict: string; model: string; job: string; lang: string; report: string };
+type StopRun = { self_verdict: string; model: string; job: string; lang: string; report: string };
 
 function asRecord(v: unknown): Record<string, string> {
   return typeof v === "object" && v !== null && !Array.isArray(v) ? { ...(v as Record<string, string>) } : {};

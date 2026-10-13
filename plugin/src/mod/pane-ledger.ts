@@ -6,7 +6,7 @@
 import type { Settings } from "../schema.ts";
 import { suggestions } from "./advice.ts";
 import type { Suggestion } from "./advice.ts";
-import { byModel, summary } from "./ledger.ts";
+import { byModel, judged, summary } from "./ledger.ts";
 import type { KeyStats, LedgerState, ModelStats, Run } from "./ledger.ts";
 import { jobLabel } from "./infer.ts";
 import { ruleSentence } from "./rules.ts";
@@ -162,8 +162,13 @@ function verdictMark(verdict: string): [string, string] {
   return ["·", C.muted];
 }
 
+/** A run's verdict as the pane shows it: the checker's when one judged it, else the run's own, marked self-reported. */
+function verdictLabel(r: Run): string {
+  return judged(r) ?? `${r.self_verdict ?? "none"} (self-reported)`;
+}
+
 function runRow(ui: Ui, r: Run, cols: number): unknown {
-  const [mark, color] = verdictMark(r.verdict);
+  const [mark, color] = verdictMark(judged(r) ?? r.self_verdict ?? "none");
   const when = r.ts.slice(5, 16).replace("T", " ");
   const what = `${jobLabel(r.job)}/${r.lang}`;
   const tail = `${duration(r.duration_s)} · ${lowerBound(r.tokens_estimated)}${compact(r.tokens_in + r.tokens_out)} tok`;
@@ -172,7 +177,7 @@ function runRow(ui: Ui, r: Run, cols: number): unknown {
     txt(ui, { dimColor: true }, when),
     txt(ui, { color: modelColor(r.model) }, fit(modelName(r.model), 10)),
     txt(ui, { wrap: "truncate-end" }, fit(what, Math.max(8, cols - 48))),
-    txt(ui, { dimColor: true }, `${r.verdict} · ${tail}`),
+    txt(ui, { dimColor: true }, `${verdictLabel(r)} · ${tail}`),
   ]);
 }
 
@@ -208,9 +213,9 @@ function runTable(runs: Run[], width: number, ink: Ink, style: TimeStyle): strin
     { label: "", share: 5 }, { label: "When", share: 18 }, { label: "Model", share: 22 }, { label: "Job / lang", share: 29 },
     { label: "Time", share: 12, end: true }, { label: "Tokens", share: 14, end: true },
   ], runs.map((r): Cell[] => {
-    const [mark, color] = verdictMark(r.verdict);
+    const [mark, color] = verdictMark(judged(r) ?? r.self_verdict ?? "none");
     return [{ text: mark, bold: true, color: hexOf(color) }, { text: when(r.ts, now, style), muted: true },
       { dot: modelColor(r.model), text: modelName(r.model) }, { text: `${jobLabel(r.job)} / ${r.lang}` },
       { text: duration(r.duration_s), muted: true }, { text: lowerBound(r.tokens_estimated) + compact(r.tokens_in + r.tokens_out), muted: true }];
-  }), width, runs.map((r) => `${r.agent_type || "agent"}: ${r.verdict}, ${r.tool_calls} tool calls, ${r.attempts} attempts`), ink);
+  }), width, runs.map((r) => `${r.agent_type || "agent"}: ${verdictLabel(r)}, ${r.tool_calls} tool calls, ${r.attempts} attempts`), ink);
 }

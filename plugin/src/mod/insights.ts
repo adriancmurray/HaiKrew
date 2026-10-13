@@ -5,6 +5,7 @@
  */
 import type { Settings } from "../schema.ts";
 import { modelFamily } from "./crew.ts";
+import { judged } from "./ledger.ts";
 import type { Run } from "./ledger.ts";
 import { checkerCatch, lateFailed, MODEL_ORDER, outcomeStats, rankOf } from "./outcomes.ts";
 import type { CatchRow, OutcomeRow } from "./outcomes.ts";
@@ -63,13 +64,13 @@ function calibrate(runs: Run[]): Calibration {
   for (const run of runs) {
     const picked = modelFamily(run.decision?.model ?? "");
     const ran = modelFamily(run.model);
-    const judged = run.verdict === "pass" || run.verdict === "fail";
-    if (picked === "unknown" || !judged) continue;
+    const verdict = judged(run);
+    if (picked === "unknown" || verdict === null) continue;
     out.judged += 1;
     // A pick of a bigger model than the one that ran; the smaller one passing means the pick was too big.
-    if (rankOf(ran) >= 0 && rankOf(picked) > rankOf(ran) && run.verdict === "pass") out.over += 1;
+    if (rankOf(ran) >= 0 && rankOf(picked) > rankOf(ran) && verdict === "pass") out.over += 1;
     // Haiku was picked and ran, and it failed or failed late. The pick and the run agree here, so this does not need them to differ.
-    if (picked === "haiku" && ran === "haiku" && (run.verdict === "fail" || lateFailed(run))) out.under += 1;
+    if (picked === "haiku" && ran === "haiku" && (verdict === "fail" || lateFailed(run))) out.under += 1;
   }
   return out;
 }

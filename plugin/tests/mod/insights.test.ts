@@ -9,7 +9,7 @@ const run = (over: Partial<Run> & { picked?: string }): Run => {
   const base: Run = {
     ts: "2026-10-08T09:00:00Z", session: "s", agent_id: "", agent_type: "haiku-coder", model: "claude-haiku-5-5", job: "implement",
     lang: "rust", duration_s: 10, tokens_in: 100, tokens_out: 50, cache_read: 0, cache_write: 0, tokens_estimated: true,
-    tool_calls: 1, attempts: 1, verdict: "pass", quality: 1, ...fields,
+    tool_calls: 1, attempts: 1, verdict: "pass", checked_by: "Rev", quality: 1, ...fields,
   };
   return picked === undefined ? base : { ...base, decision: { model: picked } as unknown as Run["decision"] } as Run;
 };

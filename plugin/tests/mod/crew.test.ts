@@ -113,3 +113,12 @@ test("a finished subagent that shows activity again is working again, whether by
   noteTokens("r1", { input_tokens: 5, output_tokens: 1 }, 0, 4000);
   expect(snapshot([], 4500).rows[0]).toMatchObject({ state: "working" });
 });
+
+test("a finished agent dropped from the roster keeps its name when SendMessage resumes it", () => {
+  resetCrew();
+  noteSpawn({ subagentType: "haiku-coder", prompt: "HAIKREW job=implement name=Ada_Readmelace\nedit" }, { model: "haiku", agentId: "ada1" }, 0);
+  noteStop("ada1", "haiku-coder", "pass", 1000);
+  expect(snapshot([], 1000 + 60_001).rows.find((r) => r.id === "ada1")).toBeUndefined();
+  noteToolCall({ agentId: "ada1", tool: "Edit", file_path: "/repo/a.ts" }, 200_000);
+  expect(snapshot([], 200_100).rows.find((r) => r.id === "ada1")).toMatchObject({ name: "Ada Readmelace" });
+});

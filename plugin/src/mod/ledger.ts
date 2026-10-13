@@ -2,9 +2,11 @@
  * Agent ledger for the mod: one run per finished subagent, folded into monthly and yearly buckets as it ages.
  * State is {runs, buckets} kept in $.store under "ledger". Every field is computed from the transcript, never
  * judged by a model: job and lang come from a `HAIKREW job=<word> lang=<word>` first line, quality is 1/attempts
- * on pass and 0 otherwise. Verdict is whichever of `VERDICT: PASS|FAIL` and `STATUS: done|blocked` comes last in
- * the final message: PASS and done are "pass", FAIL and blocked are "fail", and "none" when neither appears.
- * Only judged runs (pass or fail) count toward pass rates.
+ * on pass and 0 otherwise. A run's own verdict is whichever of `VERDICT: PASS|FAIL` and `STATUS: done|blocked` comes
+ * last in its final message: PASS and done are "pass", FAIL and blocked are "fail", and "none" when neither appears.
+ * That self_verdict is a self-report. `verdict` is set only by a checker or reviewer (applyChecked, which also sets
+ * checked_by), so a run is judged only when checked_by is set; judged(run) is the one reader of that. Only judged runs
+ * (pass or fail) count toward pass rates, track records and routing.
  */
 import type { Settings } from "../schema.ts";
 import { isObject } from "./api.ts";
@@ -35,7 +37,10 @@ export type Run = {
   tokens_estimated: boolean;
   tool_calls: number;
   attempts: number;
-  verdict: string;
+  /** The run's own verdict from its final message: "pass", "fail" or "none". A self-report, not a judgement. */
+  self_verdict?: string;
+  /** A checker's or reviewer's verdict; set only with checked_by. Read it through judged(). */
+  verdict?: string;
   quality: number;
   /** The crew display name, set at stop. */
   name?: string;
@@ -47,6 +52,10 @@ export type Run = {
   checker_defects?: number;
   /** On a light run whose checker was skipped by review.checker_skip_after. */
   checker_skipped?: boolean;
+  /** How many times the agent was resumed (SendMessage) and its record replaced; the name is kept across them. */
+  resumes?: number;
+  /** The checker verdict the run had before a resume replaced it; kept from the first resume on. */
+  first_checked?: { verdict: string; checked_by: string };
   /** What the decider said about this launch, when it was asked. Folded away with the run by condense(). */
   decision?: DecisionRecord;
 } & LateFields;
@@ -213,7 +222,7 @@ export function parseTranscriptText(text: string): Transcript {
     tool_calls: s.tools.size,
     attempts,
     duration_s: hi !== null && lo !== null ? (hi - lo) / 1000 : 0,
-    verdict: result,
+    self_verdict: result,
     quality: result === "pass" ? 1 / Math.max(attempts, 1) : 0,
     ended: hi !== null ? iso(hi) : null,
     prompt: first,
@@ -249,9 +258,18 @@ function fromRun(run: Run): Bucket {
     n: 1, sum_quality: run.quality, sumsq_quality: run.quality * run.quality,
     sum_tokens_in: run.tokens_in, sum_tokens_out: run.tokens_out, sum_duration: run.duration_s,
     sum_cache_read: run.cache_read,
-    passes: run.verdict === "pass" ? 1 : 0,
-    fails: run.verdict === "fail" ? 1 : 0,
+    passes: judged(run) === "pass" ? 1 : 0,
+    fails: judged(run) === "fail" ? 1 : 0,
   };
+}
+
+/**
+ * The verdict a checker or reviewer gave this run ("pass" or "fail"), or null when none did. A run's own final message
+ * is only its self_verdict, so pass rates, track records and routing read this. A run that has a verdict but no
+ * checked_by was recorded before self-reports were kept apart, and counts as unjudged.
+ */
+export function judged(run: Pick<Run, "verdict" | "checked_by">): string | null {
+  return run.checked_by ? (run.verdict ?? null) : null;
 }
 
 /** 'YYYY-MM' of the month `months` before `now` (UTC). */
@@ -260,12 +278,50 @@ function monthsBefore(now: Date, months: number): string {
   return String(Math.floor(idx / 12)).padStart(4, "0") + "-" + String((idx % 12) + 1).padStart(2, "0");
 }
 
+/** The checker's fields on a stored row: its verdict and quality as the checker set them, who checked it, its defects. */
+function checkerFields(row: Run): Partial<Run> {
+  if (!row.checked_by) return {};
+  return {
+    verdict: row.verdict,
+    quality: row.quality,
+    checked_by: row.checked_by,
+    ...(row.checker_defects === undefined ? {} : { checker_defects: row.checker_defects }),
+  };
+}
+
+/**
+ * The record that replaces `old` for the same agent. A repeated stop of the same transcript (same end time) keeps the
+ * stored row's checker fields and resume count. A real resume takes `run` with the old display name, the resume count
+ * raised by one, and the old checker verdict kept as first_checked; its own checker fields start fresh.
+ */
+function resumed(old: Run, run: Run): Run {
+  if (run.ts === old.ts) {
+    return {
+      ...run,
+      ...checkerFields(old),
+      name: old.name ?? run.name,
+      ...(old.resumes === undefined ? {} : { resumes: old.resumes }),
+      ...(old.first_checked ? { first_checked: old.first_checked } : {}),
+    };
+  }
+  const firstChecked = old.first_checked ?? (old.checked_by ? { verdict: old.verdict ?? "none", checked_by: old.checked_by } : undefined);
+  return {
+    ...run,
+    name: old.name ?? run.name,
+    resumes: (old.resumes ?? 0) + 1,
+    ...(firstChecked ? { first_checked: firstChecked } : {}),
+  };
+}
+
 /** Append one run, then condense(). */
 export function addRun(state: LedgerState, run: Run, settings: Settings): LedgerState {
-  // Claude Code can fire SubagentStop more than once for one agent; the later record replaces the earlier one.
+  // Claude Code can fire SubagentStop more than once for one agent, and SendMessage resumes a finished one; the later
+  // record replaces the earlier one.
+  const old = run.agent_id ? state.runs.find((r) => r.agent_id === run.agent_id) : undefined;
   const runs = run.agent_id ? state.runs.filter((r) => r.agent_id !== run.agent_id) : state.runs;
   const pending = prunePending(state.pending ?? [], new Date());
-  return condense(applyHeld({ runs: [...runs, run], buckets: state.buckets, pending }), settings);
+  const next = old ? resumed(old, run) : run;
+  return condense(applyHeld({ runs: [...runs, next], buckets: state.buckets, pending }), settings);
 }
 
 /** Keep the newest ledger.raw_limit runs. Fold older runs into monthly buckets, and monthly buckets older than
@@ -426,8 +482,11 @@ export function readState(value: unknown): LedgerState {
 
 /** A stored run with cache writes 0 and tokens estimated when absent, and the retired "blocked" verdict as "fail". */
 function storedRun(r: Run): Run {
+  // Before self_verdict, a run's own verdict was stored as verdict. A checked run's own verdict was overwritten, so "none".
+  const own = r.self_verdict ?? (r.checked_by ? "none" : r.verdict ?? "none");
   return {
     ...r,
+    self_verdict: own === "blocked" ? "fail" : own,
     cache_write: r.cache_write ?? 0,
     tokens_estimated: r.tokens_estimated ?? true,
     verdict: r.verdict === "blocked" ? "fail" : r.verdict,
@@ -487,7 +546,7 @@ export function rescanRun(run: Run, transcript: string): Run {
   return {
     ...run,
     // A reviewer's verdict (checked_by) outranks the agent's own.
-    ...(run.checked_by ? {} : { verdict: t.verdict, quality: t.quality }),
+    ...(run.checked_by ? {} : { self_verdict: t.self_verdict, quality: t.quality }),
     attempts: t.attempts,
     // A live-counted run keeps all its token counts; only a transcript-counted one takes the re-read ones.
     ...(live ? {} : { tokens_in: t.tokens_in, cache_write: t.cache_write, cache_read: t.cache_read, tokens_out: t.tokens_out }),

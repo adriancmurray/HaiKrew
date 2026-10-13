@@ -1,4 +1,14 @@
-HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gate), adds squeeze and read guards on tool calls, keeps a ledger of agent runs, and shows the crew in a `/haikrew` pane. Release 0.1.0 introduced the gate, guards, ledger, pane, the haiku-coder and haiku-scout agents and the crew-overseer skill. Releases 0.4.0 to 0.5.5 added per-task model rules, rule effort and selectors, checks, ledger suggestions and a packaging change. Releases 0.6.0 to 0.6.5 redesigned the `/haikrew` pane and the band above the prompt, made the crew the default route for spec-able work, gave subagents names, set token warnings per model and added review tiers. The newest release covered here is 0.6.9, dated 2026-10-12.
+HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gate), adds squeeze and read guards on tool calls, keeps a ledger of agent runs, and shows the crew in a `/haikrew` pane. Release 0.1.0 introduced the gate, guards, ledger, pane, the haiku-coder and haiku-scout agents and the crew-overseer skill. Releases 0.4.0 to 0.5.5 added per-task model rules, rule effort and selectors, checks, ledger suggestions and a packaging change. Releases 0.6.0 to 0.6.5 redesigned the `/haikrew` pane and the band above the prompt, made the crew the default route for spec-able work, gave subagents names, set token warnings per model and added review tiers. The newest release covered here is 0.6.10, dated 2026-10-12.
+
+## 0.6.10 — 2026-10-12
+
+- Names survive resumes: an agent sent a follow-up message after it finished keeps its crew name (agent id to name map, up to 200). Before, it got a new name, so reviewer verdicts naming it matched nothing.
+- Run rows count `resumes` (only when there is new work; a repeated stop event does not count) and keep `first_checked`, the first checker verdict, so "failed review, fixed, passed" is recorded.
+- A repeated stop event no longer wipes a checker's verdict.
+- Self-reported verdicts no longer count: an agent's own "VERDICT: PASS" is stored as `self_verdict`. Only a checker or reviewer sets `verdict`. Pass rates, track records, routing and insights use checked verdicts only. Older rows without a checker count as unchecked, so insights may show fewer judged runs and lower pass rates.
+- Routing pass rate: a late failure counts as a judged failure (the old formula subtracted late failures from passes without counting them as runs, so a run a checker failed that later also failed late could push the rate below zero; unchecked runs were counted as passes).
+- The ledger pane labels unchecked verdicts "(self-reported)".
+- Late-failure detection still considers runs with only a self-reported pass.
 
 ## 0.6.9 — 2026-10-12
 
@@ -9,6 +19,7 @@ HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gat
 - Decider: decision records always carry size, spec clarity, terminal-heavy and has-tests. An unanswered feature is null (unknown), not false. Bare boolean answers are read.
 - Ledger: a checker or reviewer verdict that arrives before the run it checks is held (24 hours, at most 50 held) and applied, with its defect counts, when that run is recorded. Before, it was dropped.
 - `node_modules/` is gitignored.
+- Policy: an unknown task size (`""` or null) is treated as `?`.
 
 ## 0.6.8 — 2026-10-12
 

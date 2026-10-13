@@ -157,7 +157,7 @@ test("readDecision reads the task features; a features-only answer is usable and
 /** `n` runs with the same verdict, in one bucket: implement, ts, size small by default. */
 const repeat = (verdict: string, n: number): string[] => Array.from({ length: n }, () => verdict);
 const runsOf = (model: string, verdicts: string[], size = "small"): PolicyRun[] =>
-  verdicts.map((verdict) => ({ model, job: "implement", lang: "ts", verdict, decision: { features: { size_level: size } } }));
+  verdicts.map((verdict) => ({ model, job: "implement", lang: "ts", verdict, checked_by: "Rev", decision: { features: { size_level: size } } }));
 const SIZED = { ...SONNET, size: { level: 1, confidence: 0.9 } };
 const IMPLEMENT = { subagentType: "general", prompt: "HAIKREW job=implement lang=ts x" };
 const TAG = { job: "implement", lang: "ts" };
