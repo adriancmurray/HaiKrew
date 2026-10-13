@@ -2,13 +2,15 @@
  * Argument dispatch for bin/haikrew.mjs. Each subcommand calls one module function.
  * Hooks, the ledger and the panel run inside the Claude Code mod (hooks/register.ts), not here.
  */
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import type { AnalyzeIo } from "./analyze.ts";
 import { defaults, validate } from "./schema.ts";
 import { listMarkdown, splitLines } from "./squeeze.ts";
 
 const USAGE = "usage: haikrew squeeze [--max-lines N] [--wrap PREFIX] -- <cmd...> | verify | " +
-  "patterns check [--dir PATH] [--max-files N] [--max-lines N]";
+  "patterns check [--dir PATH] [--max-files N] [--max-lines N] | analyze [--store PATH]";
 /** The `patterns check` caps when no flag overrides them. */
 const PATTERNS_MAX_FILES = 20;
 const PATTERNS_MAX_LINES = 40;
@@ -28,6 +30,12 @@ export async function main(argv: string[]): Promise<number> {
     return verify(process.cwd());
   }
   if (cmd === "patterns" && rest[0] === "check") return patternsCheck(rest.slice(1));
+  if (cmd === "analyze") {
+    const flags = parseFlags(rest, { store: "" });
+    if (!flags) return badArgs("analyze");
+    const { analyze } = await import("./analyze.ts");
+    return analyze(flags.store as string, storeIo());
+  }
   return usage();
 }
 
@@ -103,6 +111,29 @@ function parseFlags(rest: string[], fallbacks: Record<string, number | string>):
     }
   }
   return out;
+}
+
+/** The real store folder, file reads and output for `analyze`: a folder that cannot be read has no files. */
+function storeIo(): AnalyzeIo {
+  const dir = join(homedir(), ".claude", "plugins", "store");
+  return {
+    stores: () => {
+      try {
+        return readdirSync(dir).map((name) => ({ path: join(dir, name), mtime: statSync(join(dir, name)).mtimeMs }));
+      } catch {
+        return [];
+      }
+    },
+    read: (path) => {
+      try {
+        return readFileSync(path, "utf8");
+      } catch {
+        return null;
+      }
+    },
+    out: (text) => process.stdout.write(text),
+    err: (text) => process.stderr.write(text),
+  };
 }
 
 function badArgs(sub: string): number {

@@ -13,6 +13,7 @@ import type { BandScene } from "./band/scene.ts";
 import { tokenTotals } from "./ledger.ts";
 import type { LedgerState } from "./ledger.ts";
 import { crewTab } from "./pane-crew.ts";
+import { insightsSection } from "./pane-insights.ts";
 import { recordSection } from "./pane-ledger.ts";
 import { settingsSection } from "./pane-settings.ts";
 import { tokensTab } from "./pane-tokens.ts";
@@ -54,6 +55,7 @@ export function desktopView(ui: Ui, act: Actions, data: HomeData, gate: unknown,
       crewCard(ui, act, frame, data.crew, data.messages, Boolean(data.settings.gate.allow_opus), colours),
       tokenCard(ui, act, frame, data.usage, data.ledger, data.crew, inner, ink, data.settings.pane.time_style as TimeStyle, colours),
       recordSection(ui, act, frame, data.ledger, data.settings, inner, ink),
+      insightsSection(ui, act, frame, data.ledger, data.settings),
       settingsSection(ui, act, frame, data.settings, cols - 4),
     ]),
   ]);

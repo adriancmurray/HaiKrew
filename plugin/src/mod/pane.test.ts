@@ -316,3 +316,22 @@ test("a failed Haiku agent offers a retry on Sonnet that asks the main conversat
   expect(asked[0]).toContain("haiku-coder");
   expect(await drawnText(m)).toContain("Asked Claude to run it again on Sonnet.");
 });
+
+test("the desktop's Insights card suggests a routing rule, and its Add rule button puts it in the gate's rules", async (ctx: any, on: any) => {
+  const h = host(on);
+  const run = (verdict: string) => ({ ts: "2026-10-12T14:02:00Z", session: "s", agent_id: "", agent_type: "haiku-coder",
+    model: "claude-haiku-5-5", job: "implement", lang: "rust", duration_s: 72, tokens_in: 900, tokens_out: 100, cache_read: 0,
+    tool_calls: 3, attempts: 1, verdict, quality: verdict === "pass" ? 1 : 0, tokens_estimated: true });
+  h.store.set("ledger", { runs: [...Array.from({ length: 8 }, () => run("pass")), run("fail")], buckets: [] });
+  h.store.set("settings", { gate: { default_model: "sonnet" } });
+  await ctx.command.run({ command: "haikrew" });
+  const m = await ctx.ui.mount({ plugin: "haikrew", surface: "desktop", component: "Pane", props: { bodyColumns: 49, scroll: { offset: 0, bodyRows: 41 } },
+    requestId: "haikrew", viewport: { columns: 70, rows: 47 } });
+  const page = await drawnText(m);
+  expect(page).toContain("Insights");
+  expect(page).toContain("Suggested rules");
+  expect(page).toContain("When job is implement and language is rust → Haiku");
+  expect(page).toContain("haiku passed 8 of 9 judged runs");
+  await m.press({ key: "insight-rule-0" });
+  expect((h.store.get("settings") as { gate: { rules: string[] } }).gate.rules[0]).toBe("job:implement+lang:rust=haiku");
+});
