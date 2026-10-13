@@ -35,8 +35,10 @@ type Member = {
   usage: LiveUsage;
   /** Whether it has passed the per-agent token warning. */
   over: boolean;
-  /** Files its Edit, Write and NotebookEdit calls changed, and an estimate of the lines it wrote. */
+  /** Files its calls changed: the edit tool's (editPaths) and the shell's (shellPaths), together. */
   paths: Set<string>;
+  editPaths: Set<string>;
+  shellPaths: Set<string>;
   lines: number;
   /** Lines counted once for Bash calls that wrote files, whose size is unknown. */
   shellLines: number;
@@ -153,10 +155,22 @@ const members = new Map<string, Member>();
 const droppedNames = new Map<string, string>();
 const DROPPED_NAMES_MAX = 200;
 
+// Paths of agents that stopped lately, by id. A member leaves the roster after DONE_LINGER_MS, but a file it changed
+// still explains a change for the unattributed check for STOPPED_WINDOW_MS.
+const STOPPED_WINDOW_MS = 10 * 60_000;
+const stopped = new Map<string, { at: number; paths: string[] }>();
+
+/** A repo's `git status` path set taken at a spawn: the root its paths are relative to, and the paths already changed. */
+export type RepoSnapshot = { root: string; paths: Set<string> };
+const SNAPSHOTS_MAX = 50;
+const snapshots = new Map<string, RepoSnapshot>();
+
 /** Forget every tracked agent (tests call this). */
 export function resetCrew(): void {
   members.clear();
   droppedNames.clear();
+  stopped.clear();
+  snapshots.clear();
   resetNames();
   mainTurn = null;
   activity = "other";
@@ -177,7 +191,7 @@ function member(id: string, now: number): Member {
     m = {
       id, display: claimName(id, droppedNames.get(id) ?? pickName(id, takenNames())), model: "", subagentType: "", description: "", parentId: null, startedAt: now,
       calls: 0, lastTool: "", lastTarget: "", endedAt: null, verdict: "", rule: "", tokens: 0,
-      usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, over: false, paths: new Set(), lines: 0, shellLines: 0, spec: "",
+      usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, over: false, paths: new Set(), editPaths: new Set(), shellPaths: new Set(), lines: 0, shellLines: 0, spec: "",
     };
     members.set(id, m);
   }
@@ -246,7 +260,7 @@ export function noteToolChange(e: Input, shellLines = 60): void {
     if (!written) return;
     const real = written.filter((p) => !outsideTree(p));
     if (written.length > 0 && real.length === 0) return;
-    for (const p of real.length > 0 ? real : ["(shell)"]) m.paths.add(p);
+    for (const p of real.length > 0 ? real : ["(shell)"]) { m.paths.add(p); m.shellPaths.add(p); }
     m.shellLines = Math.max(m.shellLines, shellLines);
     return;
   }
@@ -259,6 +273,7 @@ export function noteToolChange(e: Input, shellLines = 60): void {
   else return;
   if (typeof path !== "string" || !path || outsideTree(path)) return;
   m.paths.add(path);
+  m.editPaths.add(path);
   m.lines += lines;
 }
 
@@ -266,6 +281,66 @@ export function noteToolChange(e: Input, shellLines = 60): void {
 export function touched(id: string): { paths: string[]; lines: number } {
   const m = members.get(id);
   return { paths: m ? [...m.paths] : [], lines: m ? m.lines + m.shellLines : 0 };
+}
+
+/** The files `id` changed with the edit tool and with the shell, kept apart (the ledger's files_by). */
+export function touchedBy(id: string): { edit: string[]; shell: string[] } {
+  const m = members.get(id);
+  return { edit: m ? [...m.editPaths] : [], shell: m ? [...m.shellPaths] : [] };
+}
+
+/** Keep the snapshot taken when agent `id` spawned; the oldest one goes past SNAPSHOTS_MAX. */
+export function noteSnapshot(id: string, snap: RepoSnapshot): void {
+  snapshots.set(id, snap);
+  const oldest = snapshots.keys().next();
+  if (snapshots.size > SNAPSHOTS_MAX && !oldest.done) snapshots.delete(oldest.value);
+}
+
+/** The snapshot kept for `id`, removed from the store; undefined when none was taken. */
+export function takeSnapshot(id: string): RepoSnapshot | undefined {
+  const snap = snapshots.get(id);
+  snapshots.delete(id);
+  return snap;
+}
+
+/**
+ * The paths in `git status --porcelain -z` output, unquoted: each entry's path, or the new name of a rename (git writes
+ * the old name as the next NUL-separated entry, which is skipped).
+ */
+export function porcelainPaths(text: string): Set<string> {
+  const out = new Set<string>();
+  const parts = text.split("\0");
+  for (let i = 0; i < parts.length; i++) {
+    const entry = parts[i];
+    if (entry.length < 4) continue;
+    out.add(entry.slice(3));
+    if ("RC".includes(entry[0]) || "RC".includes(entry[1])) i++;
+  }
+  return out;
+}
+
+/** Every path a live agent changed, or one that stopped within STOPPED_WINDOW_MS: what an unattributed change can be credited to. */
+export function attributedPaths(now: number): string[] {
+  const out = new Set<string>();
+  for (const m of members.values()) if (m.endedAt === null) for (const p of m.paths) out.add(p);
+  for (const s of stopped.values()) if (now - s.at <= STOPPED_WINDOW_MS) for (const p of s.paths) out.add(p);
+  return [...out];
+}
+
+/** How many unattributed paths a run keeps. */
+export const UNATTRIBUTED_MAX = 20;
+
+/**
+ * The repo-relative paths newly changed since a spawn (in `after` but not `before`) that no known agent path explains,
+ * sorted and capped at UNATTRIBUTED_MAX. `known` holds absolute paths (the edit tool's) and root-relative ones (shell
+ * parses); an absolute path outside `root` matches nothing. With parallel agents this says only that something wrote it.
+ */
+export function unattributedChanges(root: string, before: ReadonlySet<string>, after: ReadonlySet<string>, known: readonly string[]): string[] {
+  const prefix = root.endsWith("/") ? root : `${root}/`;
+  const explained = new Set(known.map((p) => (p.startsWith(prefix) ? p.slice(prefix.length) : p)));
+  // ponytail: compares path sets, not content, so a file already dirty at spawn that an unattributed writer changes
+  // again is missed. Upgrade: hash each dirty file's content at spawn and compare at stop.
+  return [...after].filter((p) => !before.has(p) && !explained.has(p)).sort().slice(0, UNATTRIBUTED_MAX);
 }
 
 /** The spawn prompt of `id` (first 4000 characters), or "" when unknown. */
@@ -322,6 +397,8 @@ export function noteStop(id: string, type: string, verdict: string | null, now: 
   if (!m.model && model && model !== "unknown") m.model = model;
   m.endedAt = now;
   m.verdict = verdict ?? "";
+  for (const [k, s] of stopped) if (now - s.at > STOPPED_WINDOW_MS) stopped.delete(k);
+  stopped.set(id, { at: now, paths: [...m.paths] });
 }
 
 /** The colour family of a model name: haiku, sonnet or opus by its text, unknown otherwise. */

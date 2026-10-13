@@ -51,3 +51,31 @@ Hidden-suite passes, first attempt:
 - The retry checker hung twice on its own infinite-loop probe and was killed by hand. The checker agent now wraps every probe in a timeout.
 - Pager and retry used 5-line specs; debounce, sort, paths and tpl used 2-3 line specs (shortened after S passed everything on the first two).
 - Hidden tests alone do not show the checker's value: only tpl moved on them. Defects the checker found by hand-written probes are not scored here; count them from the checker's BROKE lines.
+
+## Seams bench (bench/seams)
+
+Measures whether three coders building in parallel can agree on a shared interface. Each task has
+a shared file (`seed/`), three part specs (`spec-a.md`, `spec-b.md`, `spec-c.md`), a hidden suite
+(`hidden/`: `unit-*.test.ts` per part plus `integration.test.ts`) and a reference solution (`ref/`).
+Tasks: events, cart, cli, cache. Node 22.6+ (type stripping) and `timeout` on the PATH; no dependencies.
+
+Scripts (run from `bench/seams/`):
+- `./prep.sh <task> <dir>`: copies `seed/` and the three specs into an empty or new `<dir>`. Never copies `hidden/` or `ref/`.
+- `./score.sh <dir>`: copies each hidden suite in, runs it, removes it, and prints `SCORE task=<t> unit=<p>/<n> integration=<p>/<n>`.
+- `./refcheck.sh`: builds each `ref/` in a temp dir and scores it. Exits 1 unless every task has full marks.
+
+How a run works:
+1. Director (Sonnet by default, to keep Opus use down) reads the task's spec files and runs `prep.sh` to make a fresh `<dir>`.
+2. Director launches three Haiku coders in parallel on `<dir>`, one each with spec-a, spec-b or spec-c, plus the tag line and "work only in this folder". The director does not show coders `hidden/` or `ref/`.
+3. Arm A gives the specs as written, with today's spec discipline. Arm B adds the board (claims, contracts, decisions) once it is built.
+4. When all three return, run `score.sh <dir>`. A fix round sends the failing integration lines to the coder whose part is responsible. Re-score after each round.
+5. Runs: 4 tasks x 3 runs per arm, so 12 runs per arm.
+
+Metrics to record per run:
+- integration first try: the integration count on the first score, out of its total.
+- overlapping writes: shared-file writes by more than one coder, and additions lost by a later write.
+- fix rounds to green.
+- director input tokens spent on orchestration.
+- wall time, from launch to the last coder's return.
+
+Known limits: the specs and hidden suites were written by the same author, and refcheck shows only that the reference satisfies them, not that the specs are sufficient. Expect the first real runs to show spec gaps.

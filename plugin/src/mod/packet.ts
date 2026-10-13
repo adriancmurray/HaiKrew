@@ -5,6 +5,8 @@ import type { ReviewPlan } from "./review.ts";
 export type PacketInput = {
   name: string; type: string; model: string; spec: string; report: string;
   paths: string[]; lines: number; testsPassed: boolean | null; plan: ReviewPlan;
+  /** Repo changes no agent's edits explain; the packet says so when there are any. */
+  unattributed?: string[];
 };
 
 /** How a note reaches the main conversation: whether HaiKrew's review tools are on (default on), and the packet text to carry when they are off. */
@@ -35,6 +37,7 @@ export function buildPacket(o: PacketInput): string {
     `## Files changed (~${o.lines} lines)`,
     o.paths.length ? o.paths.map((p) => `- ${p}`).join("\n") : "- none recorded",
     "",
+    ...(o.unattributed?.length ? [`Unattributed changes in the repo during this run: ${o.unattributed.join(", ")}. No agent's edits or shell writes explain them; with parallel agents they cannot be assigned to one agent.`, ""] : []),
     `## Test claim\n${tests}`,
     "",
     "## Instructions",

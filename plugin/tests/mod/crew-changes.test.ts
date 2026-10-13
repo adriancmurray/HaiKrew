@@ -26,8 +26,8 @@ test("shellWrites reads simple paths and leaves the rest unparsed", () => {
   expect(shellWrites("echo hi > out.txt")).toEqual(["out.txt"]);
   expect(shellWrites("cp a.ts b.ts")).toEqual(["b.ts"]);
   expect(shellWrites("sed -i 's/a/b/' src/c.ts")).toEqual(["src/c.ts"]);
-  expect(shellWrites("git commit -m x")).toEqual([]);
-  expect(shellWrites('echo hi > "$OUT"')).toEqual([]);
+  expect(shellWrites("git commit -m x")).toEqual(["<repo>"]);
+  expect(shellWrites('echo hi > "$OUT"')).toEqual(["<dynamic>"]);
   expect(outsideTree("/tmp/x")).toBe(true);
   expect(outsideTree("/var/folders/xy/T/scratchpad/a")).toBe(true);
   expect(outsideTree("/var/folders/ab/T/x")).toBe(true);
@@ -45,7 +45,7 @@ test("Bash writes count as unknown size, scratch writes and deleted lines are ha
   expect(touched("b1")).toEqual({ paths: [], lines: 0 });
   noteToolCall({ agentId: "b1", tool: "Bash", command: "git commit -m x" }, 4);
   noteToolCall({ agentId: "b1", tool: "Bash", command: "mv a.ts b.ts" }, 5);
-  expect(touched("b1")).toEqual({ paths: ["(shell)", "a.ts", "b.ts"], lines: 60 });
+  expect(touched("b1")).toEqual({ paths: ["<repo>", "a.ts", "b.ts"], lines: 60 });
   noteToolCall({ agentId: "b1", tool: "Edit", file_path: "/r/a.ts", old_string: "1\n2\n3\n4", new_string: "x" }, 6);
   noteToolCall({ agentId: "b1", tool: "MultiEdit", file_path: "/r/a.ts", edits: [{ old_string: "a\nb", new_string: "" }, { old_string: "q", new_string: "1\n2\n3" }] }, 7);
   expect(touched("b1").lines).toBe(60 + 4 + 2 + 3);

@@ -4,9 +4,13 @@
  * command that skips git hooks is denied.
  * Deny-and-redirect, never allow, so the user's permission rules still judge any redirected command.
  */
+import { isObject } from "./api.ts";
 import type { Input, Next } from "./api.ts";
-import { modelFamily } from "./crew.ts";
+import { modelFamily, rowFor } from "./crew.ts";
+import { DYNAMIC_WRITE, REPO_WRITE, shellWrites } from "./shell-writes.ts";
 
+/** The `guards` section of settings. */
+export type GuardsSettings = { read_only_agents: boolean };
 /** The `squeeze` section of settings. */
 export type SqueezeSettings = { enabled: boolean; patterns: string[]; max_lines: number; wrap_prefix: string };
 /** The `read_guard` section of settings. */
@@ -52,6 +56,81 @@ export function hookGuard(cfg: ChecksSettings, e: Input, next: Next): unknown {
     deny: "HaiKrew refuses commands that skip git hooks (--no-verify, core.hooksPath). Fix what the hook reports " +
       "and run the command without skipping hooks, or turn off checks.guard_hooks in /haikrew settings.",
   };
+}
+
+// Subagent types that review or search and never write: their Bash writes stay in scratch space.
+const READ_ONLY_TYPES = new Set(["haikrew:haiku-checker", "haikrew:sonnet-reviewer", "Explore"]);
+
+/** Whether a subagent type is read-only (checker, reviewer, Explore). Such an agent claims no files. */
+export function isReadOnlyType(type: string): boolean {
+  return READ_ONLY_TYPES.has(type);
+}
+// Scratch space: the macOS and Linux temp folders. ponytail: the mod sandbox has no os.tmpdir(), so a custom TMPDIR
+// is not seen; the upgrade path is passing the real temp folder in from the plugin root.
+const TEMP = /^(?:\/tmp|\/private\/tmp|\/var\/folders|\/private\/var\/folders)(?:\/|$)/;
+
+/**
+ * The type of a subagent: its crew row's when the row knows it, else the live agent list's, since a foreground agent's
+ * row gets its type only after its Agent call returns. "" when neither knows it or the list cannot be read.
+ */
+export async function callerType(list: () => Promise<unknown>, id: string): Promise<string> {
+  const known = rowFor(id, Date.now())?.type;
+  if (known && known !== "agent") return known;
+  try {
+    const agents = await list();
+    const live = Array.isArray(agents) ? agents.find((a) => isObject(a) && a.id === id) : undefined;
+    return isObject(live) && typeof live.type === "string" ? live.type : "";
+  } catch {
+    return "";
+  }
+}
+
+/** Folds `path` against `dir` into a clean path (`.` and `..` resolved); a relative path stays relative when `dir` is "". */
+export function resolvePath(dir: string, path: string): string {
+  const abs = path.startsWith("/");
+  const out: string[] = [];
+  for (const seg of (abs ? path : `${dir}/${path}`).split("/")) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") out.pop();
+    else out.push(seg);
+  }
+  return (abs || dir.startsWith("/") ? "/" : "") + out.join("/");
+}
+
+// A leading `cd <dir> &&` or `cd <dir>;`, one per match.
+const LEAD_CD = /^\s*cd\s+("[^"]*"|'[^']*'|[^\s;&|]+)\s*(?:&&|;)\s*/;
+
+/** The directory a Bash command runs in: `cwd`, moved by each leading `cd <dir>`. */
+export function commandDir(command: string, cwd: string): string {
+  let dir = cwd;
+  let rest = command;
+  let m = LEAD_CD.exec(rest);
+  while (m) {
+    dir = resolvePath(dir, (m[1] ?? "").replace(/^["']|["']$/g, ""));
+    rest = rest.slice(m[0].length);
+    m = LEAD_CD.exec(rest);
+  }
+  return dir;
+}
+
+/**
+ * Bash: deny a write by a read-only subagent (checker, reviewer, Explore) to a path outside the temp folders and a
+ * scratchpad. Relative targets resolve from the command's directory (`cwd`, moved by a leading `cd`). A target with
+ * `$` or a backtick cannot be resolved, so it is denied too. `type` is the caller's subagent type; the main loop
+ * passes "" and is never denied.
+ */
+export function readOnlyGuard(cfg: GuardsSettings, type: string, e: Input, cwd: string, next: Next): unknown {
+  if (!cfg.read_only_agents || !READ_ONLY_TYPES.has(type)) return next(e);
+  const command = String(e.command || "");
+  const dir = commandDir(command, cwd);
+  for (const target of shellWrites(command) ?? []) {
+    if (target === DYNAMIC_WRITE) return { deny: `${type} is read-only: write target not literal; use a literal temp path` };
+    const path = target === REPO_WRITE ? dir : resolvePath(dir, target);
+    if (TEMP.test(path) || path.includes("/scratchpad/")) continue;
+    const shown = target === REPO_WRITE ? `<repo> at ${path}` : path;
+    return { deny: `${type} is read-only: write to ${shown} refused; use a temp folder` };
+  }
+  return next(e);
 }
 
 /**

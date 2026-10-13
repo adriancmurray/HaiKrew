@@ -101,6 +101,14 @@ export const SCHEMA: Record<string, Section> = {
       max_lines: { label: "Line limit", type: "int", default: 600, min: 100, max: 20000, help: "Files longer than this need an offset/limit." },
     },
   },
+  guards: {
+    title: "Subagent guards",
+    help: "Deterministic limits on what subagents may write.",
+    fields: {
+      read_only_agents: { label: "Read-only agents", type: "bool", default: true,
+        help: "Refuse a Bash write by the checker, reviewer or Explore agents outside the temp folders and a scratchpad." },
+    },
+  },
   checks: {
     title: "Checks",
     help: "Deterministic guards around agent work. No model calls.",
@@ -119,6 +127,19 @@ export const SCHEMA: Record<string, Section> = {
         short: "Also prompt for a full verify when parallel agents in one folder finish.",
         help: "When the last of 2+ parallel agents in one folder finishes, also send the main conversation a prompt to run " +
           "the full verify. Off: the reminder is only logged." },
+    },
+  },
+  board: {
+    title: "Claims",
+    help: "Which subagent owns which file, so parallel agents do not write one file unnoticed.",
+    fields: {
+      claims: { label: "Conflicts", type: "enum", default: "warn", choices: ["warn", "deny", "off"],
+        short: "What happens when a write hits a file another live agent holds.",
+        help: "A write to a file a live agent holds, where neither agent is the other's parent. Parents and children never clash. " +
+          "warn refuses the first such write with a hint; a retry of the same write within 10 minutes goes through and the " +
+          "director is told. deny refuses every such write. off makes no claims." },
+      claim_grace_min: { label: "Claim grace", type: "int", default: 30, min: 0, max: 1440,
+        help: "Minutes a finished agent's files stay claimed, so a resumed agent keeps them." },
     },
   },
   review: {

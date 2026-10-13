@@ -58,6 +58,10 @@ export type Run = {
   first_checked?: { verdict: string; checked_by: string };
   /** What the decider said about this launch, when it was asked. Folded away with the run by condense(). */
   decision?: DecisionRecord;
+  /** The run's changed files split by the edit tool and by the shell, repo-relative like `files`. */
+  files_by?: { edit: string[]; shell: string[] };
+  /** Changes in the repo during the run that no agent's edits or shell writes explain. Parallel agents share the repo. */
+  unattributed?: string[];
 } & LateFields;
 
 /** Sums of runs for one (period, model, agent_type, job, lang); period is 'YYYY-MM', 'YYYY', or ''. */
