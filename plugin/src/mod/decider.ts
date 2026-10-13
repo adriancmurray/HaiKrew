@@ -100,8 +100,9 @@ function readScore(a: unknown, names: string[]): { name?: string; confidence: nu
   return { name, confidence: num(a.confidence) ?? 0 };
 }
 
-/** A noul answer in any shape: a bare probability, {probability}, or {value, probability}. True when it leans true. */
+/** A noul answer in any shape: a bare boolean or probability, {probability}, or {value, probability}. True when it leans true. */
 function readNoul(a: unknown): boolean | undefined {
+  if (typeof a === "boolean") return a;
   const p = num(a);
   if (p !== undefined) return p >= 0.5;
   if (!isObject(a)) return undefined;
@@ -156,21 +157,48 @@ export type DeciderDeps = {
 /** What a decider call produced: the decision and how long the call took. */
 export type Outcome = { decision: Decision; latency_ms: number };
 
+/** A decider call that gave no decision: the short reason, and how long the call took. */
+export type Failure = { error: string; latency_ms: number };
+
+/** Marks the timeout in the race, so no answer can be mistaken for it. */
+const TIMED_OUT = Symbol("timed out");
+
+/** The short reason for a thrown call: an HTTP status from the endpoint, else a fixed phrase (the error text may hold a URL). */
+function failureOf(err: unknown): string {
+  const msg = err instanceof Error ? err.message : "";
+  return /^http \d{3}$/.test(msg) ? msg : "request failed";
+}
+
 /**
- * Asks the endpoint. Null on an error, a timeout or an unusable answer (the caller keeps its normal behaviour).
+ * Asks the endpoint. The decision, or a Failure when the call timed out, threw, or its answer had nothing usable. Either
+ * way the caller keeps its normal behaviour.
  */
-export async function runDecider(deps: DeciderDeps, cfg: DeciderSettings, input: DeciderInput): Promise<Outcome | null> {
+export async function runDecider(deps: DeciderDeps, cfg: DeciderSettings, input: DeciderInput): Promise<Outcome | Failure> {
   const start = deps.now();
+  const elapsed = () => Math.max(0, deps.now() - start);
   try {
-    const timeout = deps.wait(cfg.timeout_ms).then(() => "timeout" as const);
+    const timeout = deps.wait(cfg.timeout_ms).then(() => TIMED_OUT);
     const answer = await Promise.race([deps.ask(deciderRequest(input)), timeout]);
-    if (answer === "timeout") return null;
+    if (answer === TIMED_OUT) return { error: "timeout", latency_ms: elapsed() };
     const decision = readDecision(answer, cfg.min_confidence);
-    if (!decision) return null;
-    return { decision, latency_ms: Math.max(0, deps.now() - start) };
-  } catch {
-    return null;
+    if (!decision) return { error: "invalid response", latency_ms: elapsed() };
+    return { decision, latency_ms: elapsed() };
+  } catch (err) {
+    return { error: failureOf(err), latency_ms: elapsed() };
   }
+}
+
+/** The four task features as the ledger keeps them: always all present, and null where the backend gave no answer. */
+export type RecordFeatures = {
+  size_level: string | null; spec_clarity_level: string | null; terminal_heavy: boolean | null; has_tests: boolean | null;
+};
+
+/** The task features with every key set. An unanswered level or flag is null, so it never reads as false or as a level. */
+export function recordFeatures(f: Features | undefined): RecordFeatures {
+  return {
+    size_level: f?.size_level ?? null, spec_clarity_level: f?.spec_clarity_level ?? null,
+    terminal_heavy: f?.terminal_heavy ?? null, has_tests: f?.has_tests ?? null,
+  };
 }
 
 /** What the ledger keeps of one decision. `explored` in shadow mode means "would have explored". */
@@ -178,10 +206,12 @@ export type DecisionRecord = {
   mode: string; model: string; effort: string; review: boolean | null; confident: boolean; explored: boolean;
   latency_ms: number; p_model: Record<string, number>;
   /** What the questions said about the task, which picked the bucket the ledger was read from. */
-  features: Features;
+  features: RecordFeatures;
   /** Whether the model came from the ledger's bucket record, the decider's confident pick, or the gate's default. */
   source: PickSource;
   reason: string;
+  /** Set when the decider call failed (timeout, http 500, invalid response, ...). A failed record has no pick. */
+  error?: string;
 };
 
 /**
@@ -196,7 +226,7 @@ export function applyOutcome(cfg: DeciderSettings, gateCfg: GateSettings, choice
   const record: DecisionRecord = {
     mode: cfg.mode, model, effort: d.effort ?? "", review: d.review ?? null, confident: d.confident,
     explored: pick.explored, latency_ms: o.latency_ms, p_model: d.probs,
-    features: d.features ?? {}, source: pick.source, reason: pick.reason,
+    features: recordFeatures(d.features), source: pick.source, reason: pick.reason,
   };
   if (cfg.mode !== "decide") return { choice, record };
   const next: Choice = { ...choice };
@@ -210,10 +240,19 @@ export function undecided(choice: Choice, e: Input): boolean {
   return Boolean(choice.model) && !choice.rule && !choice.deny && !e.model;
 }
 
+/** The record of a decider call that failed: the usual shape with no pick, so the spawn keeps the gate's default. */
+function failedRecord(cfg: DeciderSettings, f: Failure): DecisionRecord {
+  return {
+    mode: cfg.mode, model: "", effort: "", review: null, confident: false, explored: false, latency_ms: f.latency_ms,
+    p_model: {}, features: recordFeatures(undefined), source: "default", reason: `decider failed: ${f.error}`, error: f.error,
+  };
+}
+
 /**
  * Asks the endpoint for a spawn that the gate left to its default, picks the model (policy.ts, from the answer and the
- * ledger's runs in the answer's bucket) and applies it. Null when nothing applies. The bucket's job and lang are the
- * launch's tags, else the job the ledger would infer for it.
+ * ledger's runs in the answer's bucket) and applies it. Null when the gate's default stands without a question (mode
+ * off, a named model, a rule). A failed call gives the choice unchanged and a record with `error` set. The bucket's job
+ * and lang are the launch's tags, else the job the ledger would infer for it.
  */
 export async function decideSpawn(
   deps: DeciderDeps, cfg: DeciderSettings, gateCfg: GateSettings, e: Input, choice: Choice, cwd: string, history: HistoryRow[],
@@ -223,9 +262,9 @@ export async function decideSpawn(
   const prompt = String(e.prompt ?? "");
   const agentType = String(e.subagentType ?? "");
   const outcome = await runDecider(deps, cfg, { prompt, tag, agentType, cwd, history });
-  if (!outcome) return null;
+  if ("error" in outcome) return { choice, record: failedRecord(cfg, outcome) };
   const bucket = {
-    job: tag.job || inferJob(prompt, agentType), lang: tag.lang || "unknown", size: outcome.decision.features?.size_level ?? "?",
+    job: tag.job || inferJob(prompt, agentType), lang: tag.lang || "unknown", size: outcome.decision.features?.size_level || "?",
   };
   const pick = chooseModel({ clef: outcome.decision, bucketStats: bucketStats(runs, bucket), explore: deps.random(), cfg });
   return applyOutcome(cfg, gateCfg, choice, outcome, pick);

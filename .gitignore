@@ -3,3 +3,4 @@ __pycache__/
 tsconfig.json
 .claude/worktrees/
 bench/runs/
+node_modules/

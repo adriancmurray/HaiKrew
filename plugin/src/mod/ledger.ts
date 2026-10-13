@@ -14,6 +14,9 @@ import type { LiveUsage } from "./crew.ts";
 import type { DecisionRecord } from "./decider.ts";
 import { normName } from "./names.ts";
 import type { LateFields } from "./late.ts";
+import { holdPending, prunePending } from "./pending-verdicts.ts";
+import type { PendingVerdict, VerdictHold } from "./pending-verdicts.ts";
+import { applyDefects } from "./checker.ts";
 
 /** One finished subagent. */
 export type Run = {
@@ -66,7 +69,8 @@ export type Bucket = {
   fails: number;
 };
 
-export type LedgerState = { runs: Run[]; buckets: Bucket[] };
+/** `pending` holds checker verdicts still waiting for their run; see pending-verdicts.ts. */
+export type LedgerState = { runs: Run[]; buckets: Bucket[]; pending?: PendingVerdict[] };
 
 /** Fields computed from one subagent transcript. `ended` is the last timestamp, or null. */
 export type Transcript = Omit<Run, "ts" | "session" | "agent_id" | "agent_type"> & { ended: string | null; prompt: string };
@@ -260,7 +264,8 @@ function monthsBefore(now: Date, months: number): string {
 export function addRun(state: LedgerState, run: Run, settings: Settings): LedgerState {
   // Claude Code can fire SubagentStop more than once for one agent; the later record replaces the earlier one.
   const runs = run.agent_id ? state.runs.filter((r) => r.agent_id !== run.agent_id) : state.runs;
-  return condense({ runs: [...runs, run], buckets: state.buckets }, settings);
+  const pending = prunePending(state.pending ?? [], new Date());
+  return condense(applyHeld({ runs: [...runs, run], buckets: state.buckets, pending }), settings);
 }
 
 /** Keep the newest ledger.raw_limit runs. Fold older runs into monthly buckets, and monthly buckets older than
@@ -281,10 +286,7 @@ export function condense(state: LedgerState, settings: Settings, now: Date = new
     const folded = b.period.length === 7 && b.period < cutoff ? { ...b, period: b.period.slice(0, 4) } : b;
     mergeInto(yearly, bucketKey(folded), folded);
   }
-  return {
-    runs: state.runs.filter((_, idx) => kept.has(idx)),
-    buckets: [...yearly.values()],
-  };
+  return { ...state, runs: state.runs.filter((_, idx) => kept.has(idx)), buckets: [...yearly.values()] };
 }
 
 /**
@@ -411,6 +413,7 @@ function keyStats(b: Bucket, counts?: OutputCounts): KeyStats {
 export function readState(value: unknown): LedgerState {
   if (isObject(value) && Array.isArray(value.runs) && Array.isArray(value.buckets)) {
     return {
+      ...(Array.isArray(value.pending) ? { pending: value.pending as PendingVerdict[] } : {}),
       runs: (value.runs as Run[]).map(storedRun),
       buckets: (value.buckets as Bucket[]).map((b) => ({
         // A bucket folded before fails were counted judged nothing reliably: its passes count as unjudged too.
@@ -533,4 +536,32 @@ export function applyChecked(state: LedgerState, target: { agentId?: string; nam
   const runs = state.runs.map((r, i) => i !== at ? r
     : { ...r, verdict, quality: verdict === "pass" ? 1 / Math.max(r.attempts, 1) : 0, checked_by: checker });
   return { ...state, runs };
+}
+
+/**
+ * applyChecked, or when no run carries the name yet, the verdict (and its defect count) is held as pending until a run
+ * with that name is added. Use this for a checker's VERDICT line, which can be read before its run is ledgered.
+ */
+export function applyOrHold(state: LedgerState, hold: VerdictHold, now: Date = new Date()): LedgerState {
+  const next = applyChecked(state, { name: hold.name }, hold.verdict, hold.checker);
+  if (next !== state) return next;
+  return { ...state, pending: holdPending(state.pending ?? [], hold, now) };
+}
+
+/** The state with each held verdict applied as applyChecked applies it, to the newest run its name matches, and its
+ * defect count stored on that run as applyDefects does unless the run has one. Verdicts that match no run stay pending. */
+function applyHeld(state: LedgerState): LedgerState {
+  const still: PendingVerdict[] = [];
+  let next: LedgerState = state;
+  for (const h of state.pending ?? []) {
+    const applied = applyChecked(next, { name: h.name }, h.verdict, h.checker);
+    if (applied === next) {
+      still.push(h);
+      continue;
+    }
+    const at = applied.runs.findIndex((r, i) => r !== next.runs[i]);
+    const counts = h.defects !== undefined && applied.runs[at]?.checker_defects === undefined;
+    next = counts ? applyDefects(applied, { checkerId: "", checkedName: h.name }, h.defects ?? 0) : applied;
+  }
+  return { ...next, pending: still };
 }

@@ -106,8 +106,22 @@ function deepJob(job: string, listed: string[]): boolean {
   return listed.some((j) => job === j || job.startsWith(`${j}-`) || job.startsWith(`${j}_`));
 }
 
-/** Why a change needs a deep review: its first sensitive path, a large diff, a deep job, failing tests or a poor record. */
-function deepReasons(input: ReviewInput, cfg: ReviewSettings): string[] {
+/** Documentation paths: a change that touches only these is light whatever its size. */
+const DOC_GLOBS = ["**/*.md", "**/*.mdx"];
+// Model-instruction files are read by agents as configuration, so they keep the size rule.
+const INSTRUCTION_GLOBS = ["**/SKILL.md", "**/CLAUDE.md", "**/AGENTS.md", "**/agents/**", "**/skills/**", "**/commands/**",
+  "**/.claude/**"];
+
+/** True for a documentation path that is not a model-instruction file. */
+function isDoc(path: string): boolean {
+  return DOC_GLOBS.some((g) => pathGlob(g, path)) && !INSTRUCTION_GLOBS.some((g) => pathGlob(g, path));
+}
+
+/**
+ * Why a change needs a deep review: its first sensitive path, a large diff (never a docs-only one), a deep job, failing
+ * tests or a poor record.
+ */
+function deepReasons(input: ReviewInput, cfg: ReviewSettings, docs: boolean): string[] {
   const reasons: string[] = [];
   for (const path of input.paths) {
     const glob = cfg.sensitive_paths.find((g) => pathGlob(g, path));
@@ -116,7 +130,7 @@ function deepReasons(input: ReviewInput, cfg: ReviewSettings): string[] {
       break;
     }
   }
-  if (input.lines >= cfg.deep_lines) reasons.push(`${input.lines} lines, at least ${cfg.deep_lines}`);
+  if (input.lines >= cfg.deep_lines && !docs) reasons.push(`${input.lines} lines, at least ${cfg.deep_lines}`);
   if (deepJob(input.job, cfg.deep_jobs)) reasons.push(`job ${input.job} always gets a deep review`);
   if (input.testsPassed === false) reasons.push("tests failed");
   const r = input.record;
@@ -170,11 +184,12 @@ function checkerSkip(input: ReviewInput, cfg: ReviewSettings): { skip: boolean; 
 export function reviewPlan(input: ReviewInput, cfg: ReviewSettings, allowOpus: boolean): ReviewPlan {
   if (!cfg.enabled) return { tier: "none", reviewer: null, reasons: ["review is off"] };
   if (input.paths.length === 0) return { tier: "none", reviewer: null, reasons: ["changed no files"] };
-  const deep = deepReasons(input, cfg);
+  const docs = input.paths.every(isDoc);
+  const deep = deepReasons(input, cfg, docs);
   if (deep.length > 0) return deepPlan(input, cfg, allowOpus, deep);
   const allLight = input.paths.every((p) => cfg.light_paths.some((g) => pathGlob(g, p)));
   // An explored run is checked properly: a light glance would not tell whether the cheaper model did well.
-  if (allLight && input.lines < cfg.light_lines && input.testsPassed !== false && !input.explored) {
+  if ((docs || (allLight && input.lines < cfg.light_lines)) && input.testsPassed !== false && !input.explored) {
     const reasons = [`only light paths changed, ${input.lines} lines`];
     const state = checkerSkip(input, cfg);
     if (state?.skip) reasons.push(`checker found nothing in ${state.checked} runs of this kind`);

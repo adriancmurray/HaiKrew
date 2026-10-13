@@ -83,13 +83,13 @@ export function chooseModel(input: PolicyInput): PolicyPick {
 }
 
 /**
- * The per-model record of the runs in one bucket. A run with no size level counts as size "?". late_fail is read where
+ * The per-model record of the runs in one bucket. A run with no size level (absent or "") counts as size "?". late_fail is read where
  * the run carries it, else taken as 0. Runs in other buckets are left out.
  */
 export function bucketStats(runs: PolicyRun[], bucket: Bucket): BucketStat[] {
   const byModel = new Map<string, BucketStat>();
   for (const r of runs) {
-    if (r.job !== bucket.job || r.lang !== bucket.lang || (r.decision?.features?.size_level ?? "?") !== bucket.size) continue;
+    if (r.job !== bucket.job || r.lang !== bucket.lang || (r.decision?.features?.size_level || "?") !== bucket.size) continue;
     const s = byModel.get(r.model) ?? { model: r.model, runs: 0, judged: 0, passes: 0, late_fails: 0 };
     s.runs += 1;
     if (r.verdict === "pass" || r.verdict === "fail") s.judged += 1;

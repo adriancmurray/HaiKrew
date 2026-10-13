@@ -19,7 +19,7 @@ import type { ChecksSettings, ReadGuardSettings, SqueezeSettings } from "../src/
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
 import { activityOf, agentModel, liveUsage, modelFamily, noteMainChunk, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteToolChange, noteTurnEnd, rowFor, specOf, touched } from "../src/mod/crew.ts";
-import { addRun, applyChecked, combineUsage, finalReport, parseCheckerVerdict, readState, runFromStop, summary } from "../src/mod/ledger.ts";
+import { addRun, applyOrHold, combineUsage, finalReport, parseCheckerVerdict, readState, runFromStop, summary } from "../src/mod/ledger.ts";
 import { buildPacket, reviewNote, testsClaim } from "../src/mod/packet.ts";
 import { applyDefects, countDefects } from "../src/mod/checker.ts";
 import { checkerBucket, sizeOf } from "../src/mod/outcomes.ts";
@@ -59,7 +59,7 @@ export function register(on) {
         ({ choice, record } = found);
         // The gate keeps a named model (and refuses Opus itself), so the decided model goes in as one. Shadow mode
         // leaves the spawn exactly as it came.
-        if (dcfg.mode === "decide" && choice.model) named = { ...e, model: choice.model };
+        if (dcfg.mode === "decide" && choice.model && !record?.error) named = { ...e, model: choice.model };
       }
     }
     return gate(gateCfg, named, async (passed) => {
@@ -200,7 +200,8 @@ async function decide($: Api, dcfg: DeciderSettings, gateCfg: GateSettings, e: R
         const r = await $.http.fetch(`${dcfg.url.replace(/\/+$/, "")}/v1/systemone`, {
           method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
         });
-        return r.ok ? JSON.parse(r.text) : null;
+        if (!r.ok) throw new Error(`http ${r.status}`);
+        try { return JSON.parse(r.text); } catch { return null; }
       },
       wait: (ms: number) => new Promise<void>((resolve) => { $.clock.after(ms, resolve); }),
       random: Math.random,
@@ -339,9 +340,9 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
   const checked = parseCheckerVerdict(run.report);
   if (checked) {
     await ledgerLock(async () => {
-      const marked = applyChecked(readState(await $.store.get("ledger")), { name: checked.name }, checked.verdict, name);
-      await $.store.set("ledger", applyDefects(marked, { checkerId: id, checkedName: checked.name },
-        countDefects(run.report, checked.verdict === "fail")));
+      const defects = countDefects(run.report, checked.verdict === "fail");
+      const marked = applyOrHold(readState(await $.store.get("ledger")), { name: checked.name, verdict: checked.verdict, checker: name, defects });
+      await $.store.set("ledger", applyDefects(marked, { checkerId: id, checkedName: checked.name }, defects));
     });
     return;
   }

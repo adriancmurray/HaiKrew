@@ -60,14 +60,36 @@ test("readDecision returns null for unusable responses", () => {
   }
 });
 
-test("runDecider: a timeout or an error gives null; an answer gives its decision and the call's latency", async () => {
+test("runDecider: a timeout, a failed call or an unusable answer gives its reason; an answer gives its decision and latency", async () => {
   const input = { prompt: "p", tag: {}, agentType: "", cwd: "", history: [] };
   const slow: DeciderDeps = { ...deps(SONNET), ask: () => new Promise(() => {}), wait: async () => {} };
-  expect(await runDecider(slow, dcfg(), input)).toBe(null);
-  expect(await runDecider({ ...deps(SONNET), ask: async () => { throw new Error("down"); } }, dcfg(), input)).toBe(null);
-  const out = await runDecider(deps(SONNET), dcfg(), input);
-  expect(out?.decision.model).toBe("sonnet");
-  expect(out?.latency_ms).toBe(0);
+  expect(await runDecider(slow, dcfg(), input)).toEqual({ error: "timeout", latency_ms: 0 });
+  expect(await runDecider({ ...deps(SONNET), ask: async () => { throw new Error("down"); } }, dcfg(), input))
+    .toMatchObject({ error: "request failed" });
+  expect(await runDecider({ ...deps(SONNET), ask: async () => { throw new Error("http 500"); } }, dcfg(), input))
+    .toMatchObject({ error: "http 500" });
+  expect(await runDecider(deps({}), dcfg(), input)).toMatchObject({ error: "invalid response" });
+  expect(await runDecider(deps(SONNET), dcfg(), input)).toMatchObject({ decision: { model: "sonnet" }, latency_ms: 0 });
+});
+
+test("a failing decider leaves an error record with no pick, and the spawn keeps the gate's default", async () => {
+  const failing: DeciderDeps = { ...deps(SONNET), ask: async () => { throw new Error("http 500"); } };
+  const found = await decideSpawn(failing, dcfg({ mode: "decide" }), gateCfg, IMPLEMENT, resolveModel(gateCfg, IMPLEMENT), "/x/proj", [], TAG, []);
+  expect(found?.choice.model).toBe("haiku");
+  expect(found?.record).toMatchObject({ mode: "decide", model: "", effort: "", explored: false, source: "default", error: "http 500" });
+  expect(found?.record.features).toEqual({ size_level: null, spec_clarity_level: null, terminal_heavy: null, has_tests: null });
+  const slow: DeciderDeps = { ...deps(SONNET), ask: () => new Promise(() => {}), wait: async () => {} };
+  const late = await decideSpawn(slow, dcfg({ mode: "shadow" }), gateCfg, IMPLEMENT, resolveModel(gateCfg, IMPLEMENT), "/x/proj", [], TAG, []);
+  expect(late?.record).toMatchObject({ model: "", error: "timeout" });
+});
+
+test("the record always keeps all four features: null when the answer leaves them out, false when it says false", async () => {
+  const bare = await decideSpawn(deps(SIZED), dcfg({ mode: "shadow" }), gateCfg, IMPLEMENT, resolveModel(gateCfg, IMPLEMENT), "/x/proj", [], TAG, []);
+  expect(bare?.record.features).toEqual({ size_level: "small", spec_clarity_level: null, terminal_heavy: null, has_tests: null });
+  const answered = { ...SIZED, terminal_heavy: false, has_tests: { value: false, probability: 0.1 } };
+  const said = await decideSpawn(deps(answered), dcfg({ mode: "shadow" }), gateCfg, IMPLEMENT, resolveModel(gateCfg, IMPLEMENT), "/x/proj", [], TAG, []);
+  expect(said?.record.features).toEqual({ size_level: "small", spec_clarity_level: null, terminal_heavy: false, has_tests: false });
+  expect(readDecision({ terminal_heavy: true, has_tests: false }, 0.6)?.features).toEqual({ terminal_heavy: true, has_tests: false });
 });
 
 test("an explored run gets a standard review where a light one was due; unexplored stays light", () => {

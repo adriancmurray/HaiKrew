@@ -136,6 +136,41 @@ test("a 500-line change is deep", () => {
   expect(plan.reasons).toEqual(["500 lines, at least 400"]);
 });
 
+test("a docs-only change is light at any size, checked by the haiku checker", () => {
+  const plan = reviewPlan(input({ paths: ["README.md", "docs/guide/setup.mdx"], lines: 263 }), CFG, true);
+  expect(plan.tier).toBe("light");
+  expect(plan.reviewer).toEqual({ model: "haiku", effort: "medium", agent: "haikrew:haiku-checker" });
+  expect(reviewPlan(input({ paths: ["docs/big.md"], lines: 500 }), CFG, true).tier).toBe("light");
+  expect(reviewPlan(input({ paths: ["README.md", "CHANGELOG.md"], lines: 263 }), CFG, true).tier).toBe("light");
+});
+
+test("a 500-line agent instruction file is not light by the docs rule, so the size rule makes it deep", () => {
+  const plan = reviewPlan(input({ paths: ["plugin/agents/x.md"], lines: 500 }), CFG, true);
+  expect(plan.tier).toBe("deep");
+  expect(plan.reasons).toEqual(["500 lines, at least 400"]);
+});
+
+test("requirements.txt is not documentation", () => {
+  const plan = reviewPlan(input({ paths: ["requirements.txt"], lines: 263 }), CFG, false);
+  expect(plan.tier).toBe("standard");
+  expect(plan.reasons).toEqual(["changes outside the light paths"]);
+});
+
+test("a docs-only change that names a deep job stays deep", () => {
+  const plan = reviewPlan(input({ job: "security", paths: ["README.md"], lines: 10 }), CFG, true);
+  expect(plan.tier).toBe("deep");
+});
+
+test("docs plus one .ts file keeps the tier it had", () => {
+  const plan = reviewPlan(input({ paths: ["README.md", "src/mod/review.ts"], lines: 263 }), CFG, false);
+  expect(plan.tier).toBe("standard");
+  expect(plan.reasons).toEqual(["changes outside the light paths"]);
+});
+
+test("an empty path list gets no review, whatever the lines", () => {
+  expect(reviewPlan(input({ paths: [], lines: 263 }), CFG, false).tier).toBe("none");
+});
+
 test("failing tests make a change deep", () => {
   const plan = reviewPlan(input({ lines: 30, testsPassed: false }), CFG, true);
   expect(plan.tier).toBe("deep");
