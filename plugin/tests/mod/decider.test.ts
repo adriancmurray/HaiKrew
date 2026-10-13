@@ -2,6 +2,7 @@
 import { expect, test } from "claude-code/testing";
 import { decideSpawn, deciderRequest, readDecision, runDecider } from "../../src/mod/decider.ts";
 import type { DeciderDeps, DeciderSettings, HistoryRow } from "../../src/mod/decider.ts";
+import type { PolicyRun } from "../../src/mod/policy.ts";
 import { gate, resolveModel } from "../../src/mod/gate.ts";
 import type { GateSettings } from "../../src/mod/gate.ts";
 import { reviewPlan } from "../../src/mod/review.ts";
@@ -29,8 +30,9 @@ test("request holds the truncated task, folder name only and at most 30 history 
   expect(JSON.stringify(body)).not.toContain("/Users/someone");
   expect(body.state.history.length).toBe(30);
   expect(body.state.history[0].runs).toBe(39);
-  expect(Object.keys(body.questions)).toEqual(["model", "effort", "needs_review"]);
+  expect(Object.keys(body.questions)).toEqual(["model", "effort", "needs_review", "size", "terminal_heavy", "has_tests", "spec_clarity"]);
   expect(body.questions.needs_review.type).toBe("noul");
+  expect(body.questions.size.type).toBe("score");
 });
 
 test("readDecision reads raw answers and applies the confidence floor per answer", () => {
@@ -58,17 +60,14 @@ test("readDecision returns null for unusable responses", () => {
   }
 });
 
-test("runDecider: a timeout or an error gives null; exploring needs a plausible cheaper model", async () => {
+test("runDecider: a timeout or an error gives null; an answer gives its decision and the call's latency", async () => {
   const input = { prompt: "p", tag: {}, agentType: "", cwd: "", history: [] };
   const slow: DeciderDeps = { ...deps(SONNET), ask: () => new Promise(() => {}), wait: async () => {} };
   expect(await runDecider(slow, dcfg(), input)).toBe(null);
   expect(await runDecider({ ...deps(SONNET), ask: async () => { throw new Error("down"); } }, dcfg(), input)).toBe(null);
-  expect((await runDecider(deps(SONNET, 0.05), dcfg(), input))?.explore).toBe("haiku");
-  expect((await runDecider(deps(SONNET, 0.5), dcfg(), input))?.explore).toBe(null);
-  const unlikely = { model: { choice: "sonnet", confidence: 0.9, probabilities: { haiku: 0.1, sonnet: 0.9 } } };
-  expect((await runDecider(deps(unlikely, 0.05), dcfg(), input))?.explore).toBe(null);
-  const haiku = { model: { choice: "haiku", confidence: 0.9, probabilities: { haiku: 0.9 } } };
-  expect((await runDecider(deps(haiku, 0), dcfg(), input))?.explore).toBe(null);
+  const out = await runDecider(deps(SONNET), dcfg(), input);
+  expect(out?.decision.model).toBe("sonnet");
+  expect(out?.latency_ms).toBe(0);
 });
 
 test("an explored run gets a standard review where a light one was due; unexplored stays light", () => {
@@ -83,7 +82,7 @@ test("an explored run gets a standard review where a light one was due; unexplor
 /** The model the gate would launch with after the decider, for one spawn. */
 async function spawn(d: DeciderDeps, cfg: DeciderSettings, e: Input, g: GateSettings = gateCfg): Promise<{ model: unknown; record: unknown }> {
   const choice = resolveModel(g, e);
-  const found = await decideSpawn(d, cfg, g, e, choice, "/x/proj", [], {});
+  const found = await decideSpawn(d, cfg, g, e, choice, "/x/proj", [], {}, []);
   const passed = found?.choice.model ? { ...e, model: found.choice.model } : e;
   const out = gate(g, passed, (p) => p) as Input;
   return { model: out.model, record: found?.record };
@@ -121,10 +120,56 @@ test("a named model, a matching rule, a pinned type and mode off are never asked
   expect(asked).toBe(0);
 });
 
+test("readDecision reads the task features; a features-only answer is usable and has no confidence floor", () => {
+  const d = readDecision({ ...SONNET,
+    size: { level: 2, score: 2, confidence: 0.7 },
+    spec_clarity: { score: 3, level: 3, confidence: 0.4 },
+    terminal_heavy: { value: true, probability: 0.8 },
+    has_tests: 0.2,
+  }, 0.6);
+  expect(d?.features).toEqual({ size_level: "medium", spec_clarity_level: "exact", terminal_heavy: true, has_tests: false });
+  expect(readDecision({ size: { level: 9 }, has_tests: { value: true } }, 0.6)?.features).toEqual({ has_tests: true });
+  expect(readDecision({ size: { level: 0 } }, 0.6)).toEqual({ confident: false, probs: {}, features: { size_level: "tiny" } });
+});
+
+/** `n` runs with the same verdict, in one bucket: implement, ts, size small by default. */
+const repeat = (verdict: string, n: number): string[] => Array.from({ length: n }, () => verdict);
+const runsOf = (model: string, verdicts: string[], size = "small"): PolicyRun[] =>
+  verdicts.map((verdict) => ({ model, job: "implement", lang: "ts", verdict, decision: { features: { size_level: size } } }));
+const SIZED = { ...SONNET, size: { level: 1, confidence: 0.9 } };
+const IMPLEMENT = { subagentType: "general", prompt: "HAIKREW job=implement lang=ts x" };
+const TAG = { job: "implement", lang: "ts" };
+
+test("decideSpawn with no ledger runs in the bucket keeps the decider's pick and records why", async () => {
+  const found = await decideSpawn(deps(SIZED), dcfg({ mode: "decide" }), gateCfg, IMPLEMENT, resolveModel(gateCfg, IMPLEMENT), "/x/proj", [], TAG, []);
+  expect(found?.choice.model).toBe("sonnet");
+  expect(found?.record).toMatchObject({ model: "sonnet", source: "clef", explored: false, features: { size_level: "small" } });
+});
+
+test("the ledger's bucket picks the model over the decider's pick; shadow records it and leaves the spawn", async () => {
+  const opus = { size: { level: 1, confidence: 0.9 }, model: { choice: "opus", confidence: 0.9, probabilities: { opus: 0.9 } } };
+  const runs = runsOf("sonnet", repeat("pass", 10));
+  const at = (mode: "shadow" | "decide") => decideSpawn(deps(opus), dcfg({ mode }), gateCfg, IMPLEMENT, resolveModel(gateCfg, IMPLEMENT), "/x/proj", [], TAG, runs);
+  const shadow = await at("shadow");
+  expect(shadow?.choice.model).toBe("haiku");
+  expect(shadow?.record).toMatchObject({ model: "sonnet", source: "data" });
+  expect((await at("decide"))?.choice.model).toBe("sonnet");
+});
+
+test("a bucket of other sizes does not feed the pick", async () => {
+  const runs = runsOf("sonnet", repeat("pass", 10), "large");
+  const found = await decideSpawn(deps(SIZED), dcfg({ mode: "decide" }), gateCfg, IMPLEMENT, resolveModel(gateCfg, IMPLEMENT), "/x/proj", [], TAG, runs);
+  expect(found?.record).toMatchObject({ model: "sonnet", source: "clef" });
+});
+
 test("decider settings validate", () => {
   expect(validate("decider", "mode", "shadow")).toBe(null);
   expect(validate("decider", "mode", "on")).not.toBe(null);
   expect(validate("decider", "explore_rate", 0.25)).toBe(null);
   expect(validate("decider", "explore_rate", 1.5)).not.toBe(null);
   expect(validate("decider", "url", "ftp://x")).not.toBe(null);
+  expect(validate("decider", "target_pass", 0.9)).toBe(null);
+  expect(validate("decider", "target_pass", 1.2)).not.toBe(null);
+  expect(validate("decider", "min_runs", 8)).toBe(null);
+  expect(validate("decider", "min_runs", 0)).not.toBe(null);
 });
