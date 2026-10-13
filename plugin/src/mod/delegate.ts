@@ -36,7 +36,7 @@ export function delegationNote(g: DelegateSettings, toolsOn = true): string {
     "- Code to a clear spec (new modules, edits, refactors, renames, tests from a list of cases): write the spec, launch " +
       "`haiku-coder`, then verify it with `haikrew:haiku-checker`. Follow the crew-overseer skill. Several small agents beat one big one.",
     "- Web fact-finding: `haiku-scout`. Broad read-only code search: `Explore`.",
-    "- Keep inline: design, decisions, reviewing anything security- or concurrency-sensitive, and edits of a few lines.",
+    "- Keep inline: decisions, specs, and edits of a few lines. Security- or concurrency-sensitive changes get a reviewer agent like any other deep change.",
     "- Start each agent prompt with a tag line, e.g. `HAIKREW job=implement lang=ts name=Katherine_JSON`, so routing rules and " +
       "the ledger can match it. Give each agent a name: a famous scientist, artist or inventor with a coding twist that suits " +
       "its task (Vincent van Go, Marie Curl, Ludwig van Buildhoven), underscores for spaces; HaiKrew picks one if you don't.",
