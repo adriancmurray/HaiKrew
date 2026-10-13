@@ -42,8 +42,9 @@ export function register(on) {
       const found = await decide($, dcfg, gateCfg, e, choice, cwd);
       if (found) {
         ({ choice, record } = found);
-        // The gate keeps a named model (and refuses Opus itself), so the decided model goes in as one.
-        if (choice.model) named = { ...e, model: choice.model };
+        // The gate keeps a named model (and refuses Opus itself), so the decided model goes in as one. Shadow mode
+        // leaves the spawn exactly as it came.
+        if (dcfg.mode === "decide" && choice.model) named = { ...e, model: choice.model };
       }
     }
     return gate(gateCfg, named, async (passed) => {
