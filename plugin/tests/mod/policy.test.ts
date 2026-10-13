@@ -35,6 +35,13 @@ test("with no model at min_runs judged, the data is ignored and Clef's confident
   expect(p.source).toBe("clef");
 });
 
+test("a data pick needs min_runs judged runs in the model it picks: haiku 3/3 does not beat sonnet 8/8", () => {
+  const p = chooseModel({ clef: clef("opus"), bucketStats: [stat("haiku", 3, 3), stat("sonnet", 8, 8)], explore: 1, cfg: NO_EXPLORE });
+  expect(p).toMatchObject({ model: "sonnet", source: "data", explored: false });
+  const below = chooseModel({ clef: clef("opus"), bucketStats: [stat("haiku", 3, 3), stat("sonnet", 8, 4)], explore: 1, cfg: NO_EXPLORE });
+  expect(below).toMatchObject({ model: "opus", source: "clef" });
+});
+
 test("when data exists but no model reaches the target, Clef's pick stands", () => {
   const stats = [stat("haiku", 10, 3), stat("sonnet", 2, 0)];
   const p = chooseModel({ clef: clef("opus"), bucketStats: stats, explore: 1, cfg: NO_EXPLORE });

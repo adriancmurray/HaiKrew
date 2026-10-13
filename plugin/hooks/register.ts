@@ -27,7 +27,7 @@ import { registerPane } from "../src/mod/pane.ts";
 import { delegationNote, withNote } from "../src/mod/delegate.ts";
 import type { DelegateSettings } from "../src/mod/delegate.ts";
 import { ledgerLock } from "../src/mod/serial.ts";
-import { checkHealth } from "../src/mod/health.ts";
+import { checkHealth, healthLine } from "../src/mod/health.ts";
 import { flagLate, mergeLate, repoOf } from "../src/mod/late.ts";
 import type { RunGit } from "../src/mod/late.ts";
 import { registerAgentTools } from "../src/mod/agents.ts";
@@ -46,9 +46,11 @@ export function register(on) {
     let record: DecisionRecord | undefined;
     let named = e;
     const dcfg = cfg.decider as unknown as DeciderSettings;
-    if (dcfg.mode !== "off") await deciderHealth($, dcfg);
+    // The check runs beside this spawn, so the spawn never waits on it: the decider call below uses the last known status.
+    if (dcfg.mode !== "off") void deciderHealth($, dcfg);
     if (!startChecked) { startChecked = true; void lateFailures($, cfg).catch(() => undefined); }
-    if (dcfg.mode !== "off" && gateCfg.enabled) {
+    // Only a known-offline decider is skipped; an unknown one is tried, and the call's own timeout still applies.
+    if (dcfg.mode !== "off" && gateCfg.enabled && healthLine() === "") {
       const found = await decide($, dcfg, gateCfg, e, choice, cwd);
       if (found) {
         ({ choice, record } = found);

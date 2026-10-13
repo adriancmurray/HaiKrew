@@ -2,6 +2,7 @@
 import { expect, test } from "claude-code/testing";
 import { resetCrew } from "../../src/mod/crew.ts";
 import { resetEffort } from "../../src/mod/effort.ts";
+import { resetHealth } from "../../src/mod/health.ts";
 import { resetSeams } from "../../src/mod/seam.ts";
 
 const SETTINGS = {
@@ -13,11 +14,11 @@ const SETTINGS = {
 };
 
 /** The engine beneath the mod: settings from a fixed store, a fixed session folder, spawns that echo back. */
-function host(on: any, seen: Record<string, any>, chunks: unknown[] = []): void {
+function host(on: any, seen: Record<string, any>, chunks: unknown[] = [], settings: unknown = SETTINGS): void {
   resetCrew();
   resetEffort();
   resetSeams();
-  on("store.get", async (_$: any, e: any) => ({ value: e.key === "settings" ? SETTINGS : undefined }));
+  on("store.get", async (_$: any, e: any) => ({ value: e.key === "settings" ? settings : undefined }));
   on("store.set", async () => ({ value: undefined }));
   on("fs.read", async () => ({ deny: "no such file" }));
   on("session.cwd", async () => ({ value: "/Users/someone/projects/app" }));
@@ -247,4 +248,35 @@ test("a checker's VERDICT line settles the run it names, and a job=check run get
   expect(appended.length).toBe(1);
   const run = stored.ledger.runs.find((r: any) => r.name === "Isaac Newline");
   expect([run.verdict, run.checked_by]).toEqual(["pass", "Karl Checker"]);
+});
+
+test("a slow decider health check does not hold up a spawn, and a decider known to be down is skipped", async (ctx: any, on: any) => {
+  resetHealth();
+  const seen: Record<string, any> = { asks: 0, healthCalls: 0 };
+  let openHealth!: (ok: boolean) => void;
+  const healthGate = new Promise<boolean>((resolve) => { openHealth = resolve; });
+  const decider = { mode: "decide", url: "http://decider.test", explore_rate: 0 };
+  host(on, seen, [], { ...SETTINGS, decider });
+  on("http.fetch", async (_$: any, e: any) => {
+    if (String(e.url).endsWith("/health")) {
+      seen.healthCalls += 1;
+      return { value: { ok: await healthGate, status: 200, headers: {}, text: "" } };
+    }
+    seen.asks += 1;
+    const answer = { answers: { model: { choice: "sonnet", confidence: 0.9, probabilities: { haiku: 0.1, sonnet: 0.9 } } } };
+    return { value: { ok: true, status: 200, headers: {}, text: JSON.stringify(answer) } };
+  });
+  const prompt = { prompt: "Fix the parser.", description: "fix", subagentType: "general-purpose", parentModel: "opus", background: false, fork: false };
+  const started = Date.now();
+  await ctx.agent.spawn(prompt);
+  expect(Date.now() - started).toBeLessThan(1000); // the health check is still pending, and far slower than the spawn
+  expect(seen.healthCalls).toBe(1);
+  expect(seen.spawn.model).toBe("sonnet"); // unknown status: the decider is tried
+  expect(seen.asks).toBe(1);
+  openHealth(false);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await ctx.agent.spawn(prompt);
+  expect(seen.spawn.model).toBe("haiku"); // known offline: the gate's default stands and no decider call is made
+  expect(seen.asks).toBe(1);
+  resetHealth();
 });

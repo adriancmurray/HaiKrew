@@ -1,6 +1,6 @@
 /**
  * Model choice for a decider launch. The ledger's record of the launch's bucket (job, lang and the decider's size level)
- * decides once one model in it has enough judged runs and some model clears the target pass rate. Otherwise the decider's
+ * decides once a model has enough judged runs of its own in it and that model clears the target pass rate. Otherwise the decider's
  * confident pick stands, and otherwise the gate's default is kept. A choice above Haiku is sometimes run one model cheaper
  * instead, so the ledger learns what that model can do. Pure: the exploration draw is an input.
  */
@@ -47,14 +47,13 @@ function cheaper(model: string): string | null {
 }
 
 /**
- * The cheapest model whose smoothed rate reaches the target, but only once some model in the bucket has minRuns judged
- * runs. Null when there is not enough data or no model reaches the target.
+ * The cheapest model whose smoothed rate reaches the target, counting only models with minRuns judged runs of their
+ * own in the bucket (as insights.ts does). Null when no model qualifies.
  */
 function fromData(stats: BucketStat[], target: number, minRuns: number): { model: string; reason: string } | null {
-  if (!stats.some((s) => s.judged >= minRuns)) return null;
   for (const model of MODELS) {
     const s = stats.find((x) => x.model === model);
-    if (!s) continue;
+    if (!s || s.judged < minRuns) continue;
     const rate = successRate(s);
     if (rate >= target) return { model, reason: `${model} smoothed pass rate ${rate.toFixed(2)} over ${s.judged} judged runs` };
   }
