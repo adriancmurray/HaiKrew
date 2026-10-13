@@ -5,6 +5,7 @@
  */
 import type { Settings } from "../schema.ts";
 import { insights, MIN_JUDGED, routingFrom } from "./insights.ts";
+import { LATE_OFF_TEXT, lateOff } from "./late-file.ts";
 import type { LedgerState } from "./ledger.ts";
 import type { CatchRow } from "./outcomes.ts";
 import { ruleSentence } from "./rules.ts";
@@ -21,9 +22,10 @@ function catchSentence(c: CatchRow): string {
 export function insightsSection(ui: Ui, act: Actions, frame: CardFrame, state: LedgerState, settings: Settings): unknown {
   const ins = insights(state.runs, routingFrom(settings));
   if (ins.judged < MIN_JUDGED) {
-    return foldCard(ui, act, frame, "card-insights", "Insights", "", "Not enough judged runs yet", false, [
+    return foldCard(ui, act, frame, "card-insights", "Insights", "", "Not enough judged runs yet", lateOff(), [
       txt(ui, {}, "Not enough judged runs yet."),
       txt(ui, { dimColor: true }, `A rule is suggested once a model has ${MIN_JUDGED} judged runs in a job and language.`),
+      lateOff() ? txt(ui, { dimColor: true, wrap: "wrap" }, LATE_OFF_TEXT) : null,
     ]);
   }
   const nothing = ins.findings.length === 0 && ins.rules.length === 0 && ins.checkerCatch.length === 0;
@@ -38,5 +40,6 @@ export function insightsSection(ui: Ui, act: Actions, frame: CardFrame, state: L
       txt(ui, { dimColor: true, wrap: "wrap" }, `${r.evidence}; the rules pick ${r.current} now`),
     ], [ui.Button({ key: `insight-rule-${i}`, label: "Add rule", variant: "primary", onPress: () => act.addRule(r.rule) })])),
     nothing ? txt(ui, { dimColor: true }, "Nothing stands out yet.") : null,
+    lateOff() ? txt(ui, { dimColor: true, wrap: "wrap" }, LATE_OFF_TEXT) : null,
   ]);
 }

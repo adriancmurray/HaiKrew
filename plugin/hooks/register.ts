@@ -32,6 +32,7 @@ import { ledgerLock } from "../src/mod/serial.ts";
 import { checkHealth, healthLine } from "../src/mod/health.ts";
 import { flagLate, mergeLate, repoOf } from "../src/mod/late.ts";
 import type { RunGit } from "../src/mod/late.ts";
+import { applyLateFile, parseLateFile, setLateOff } from "../src/mod/late-file.ts";
 import { registerAgentTools } from "../src/mod/agents.ts";
 import type { Settings } from "../src/schema.ts";
 
@@ -213,27 +214,47 @@ async function decide($: Api, dcfg: DeciderSettings, gateCfg: GateSettings, e: R
 }
 
 /** git (any command) through the mod's process runner; its stdout, or "" on any failure. */
-function gitOf($: Api): RunGit {
+function gitOf($: Api, unavailable?: { value: boolean }): RunGit {
   return async (argv, cwd) => {
     try {
       const r = await $.process.run(argv, { cwd, timeoutMs: 15000 });
       return r.exitCode === 0 ? r.stdout : "";
     } catch {
+      // $.process is CLI only (and must never be read as a value): a throw means this surface has no process runner.
+      if (unavailable) unavailable.value = true;
       return "";
     }
   };
 }
 
-/** Flags passed runs of the last ledger.late_fail_days days that a later fix commit touched (see late.ts). */
+/**
+ * Flags passed runs of the last ledger.late_fail_days days that a later fix commit touched (see late.ts). With $.process
+ * git runs here when the call works (CLI); otherwise the flags file `haikrew late-failures` writes is merged, and when that is missing
+ * too the Insights card says detection is off.
+ */
 async function lateFailures($: Api, cfg: Settings): Promise<void> {
   if (!cfg.ledger.enabled) return;
   const state = readState(await $.store.get("ledger"));
-  const found = await flagLate(state.runs, Date.now(), Number(cfg.ledger.late_fail_days), gitOf($));
-  if (!found.changed) return;
+  let flagged: Run[];
+  const unavailable = { value: false };
+  const git = gitOf($, unavailable);
+  await git(["git", "--version"], "/"); // a probe, so a surface without a process runner is known even when no run needs git
+  const found = unavailable.value ? { runs: state.runs, changed: false } : await flagLate(state.runs, Date.now(), Number(cfg.ledger.late_fail_days), git);
+  if (!unavailable.value) {
+    setLateOff(false);
+    if (!found.changed) return;
+    flagged = found.runs;
+  } else {
+    const home = await $.env.get("HOME");
+    const text = home ? await readFile($, `${home}/.claude/plugins/store/haikrew-late.json`) : null;
+    setLateOff(text === null);
+    if (text === null) return;
+    flagged = applyLateFile(state.runs, parseLateFile(text));
+  }
   // Merge by agent id and time into the freshest ledger, so runs added while git ran are kept.
   await ledgerLock(async () => {
     const fresh = readState(await $.store.get("ledger"));
-    await $.store.set("ledger", { ...fresh, runs: mergeLate(fresh.runs, found.runs) });
+    await $.store.set("ledger", { ...fresh, runs: mergeLate(fresh.runs, flagged) });
   });
 }
 

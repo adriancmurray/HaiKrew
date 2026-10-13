@@ -1,6 +1,7 @@
 /** Late-failure helpers with canned git output (the real-repo fixture is tests/late.spec.ts), and the decider health check with a fake fetch. */
 import { expect, test } from "claude-code/testing";
 import { checkHealth, healthLine, resetHealth } from "../../src/mod/health.ts";
+import { applyLateFile, parseLateFile } from "../../src/mod/late-file.ts";
 import { flagLate, mergeLate, parseLog, repoOf } from "../../src/mod/late.ts";
 import type { RunGit } from "../../src/mod/late.ts";
 import { readState } from "../../src/mod/ledger.ts";
@@ -90,4 +91,13 @@ test("parallel health checks share one request and toast once", async () => {
   expect(texts.filter(Boolean).length).toBe(1);
   expect(calls).toBe(1);
   resetHealth();
+});
+
+test("the late-failure flags file is applied by agent id and merged under mergeLate", async () => {
+  const file = parseLateFile('{"hit":{"late_fail":true,"late_fail_commit":"abc"}}');
+  const fresh = [run({ agent_id: "hit" }), run({ agent_id: "other" })];
+  const out = mergeLate(fresh, applyLateFile(fresh, file));
+  expect(out.map((r) => r.late_fail)).toEqual([true, undefined]);
+  expect(out[0].late_fail_commit).toBe("abc");
+  expect(parseLateFile("not json")).toEqual({});
 });

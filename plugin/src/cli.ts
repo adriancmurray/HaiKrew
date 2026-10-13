@@ -2,15 +2,19 @@
  * Argument dispatch for bin/haikrew.mjs. Each subcommand calls one module function.
  * Hooks, the ledger and the panel run inside the Claude Code mod (hooks/register.ts), not here.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { AnalyzeIo } from "./analyze.ts";
+import { LATE_FILE_NAME, lateFailuresCmd, type LateIo } from "./latecli.ts";
 import { defaults, validate } from "./schema.ts";
 import { listMarkdown, splitLines } from "./squeeze.ts";
 
 const USAGE = "usage: haikrew squeeze [--max-lines N] [--wrap PREFIX] -- <cmd...> | verify | " +
-  "patterns check [--dir PATH] [--max-files N] [--max-lines N] | analyze [--store PATH]";
+  "patterns check [--dir PATH] [--max-files N] [--max-lines N] | analyze [--store PATH] | late-failures [--days N]";
+/** How long one git call may run before late-failures gives up on it. */
+const GIT_TIMEOUT_MS = 15000;
 /** The `patterns check` caps when no flag overrides them. */
 const PATTERNS_MAX_FILES = 20;
 const PATTERNS_MAX_LINES = 40;
@@ -35,6 +39,11 @@ export async function main(argv: string[]): Promise<number> {
     if (!flags) return badArgs("analyze");
     const { analyze } = await import("./analyze.ts");
     return analyze(flags.store as string, storeIo());
+  }
+  if (cmd === "late-failures") {
+    const flags = parseFlags(rest, { days: 5 });
+    if (!flags) return badArgs("late-failures");
+    return lateFailuresCmd(flags.days as number, lateIo());
   }
   return usage();
 }
@@ -113,9 +122,14 @@ function parseFlags(rest: string[], fallbacks: Record<string, number | string>):
   return out;
 }
 
+/** The folder HaiKrew keeps its store files in. */
+function storeFolder(): string {
+  return join(homedir(), ".claude", "plugins", "store");
+}
+
 /** The real store folder, file reads and output for `analyze`: a folder that cannot be read has no files. */
 function storeIo(): AnalyzeIo {
-  const dir = join(homedir(), ".claude", "plugins", "store");
+  const dir = storeFolder();
   return {
     stores: () => {
       try {
@@ -133,6 +147,30 @@ function storeIo(): AnalyzeIo {
     },
     out: (text) => process.stdout.write(text),
     err: (text) => process.stderr.write(text),
+  };
+}
+
+/**
+ * The real io for `late-failures`: the store folder, git run in the repo (empty output when git fails or times out),
+ * and the flags file written through a temp file so a reader never sees half of it.
+ */
+function lateIo(): LateIo {
+  return {
+    ...storeIo(),
+    git: async (argv, cwd) => {
+      try {
+        return execFileSync(argv[0], argv.slice(1), { cwd, encoding: "utf8", timeout: GIT_TIMEOUT_MS, stdio: ["ignore", "pipe", "ignore"] });
+      } catch {
+        return "";
+      }
+    },
+    write: (text) => {
+      const file = join(storeFolder(), LATE_FILE_NAME);
+      const tmp = `${file}.${process.pid}.tmp`;
+      writeFileSync(tmp, text);
+      renameSync(tmp, file);
+    },
+    now: Date.now,
   };
 }
 
