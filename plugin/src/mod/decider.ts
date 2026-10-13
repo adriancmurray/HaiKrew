@@ -34,19 +34,9 @@ const HISTORY_MAX = 30;
 
 /** The questions asked for every launch. */
 const QUESTIONS = {
-  model: { type: "choice", instructions: "Pick the cheapest model likely to do this task well.", criteria: {
-    haiku: "A tightly specified, mechanical task: a clear edit, rename, small module or test from a list, or a lookup. Cheapest.",
-    sonnet: "Ordinary implementation or review that needs judgement across several files, or a task where haiku's record is poor.",
-    opus: "Design, ambiguous or security- or concurrency-sensitive work, or a hard debugging task. Most expensive.",
-  } },
-  effort: { type: "score", instructions: "How much reasoning effort the task needs.", criteria: [
-    "low: trivial and mechanical", "medium: a normal task with a clear spec", "high: several interacting parts or subtle edge cases",
-    "max: a hard problem where failure is costly",
-  ] },
-  needs_review: { type: "noul", instructions: "Should another agent review the result?", criteria: {
-    true: "The change is large, touches sensitive code, or the chosen model has a weak record on this kind of task.",
-    false: "A small, mechanical change that is easy to check by glancing at the diff.",
-  } },
+  model: { type: "choice", instructions: "Which is the cheapest model that will do this task well?", criteria: {"haiku": "The default. Any task with a clear spec or a clear goal, even across several files: implementing, refactoring, tests, fixes with a known cause, search and lookups. Haiku handles most coding work well. Cheapest.", "sonnet": "Needs judgement the spec does not settle: an unclear or incomplete spec, debugging with an unknown cause, trade-offs between approaches, or a task Haiku already failed.", "opus": "Rare. Open-ended design with no spec at all, or a task Sonnet already failed. Hard or sensitive topics alone (concurrency, security, unsafe code) do not need Opus when the goal is clear. Most expensive."} },
+  effort: { type: "score", instructions: "How much reasoning effort the task needs.", criteria: ["low: mechanical, nothing to weigh.", "medium: the normal level, enough for nearly every task, hard ones included.", "high: many interacting constraints that must all be held at once, where medium has already struggled.", "max: almost never; only when explicitly asked for."] },
+  needs_review: { type: "noul", instructions: "Should another agent review the result?", criteria: {"true": "The change touches security, concurrency, data loss or a public contract, or is large.", "false": "A mistake would be cheap to see in the diff and to undo."} },
 };
 
 /** The last folder name of a path: never the full path, which may hold a user name. */
