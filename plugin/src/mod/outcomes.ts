@@ -33,7 +33,7 @@ export function lateFailed(run: Run): boolean {
 }
 
 /** The decider's size estimate for the run, or "" when the decider did not give one. */
-function sizeOf(run: Run): string {
+export function sizeOf(run: Run): string {
   const size = (run as Run & { decision?: { features?: { size_level?: unknown } } }).decision?.features?.size_level;
   return typeof size === "string" ? size : "";
 }
@@ -133,4 +133,44 @@ export function outcomeStats(runs: Run[]): OutcomeRow[] {
   const rows = [...groups.values()].map((g) => rowOf(g.key, g.tally));
   return rows.sort((a, b) => rank(a.model) - rank(b.model) || b.runs - a.runs || text(a.job, b.job) || text(a.lang, b.lang) ||
     text(a.size_level, b.size_level));
+}
+
+/** One (job, language, size) group of checked runs: how many had a defect the checker found, and the rate. */
+export type CatchRow = { job: string; lang: string; size_level: string; checked: number; with_defects: number; rate: number };
+
+/**
+ * The defect count of a checked run, or null when the run was not checked or its count was not recorded. A run with no
+ * recorded count is unknown, so it is left out of the catch rate rather than counted as clean.
+ */
+function checkedDefects(run: Run): number | null {
+  return run.checked_by && typeof run.checker_defects === "number" ? run.checker_defects : null;
+}
+
+/** Checked runs grouped by job, language and size, with how many had a defect. Most checked first, then by job, language and size. */
+export function checkerCatch(runs: Run[]): CatchRow[] {
+  const groups = new Map<string, CatchRow>();
+  for (const run of runs) {
+    const defects = checkedDefects(run);
+    if (defects === null) continue;
+    const size_level = sizeOf(run);
+    const id = JSON.stringify([run.job, run.lang, size_level]);
+    const row = groups.get(id) ?? { job: run.job, lang: run.lang, size_level, checked: 0, with_defects: 0, rate: 0 };
+    row.checked += 1;
+    if (defects > 0) row.with_defects += 1;
+    groups.set(id, row);
+  }
+  const rows = [...groups.values()].map((row) => ({ ...row, rate: row.with_defects / row.checked }));
+  return rows.sort((a, b) => b.checked - a.checked || text(a.job, b.job) || text(a.lang, b.lang) || text(a.size_level, b.size_level));
+}
+
+/** The checked runs of one job, language and size, and how many of them had a defect. */
+export function checkerBucket(runs: Run[], job: string, lang: string, size: string): { checked: number; defects: number } {
+  const out = { checked: 0, defects: 0 };
+  for (const run of runs) {
+    const defects = checkedDefects(run);
+    if (defects === null || run.job !== job || run.lang !== lang || sizeOf(run) !== size) continue;
+    out.checked += 1;
+    if (defects > 0) out.defects += 1;
+  }
+  return out;
 }

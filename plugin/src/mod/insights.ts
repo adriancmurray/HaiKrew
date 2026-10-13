@@ -6,8 +6,8 @@
 import type { Settings } from "../schema.ts";
 import { modelFamily } from "./crew.ts";
 import type { Run } from "./ledger.ts";
-import { lateFailed, MODEL_ORDER, outcomeStats, rankOf } from "./outcomes.ts";
-import type { OutcomeRow } from "./outcomes.ts";
+import { checkerCatch, lateFailed, MODEL_ORDER, outcomeStats, rankOf } from "./outcomes.ts";
+import type { CatchRow, OutcomeRow } from "./outcomes.ts";
 import { buildRule } from "./rules.ts";
 import { parseRule, selectorMatch } from "./select.ts";
 import type { SelectCtx } from "./select.ts";
@@ -35,7 +35,8 @@ export type ProposedRule = {
 /** A one-line finding and the number of runs it rests on. */
 export type Finding = { text: string; count: number };
 
-export type Insights = { judged: number; calibration: Calibration; rules: ProposedRule[]; findings: Finding[] };
+/** The checker's catch rate per job, language and size; see checkerCatch in outcomes. */
+export type Insights = { judged: number; calibration: Calibration; rules: ProposedRule[]; findings: Finding[]; checkerCatch: CatchRow[] };
 
 /** The routing the gate would apply: the rules and default from settings. */
 export function routingFrom(settings: Settings): Routing {
@@ -142,5 +143,6 @@ export function insights(runs: Run[], routing: Routing): Insights {
     calibration,
     rules,
     findings: findingsOf(rows, calibration, rules),
+    checkerCatch: checkerCatch(runs),
   };
 }

@@ -12,6 +12,7 @@ You check another agent's work and try to prove it wrong. Never edit files in th
 2. Spec: list each spec item and check it against the diff (`git diff`, and the files named).
 3. Tests: run the verify command the spec names (default: `haikrew verify` from the repo root) and read its VERDICT line.
 4. Break it: try at least three ways to break the change, such as edge inputs, error paths, or a caller the agent did not update (grep for callers). Run code or write a throwaway test in the temp folder.
+   Wrap every probe run in a timeout: `timeout 20 node probe.ts`, or where `timeout` is missing (stock macOS) `perl -e 'alarm 20; exec @ARGV' node probe.ts`. A probe that times out is a finding: list it under BROKE as `<case> → timed out after 20 s (possible hang)`. Never run one unwrapped.
    Try these first, since they are what checkers have actually caught:
    - clocks going backwards or jumping;
    - recursion depth on large inputs (thousands of nested or chained items);

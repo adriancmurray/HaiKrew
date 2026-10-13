@@ -16,6 +16,8 @@ export type ReviewInput = {
   explored?: boolean;
   /** The model of the main conversation. With `deep_inline` on, a deep review stays with it when it is at least as strong as the deep reviewer. */
   mainModel?: string;
+  /** Checked runs of this job, language and size, and how many of them the checker found a defect in. The caller counts them. */
+  checkerBucket?: { checked: number; defects: number };
 };
 
 /** The `review` section of the settings, as the decision reads it. */
@@ -26,6 +28,8 @@ export type ReviewSettings = {
   light_lines: number;
   /** "checker" (a Haiku checker agent) or "inline" (the main agent glances at the diff). */
   light_reviewer: string;
+  /** Checked runs of one kind with no checker-found defect after which the checker is skipped. 0 never skips. */
+  checker_skip_after: number;
   deep_lines: number;
   standard_reviewer: string;
   deep_reviewer: string;
@@ -140,6 +144,13 @@ function deepPlan(input: ReviewInput, cfg: ReviewSettings, allowOpus: boolean, d
   return { tier: "deep", reviewer, reasons };
 }
 
+/** The checked-run count when the checker can be skipped for this light change, else null. */
+function checkerSkip(input: ReviewInput, cfg: ReviewSettings): number | null {
+  const b = input.checkerBucket;
+  if (cfg.light_reviewer !== "checker" || cfg.checker_skip_after <= 0 || b === undefined) return null;
+  return b.checked >= cfg.checker_skip_after && b.defects === 0 ? b.checked : null;
+}
+
 /**
  * The review tier, reviewer and reasons for one finished agent. Pure: the settings and the Opus allowance come in as values.
  * Order: disabled, then no files changed, then deep, then light, else standard.
@@ -153,7 +164,10 @@ export function reviewPlan(input: ReviewInput, cfg: ReviewSettings, allowOpus: b
   // An explored run is checked properly: a light glance would not tell whether the cheaper model did well.
   if (allLight && input.lines < cfg.light_lines && input.testsPassed !== false && !input.explored) {
     const reasons = [`only light paths changed, ${input.lines} lines`];
-    const reviewer = cfg.light_reviewer === "checker" ? { model: "haiku", effort: "medium", agent: CHECKER_AGENT } : null;
+    const skipped = checkerSkip(input, cfg);
+    if (skipped !== null) reasons.push(`checker found nothing in ${skipped} runs of this kind`);
+    const reviewer = cfg.light_reviewer === "checker" && skipped === null
+      ? { model: "haiku", effort: "medium", agent: CHECKER_AGENT } : null;
     return { tier: "light", reviewer, reasons };
   }
   const reasons: string[] = [];

@@ -67,7 +67,16 @@ test("findings are at most five, most evidence first, and an empty ledger has no
   const { findings } = insights(many, SONNET_DEFAULT);
   expect(findings.map((f) => f.count)).toEqual([20, 10, 9, 8, 6]);
   expect(findings[0].text).toMatch(/haiku passed 20 of 20 judged runs on review \/ ts/);
-  expect(insights([], SONNET_DEFAULT)).toEqual({ judged: 0, calibration: { judged: 0, over: 0, under: 0 }, rules: [], findings: [] });
+  expect(insights([], SONNET_DEFAULT)).toEqual({ judged: 0, calibration: { judged: 0, over: 0, under: 0 }, rules: [], findings: [], checkerCatch: [] });
+});
+
+test("the checker catch rate rides along in the insights, over the checked runs with a defect count", () => {
+  const ins = insights([
+    run({ checked_by: "Ada", checker_defects: 1 }),
+    run({ checked_by: "Bo", checker_defects: 0 }),
+    run({ checked_by: "Cy" }),
+  ], SONNET_DEFAULT);
+  expect(ins.checkerCatch).toEqual([{ job: "implement", lang: "rust", size_level: "", checked: 2, with_defects: 1, rate: 0.5 }]);
 });
 
 test("currentPick takes the first rule whose conditions hold for the job and language, else the default", () => {

@@ -1,5 +1,14 @@
 HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gate), adds squeeze and read guards on tool calls, keeps a ledger of agent runs, and shows the crew in a `/haikrew` pane. Release 0.1.0 introduced the gate, guards, ledger, pane, the haiku-coder and haiku-scout agents and the crew-overseer skill. Releases 0.4.0 to 0.5.5 added per-task model rules, rule effort and selectors, checks, ledger suggestions and a packaging change. Releases 0.6.0 to 0.6.5 redesigned the `/haikrew` pane and the band above the prompt, made the crew the default route for spec-able work, gave subagents names, set token warnings per model and added review tiers. The newest release covered here is 0.6.5, dated 2026-10-12.
 
+## Unreleased
+
+Lab evidence (15 tasks over three runs): two parallel Haiku coders never beat one, an adversarial checker found real defects the tests missed in most realistic tasks, and checkers sometimes hung on their own infinite-loop probes.
+
+- Bench: the `bench/` folder holds six terse-spec tasks with hidden suites, reference solutions and `prep.sh`, `score.sh` and `refcheck.sh`; its README records setups S and C, and B (two parallel coders) as retired, with the run 3 numbers. `scripts/try.sh` runs `refcheck.sh` (about 5 s). New skill `bench` tells the main model how to launch a Sonnet lab lead to measure setups or models.
+- Checker: every probe run is wrapped in a 20 s timeout (`timeout`, or `perl alarm` on macOS), and a probe that times out is reported as a finding.
+- Checker stats: when a check run stops, its BROKE entries that show a defect are counted as `defects_found` on the checker's run and `checker_defects` on the checked run. The Insights card and `haikrew analyze` show the checker catch rate per job, language and size: checked runs with at least one defect, out of checked runs that have a count.
+- Data-driven checker skip: new setting `review.checker_skip_after` (default 15, 0 never skips). A light change whose job, language and size has that many checked runs with no checker-found defect gets no checker (the main model glances), with the reason "checker found nothing in N runs of this kind".
+
 ## 0.6.7 — 2026-10-12
 
 - Marketplace: a second entry, `clefkit` (typed decisions from Clef models, from `adriancmurray/Clefkit`, path `plugin`), and a README section on using it as the decider backend.

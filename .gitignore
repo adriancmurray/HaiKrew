@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 tsconfig.json
 .claude/worktrees/
+bench/runs/

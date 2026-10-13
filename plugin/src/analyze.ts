@@ -7,8 +7,8 @@ import { isObject } from "./mod/api.ts";
 import { settingsFrom } from "./mod/config.ts";
 import { insights, MIN_JUDGED, routingFrom } from "./mod/insights.ts";
 import { readState } from "./mod/ledger.ts";
-import { outcomeStats } from "./mod/outcomes.ts";
-import type { OutcomeRow } from "./mod/outcomes.ts";
+import { checkerCatch, outcomeStats } from "./mod/outcomes.ts";
+import type { CatchRow, OutcomeRow } from "./mod/outcomes.ts";
 
 /** A file in the store folder with its modification time in milliseconds. */
 export type StoreFile = { path: string; mtime: number };
@@ -56,6 +56,14 @@ function outcomeLines(rows: OutcomeRow[]): string[] {
   );
 }
 
+function checkerLines(rows: CatchRow[]): string[] {
+  if (rows.length === 0) return ["No checked runs with a recorded defect count yet."];
+  return grid(
+    ["Job", "Lang", "Size", "Checked", "With defects", "Catch rate"],
+    rows.map((r) => [r.job, r.lang, r.size_level || "-", String(r.checked), String(r.with_defects), pct(r.rate)]),
+  );
+}
+
 /**
  * The report for a stored object (the store file's parsed JSON) as plain text. `source` names the file in the header.
  * Pure: nothing is read beyond the object given.
@@ -67,6 +75,7 @@ export function report(stored: unknown, source: string): string {
   const lines = [
     `HaiKrew analyze: ${state.runs.length} runs kept raw in ${source}, ${ins.judged} judged`, "",
     "Outcomes by model, job, language and size", ...outcomeLines(outcomeStats(state.runs)), "",
+    "Checker catch rate by job, language and size", ...checkerLines(checkerCatch(state.runs)), "",
   ];
   if (ins.judged < MIN_JUDGED) return [...lines, "Not enough judged runs yet.", ""].join("\n");
   const cal = ins.calibration;

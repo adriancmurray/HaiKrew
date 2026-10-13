@@ -21,6 +21,8 @@ import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
 import { activityOf, agentModel, liveUsage, modelFamily, noteMainChunk, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteToolChange, noteTurnEnd, rowFor, specOf, touched } from "../src/mod/crew.ts";
 import { addRun, applyChecked, combineUsage, finalReport, parseCheckerVerdict, readState, runFromStop, summary } from "../src/mod/ledger.ts";
 import { buildPacket, reviewNote, testsClaim } from "../src/mod/packet.ts";
+import { applyDefects, countDefects } from "../src/mod/checker.ts";
+import { checkerBucket, sizeOf } from "../src/mod/outcomes.ts";
 import { reviewPlan } from "../src/mod/review.ts";
 import type { ReviewSettings } from "../src/mod/review.ts";
 import { registerPane } from "../src/mod/pane.ts";
@@ -316,17 +318,21 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
   const checked = parseCheckerVerdict(run.report);
   if (checked) {
     await ledgerLock(async () => {
-      await $.store.set("ledger", applyChecked(readState(await $.store.get("ledger")), { name: checked.name }, checked.verdict, name));
+      const marked = applyChecked(readState(await $.store.get("ledger")), { name: checked.name }, checked.verdict, name);
+      await $.store.set("ledger", applyDefects(marked, { checkerId: id, checkedName: checked.name }, countDefects(run.report)));
     });
     return;
   }
   if (run.job === "review" || run.job === "check") return;
   const cfg = await loadSettings($);
-  const stats = summary(readState(await $.store.get("ledger"))).by_key
+  const state = readState(await $.store.get("ledger"));
+  const stats = summary(state).by_key
     .find((k) => k.model === run.model && k.job === run.job && k.lang === run.lang);
   const record = stats && Number(stats.judged) > 0 ? { judged: Number(stats.judged), passRate: Number(stats.pass_rate) } : null;
   const { paths, lines } = touched(id);
-  const plan = reviewPlan({ mainModel: await sessionModel($), job: run.job, lang: run.lang, paths, lines, testsPassed: testsClaim(run.report), model: run.model, record, explored: wasExplored(id) },
+  const own = state.runs.find((r) => r.agent_id === id);
+  const bucket = checkerBucket(state.runs, run.job, run.lang, own ? sizeOf(own) : "");
+  const plan = reviewPlan({ checkerBucket: bucket, mainModel: await sessionModel($), job: run.job, lang: run.lang, paths, lines, testsPassed: testsClaim(run.report), model: run.model, record, explored: wasExplored(id) },
     (cfg as unknown as { review: ReviewSettings }).review, Boolean(cfg.gate.allow_opus));
   if (plan.tier === "none") return;
   const packet = buildPacket({ name, type: String(e.agent_type ?? "agent"), model: run.model, spec: specOf(id), report: run.report,

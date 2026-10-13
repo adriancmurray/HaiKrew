@@ -6,9 +6,16 @@
 import type { Settings } from "../schema.ts";
 import { insights, MIN_JUDGED, routingFrom } from "./insights.ts";
 import type { LedgerState } from "./ledger.ts";
+import type { CatchRow } from "./outcomes.ts";
 import { ruleSentence } from "./rules.ts";
 import { foldCard, textAndControls, txt } from "./ui.ts";
 import type { Actions, CardFrame, Ui } from "./ui.ts";
+
+/** One checker catch row as a sentence: the group, then how many checked runs had a defect. */
+function catchSentence(c: CatchRow): string {
+  const group = `${c.job} / ${c.lang}${c.size_level ? " / " + c.size_level : ""}`;
+  return `${group}: ${c.with_defects} of ${c.checked} checked runs had a defect (${Math.round(c.rate * 100)}%)`;
+}
 
 /** The Insights card, open by default. Until some model has MIN_JUDGED judged runs it says there is not enough yet. */
 export function insightsSection(ui: Ui, act: Actions, frame: CardFrame, state: LedgerState, settings: Settings): unknown {
@@ -19,10 +26,12 @@ export function insightsSection(ui: Ui, act: Actions, frame: CardFrame, state: L
       txt(ui, { dimColor: true }, `A rule is suggested once a model has ${MIN_JUDGED} judged runs in a job and language.`),
     ]);
   }
-  const nothing = ins.findings.length === 0 && ins.rules.length === 0;
+  const nothing = ins.findings.length === 0 && ins.rules.length === 0 && ins.checkerCatch.length === 0;
   const summary = ins.findings[0]?.text ?? "Nothing stands out yet.";
   return foldCard(ui, act, frame, "card-insights", "Insights", `${ins.judged} judged runs`, summary, true, [
     ...ins.findings.map((f) => txt(ui, { wrap: "wrap" }, f.text)),
+    ins.checkerCatch.length ? txt(ui, { bold: true }, "Checker catch rate") : null,
+    ...ins.checkerCatch.map((c) => txt(ui, { wrap: "wrap" }, catchSentence(c))),
     ins.rules.length ? txt(ui, { bold: true }, "Suggested rules") : null,
     ...ins.rules.map((r, i) => textAndControls(ui, [
       txt(ui, { wrap: "wrap" }, ruleSentence(r.rule)),

@@ -43,6 +43,23 @@ test("analyze prints the outcome table, calibration, proposed rules and findings
   expect(io.stdout).toContain("haiku passed 8 of 9 judged runs");
 });
 
+test("analyze lists the checker catch rate by job, language and size, and says so when no checked run has a defect count", () => {
+  const path = "/store/haikrew_inline-checked.json";
+  const runs = [
+    run("pass", "claude-haiku-5-5", { checked_by: "Ada", checker_defects: 2 }),
+    run("pass", "claude-haiku-5-5", { checked_by: "Bo", checker_defects: 0 }),
+    run("pass", "claude-haiku-5-5", { checked_by: "Cy" }),
+  ];
+  const io = fakeIo({ [path]: JSON.stringify(store(runs)) });
+  expect(analyze(path, io)).toBe(0);
+  expect(io.stdout).toContain("Checker catch rate by job, language and size");
+  expect(io.stdout).toMatch(/Job\s+Lang\s+Size\s+Checked\s+With defects\s+Catch rate/);
+  expect(io.stdout).toMatch(/implement\s+rust\s+-\s+2\s+1\s+50%/);
+  expect(report(store([run("pass")]), "fixture")).toContain(
+    "Checker catch rate by job, language and size\nNo checked runs with a recorded defect count yet.",
+  );
+});
+
 test("analyze reads the newest store file when no path is given", () => {
   const older = "/store/haikrew_inline-a.json";
   const newer = "/store/haikrew_inline-b.json";

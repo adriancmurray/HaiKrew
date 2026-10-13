@@ -38,6 +38,10 @@ export type Run = {
   name?: string;
   /** Who checked it (the reviewer's name) when a checker's verdict replaced the run's own. */
   checked_by?: string;
+  /** On a checker's own run: how many of its BROKE entries showed a defect. */
+  defects_found?: number;
+  /** On a checked run: how many defects its checker found. Absent on runs checked before this was recorded. */
+  checker_defects?: number;
   /** What the decider said about this launch, when it was asked. Folded away with the run by condense(). */
   decision?: DecisionRecord;
 } & LateFields;

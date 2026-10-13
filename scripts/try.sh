@@ -27,6 +27,9 @@ tail -1 "$log"
 if ! claude plugin validate plugin > "$log" 2>&1; then cat "$log"; exit 1; fi
 tail -1 "$log"
 if ! node --test tests/*.spec.ts > "$log" 2>&1; then tail -20 "$log"; exit 1; fi
+# The bench's hidden suites must pass on the reference solutions (about 5 s).
+bench=$(bash bench/refcheck.sh 2>&1); rm -rf bench/runs
+if ! echo "$bench" | awk '$2=="REF"{n++; split($4,a,"[=/]"); if(a[2]!=a[3]||a[3]==0) bad=1} END{exit (bad||n==0)}'; then echo "$bench" >&2; echo "bench: a hidden suite fails on its reference solution" >&2; exit 1; fi
 rm -f "$log"
 
 # The next dev version: 0.6.2 -> 0.6.3-dev.1, 0.6.3-dev.1 -> 0.6.3-dev.2. scripts/release.sh sets the final one

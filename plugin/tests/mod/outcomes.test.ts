@@ -1,6 +1,6 @@
 /** Mod tests for routing outcomes: grouping, judged and checked rates, late failures, escalations and paid tokens. */
 import { expect, test } from "claude-code/testing";
-import { outcomeStats } from "../../src/mod/outcomes.ts";
+import { checkerBucket, checkerCatch, outcomeStats } from "../../src/mod/outcomes.ts";
 import type { Run } from "../../src/mod/ledger.ts";
 
 const run = (over: Partial<Run>): Run => ({
@@ -55,6 +55,44 @@ test("a run whose crew name reappears on a bigger model later counts as escalate
   ]);
   expect(rows.find((r) => r.model === "haiku")?.escalations).toBe(1);
   expect(rows.find((r) => r.model === "sonnet")?.escalations).toBe(0);
+});
+
+test("checkerCatch groups checked runs by job, language and size, most checked first, with the share that had a defect", () => {
+  const sized = (over: Partial<Run>, size: string) => ({ ...run(over), decision: { features: { size_level: size } } } as unknown as Run);
+  const rows = checkerCatch([
+    run({ checked_by: "Ada", checker_defects: 0 }),
+    run({ checked_by: "Bo", checker_defects: 2 }),
+    run({ checked_by: "Cy", checker_defects: 1 }),
+    sized({ checked_by: "Di", checker_defects: 0 }, "large"),
+    run({ job: "review", checked_by: "Ed", checker_defects: 0 }),
+  ]);
+  expect(rows).toEqual([
+    { job: "implement", lang: "rust", size_level: "", checked: 3, with_defects: 2, rate: 2 / 3 },
+    { job: "implement", lang: "rust", size_level: "large", checked: 1, with_defects: 0, rate: 0 },
+    { job: "review", lang: "rust", size_level: "", checked: 1, with_defects: 0, rate: 0 },
+  ]);
+});
+
+test("checkerCatch leaves out runs with no checker or no recorded defect count; they are unknown, not clean", () => {
+  expect(checkerCatch([
+    run({ verdict: "pass" }),
+    run({ checker_defects: 0 }),
+    run({ checked_by: "Ada" }),
+    run({ checked_by: "Bo", checker_defects: 0 }),
+  ])).toEqual([{ job: "implement", lang: "rust", size_level: "", checked: 1, with_defects: 0, rate: 0 }]);
+  expect(checkerCatch([run({ verdict: "pass" })])).toEqual([]);
+});
+
+test("checkerBucket counts the checked runs of one job, language and size, and those with a defect", () => {
+  const runs = [
+    run({ checked_by: "Ada", checker_defects: 0 }),
+    run({ checked_by: "Bo", checker_defects: 3 }),
+    run({ checked_by: "Cy" }),
+    run({ lang: "ts", checked_by: "Di", checker_defects: 1 }),
+  ];
+  expect(checkerBucket(runs, "implement", "rust", "")).toEqual({ checked: 2, defects: 1 });
+  expect(checkerBucket(runs, "implement", "ts", "")).toEqual({ checked: 1, defects: 1 });
+  expect(checkerBucket(runs, "implement", "rust", "large")).toEqual({ checked: 0, defects: 0 });
 });
 
 test("paid tokens per accepted result count Sonnet and Opus only; Haiku tokens are reported apart", () => {
