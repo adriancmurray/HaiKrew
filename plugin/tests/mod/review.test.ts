@@ -14,8 +14,12 @@ const CFG: ReviewSettings = {
   deep_lines: 400,
   standard_reviewer: "sonnet@medium",
   deep_reviewer: "opus@high",
+  deep_inline: false,
   deep_jobs: ["security", "migration", "concurrency", "protocol"],
 };
+
+/** The settings with the main model allowed to review deep changes itself. */
+const INLINE: ReviewSettings = { ...CFG, deep_inline: true };
 
 /** A finished agent that changed one plain source file of 120 lines and passed its tests. */
 function input(over: Partial<ReviewInput> = {}): ReviewInput {
@@ -101,8 +105,8 @@ test("an agent that changed no files gets no review", () => {
   expect(plan.reasons).toEqual(["changed no files"]);
 });
 
-test("a deep review stays inline when the main model is at least as strong as the deep reviewer", () => {
-  const plan = reviewPlan(input({ ...SENSITIVE, mainModel: "claude-opus-5" }), CFG, true);
+test("with deep_inline on, a deep review stays inline when the main model is at least as strong as the deep reviewer", () => {
+  const plan = reviewPlan(input({ ...SENSITIVE, mainModel: "claude-opus-5" }), INLINE, true);
   expect(plan.tier).toBe("deep");
   expect(plan.reviewer).toBe("inline");
   expect(plan.reasons).toEqual([
@@ -111,9 +115,18 @@ test("a deep review stays inline when the main model is at least as strong as th
   ]);
 });
 
+test("with deep_inline off (the default), a deep review goes to the deep reviewer even when the main model is Opus", () => {
+  const plan = reviewPlan(input({ ...SENSITIVE, mainModel: "claude-opus-5" }), CFG, true);
+  expect(plan.tier).toBe("deep");
+  expect(plan.reviewer).toEqual({ model: "opus", effort: "high" });
+  expect(plan.reasons).toEqual(["plugin/hooks/register.ts matches sensitive path **/hooks/**"]);
+  expect(reviewPlan(input({ ...SENSITIVE, mainModel: "claude-sonnet-5" }), { ...CFG, deep_reviewer: "sonnet@high" }, false).reviewer)
+    .toEqual({ model: "sonnet", effort: "high" });
+});
+
 test("the model rank ignores case and reads the family inside a full model id", () => {
-  expect(reviewPlan(input({ ...SENSITIVE, mainModel: "CLAUDE-OPUS-5" }), CFG, true).reviewer).toBe("inline");
-  expect(reviewPlan(input({ ...SENSITIVE, mainModel: "Claude-Sonnet-5" }), { ...CFG, deep_reviewer: "SONNET@high" }, true).reviewer).toBe("inline");
+  expect(reviewPlan(input({ ...SENSITIVE, mainModel: "CLAUDE-OPUS-5" }), INLINE, true).reviewer).toBe("inline");
+  expect(reviewPlan(input({ ...SENSITIVE, mainModel: "Claude-Sonnet-5" }), { ...INLINE, deep_reviewer: "SONNET@high" }, true).reviewer).toBe("inline");
 });
 
 test("a weaker main model leaves the deep review to the deep reviewer", () => {
@@ -129,13 +142,13 @@ test("a main model that names no known family, or none at all, does not review i
 });
 
 test("a sonnet main model reviews inline for a sonnet deep reviewer, and an opus one does too", () => {
-  const cfg = { ...CFG, deep_reviewer: "sonnet@high" };
+  const cfg = { ...INLINE, deep_reviewer: "sonnet@high" };
   expect(reviewPlan(input({ ...SENSITIVE, mainModel: "claude-sonnet-5" }), cfg, false).reviewer).toBe("inline");
   expect(reviewPlan(input({ ...SENSITIVE, mainModel: "claude-opus-5" }), cfg, false).reviewer).toBe("inline");
 });
 
 test("without the Opus allowance, the reviewer that would run is Sonnet, so a Sonnet main model reviews inline", () => {
-  const plan = reviewPlan(input({ ...SENSITIVE, mainModel: "claude-sonnet-5" }), CFG, false);
+  const plan = reviewPlan(input({ ...SENSITIVE, mainModel: "claude-sonnet-5" }), INLINE, false);
   expect(plan.reviewer).toBe("inline");
   expect(plan.reasons).not.toContain("Opus not allowed");
 });
@@ -163,11 +176,13 @@ test("every review schema default validates", () => {
   const d = defaults().review ?? {};
   const fields = SCHEMA.review?.fields ?? {};
   expect(Object.keys(fields)).toEqual(["enabled", "sensitive_paths", "light_paths", "light_lines", "light_reviewer", "deep_lines",
-    "standard_reviewer", "deep_reviewer", "deep_jobs"]);
+    "standard_reviewer", "deep_reviewer", "deep_inline", "deep_jobs"]);
   for (const key of Object.keys(fields)) expect(validate("review", key, d[key])).toBe(null);
   expect(d.light_reviewer).toBe("checker");
   expect(validate("review", "light_reviewer", "inline")).toBe(null);
   expect(validate("review", "light_reviewer", "sonnet")).not.toBe(null);
-  expect(d.deep_reviewer).toBe("opus@high");
+  expect(d.deep_reviewer).toBe("sonnet@high");
+  expect(d.deep_inline).toBe(false);
+  expect(validate("review", "deep_inline", "yes")).not.toBe(null);
   expect(d.standard_reviewer).toBe("sonnet@medium");
 });

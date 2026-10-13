@@ -106,7 +106,8 @@ Settings are kept in the mod store (`$.store`, key `settings`), not in a file, a
 | `review.light_reviewer` | `"checker"` | Who checks a light review: `checker` (a Haiku agent, `haikrew:haiku-checker`, that tries to break the change and ends with a `VERDICT` line) or `inline` (the main model glances at the diff and calls `record_verdict`). |
 | `review.deep_lines` | `400` | Changes of at least this many lines always get a deep review. |
 | `review.standard_reviewer` | `"sonnet@medium"` | Model and effort of the reviewer for a standard review, as `model@effort`. |
-| `review.deep_reviewer` | `"opus@high"` | Model and effort of the reviewer for a deep review. Opus needs `gate.allow_opus`; without it, Sonnet at high effort reviews. |
+| `review.deep_reviewer` | `"sonnet@high"` | Model and effort of the reviewer for a deep review. Opus needs `gate.allow_opus`; without it, Sonnet at high effort reviews. |
+| `review.deep_inline` | `false` | On: the main model reviews a deep change itself when it is at least as strong as the deep reviewer, and no reviewer runs. Off: a reviewer agent does it. |
 | `review.deep_jobs` | `["security", "migration", "concurrency", "protocol"]` | Jobs (the `HAIKREW job=` tag) that always get a deep review. |
 | `squeeze.enabled` | `true` | Redirect matching commands. |
 | `squeeze.patterns` | 7 regexes (cargo, swift, xcodebuild, pytest, npm/pnpm/yarn/bun, go, make) | Regexes matched against the start of a Bash command. |

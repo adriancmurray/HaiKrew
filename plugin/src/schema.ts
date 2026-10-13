@@ -141,10 +141,12 @@ export const SCHEMA: Record<string, Section> = {
       standard_reviewer: { label: "Standard reviewer", type: "enum", default: "sonnet@medium",
         choices: ["sonnet@low", "sonnet@medium", "sonnet@high", "haiku@high", "opus@medium"],
         help: "Model and effort of the reviewer for a standard review. An Opus choice needs Allow Opus." },
-      deep_reviewer: { label: "Deep reviewer", type: "enum", default: "opus@high",
+      deep_reviewer: { label: "Deep reviewer", type: "enum", default: "sonnet@high",
         choices: ["opus@high", "opus@medium", "opus@xhigh", "sonnet@high"],
-        help: "Model and effort of the reviewer for a deep review. Without Allow Opus, Sonnet at high effort reviews instead. " +
-          "When the main model is at least as strong, it reviews the risky hunks itself and no reviewer runs." },
+        help: "Model and effort of the reviewer for a deep review. Without Allow Opus, Sonnet at high effort reviews instead." },
+      deep_inline: { label: "Main agent reviews deep changes itself", type: "bool", default: false,
+        help: "Off: a reviewer agent does it, which costs less than the main thread re-reading its context. " +
+          "On: when the main model is at least as strong as the deep reviewer, it reviews the risky hunks itself and no reviewer runs." },
       deep_jobs: { label: "Deep jobs", type: "list", default: ["security", "migration", "concurrency", "protocol"],
         pattern: "^[a-z0-9_-]+$",
         help: "Agent jobs (the HAIKREW job= tag) that always get a deep review. A longer job starting with one and a - or _ matches too: security covers security-review." },

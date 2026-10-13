@@ -33,7 +33,17 @@ test("the note tells the main model how to follow a review note, once", () => {
   expect(bullets[0]).toContain("`HAIKREW job=review name=...`");
   expect(bullets[0]).toContain("call `review_packet` first");
   expect(bullets[0]).toContain("`VERDICT: PASS|FAIL for <name>`");
-  expect(bullets[0]).toContain("a deep note may instead say to review the risky hunks yourself");
+  expect(bullets[0]).toContain("Only a note that says inline");
+  expect(bullets[0]).not.toContain("a deep note may instead");
+});
+
+test("the note keeps the main thread thin: exploring and checking go to agents, not to the main model", () => {
+  const bullets = delegationNote(GATE).split("\n").filter((l) => l.includes("Keep this thread thin"));
+  expect(bullets.length).toBe(1);
+  expect(bullets[0]).toContain("every tool call here re-reads the whole conversation");
+  expect(bullets[0]).toContain("`Explore` (model haiku)");
+  expect(bullets[0]).toContain("`haikrew:haiku-checker` (`HAIKREW job=check`)");
+  expect(delegationNote(GATE)).toContain("then verify it with `haikrew:haiku-checker`");
 });
 
 test("with the tools on given explicitly, the note is the same as by default", () => {

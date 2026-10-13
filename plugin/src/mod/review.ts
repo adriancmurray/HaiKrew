@@ -14,7 +14,7 @@ export type ReviewInput = {
   record: { judged: number; passRate: number } | null;
   /** The decider had the agent run a cheaper model than its pick, to learn what that model can do. */
   explored?: boolean;
-  /** The model of the main conversation. A deep review stays with it when it is at least as strong as the deep reviewer. */
+  /** The model of the main conversation. With `deep_inline` on, a deep review stays with it when it is at least as strong as the deep reviewer. */
   mainModel?: string;
 };
 
@@ -29,6 +29,8 @@ export type ReviewSettings = {
   deep_lines: number;
   standard_reviewer: string;
   deep_reviewer: string;
+  /** Whether the main model reviews a deep change itself when it is at least as strong as the deep reviewer. */
+  deep_inline: boolean;
   deep_jobs: string[];
 };
 
@@ -121,15 +123,16 @@ function reviewerFor(spec: string, allowOpus: boolean, reasons: string[]): { mod
 }
 
 /**
- * A deep plan. The main model reviews inline when it is known and at least as strong as the reviewer that would run,
- * so no fresh reviewer re-derives context the main model already has. Otherwise the deep reviewer runs.
+ * A deep plan. With `deep_inline` on, the main model reviews inline when it is known and at least as strong as the reviewer
+ * that would run, so no fresh reviewer re-derives context the main model already has. Otherwise the deep reviewer runs:
+ * the main thread then never re-reads its own long context to review.
  */
 function deepPlan(input: ReviewInput, cfg: ReviewSettings, allowOpus: boolean, deep: string[]): ReviewPlan {
   const reasons = [...deep];
   const reviewer = reviewerFor(cfg.deep_reviewer, allowOpus, reasons);
   const main = rank(input.mainModel);
   const r = rank(reviewer.model);
-  if (main >= 0 && r >= 0 && main >= r) {
+  if (cfg.deep_inline && main >= 0 && r >= 0 && main >= r) {
     const why = `reviewed inline: ${modelName(input.mainModel ?? "")} is at least as strong as ${modelName(reviewer.model)}`;
     return { tier: "deep", reviewer: "inline", reasons: [...deep, why] };
   }

@@ -29,15 +29,19 @@ export function delegationNote(g: DelegateSettings, toolsOn = true): string {
     "# HaiKrew: delegate to the crew (standing request from the user)",
     "I have HaiKrew's model gate on because I want work handed to cheap subagents. Treat this as my standing request to " +
       "use subagents: you do not need to ask me first, and it replaces any default against starting agents unasked.",
+    "- Keep this thread thin: every tool call here re-reads the whole conversation. Don't read files, diffs or logs or run tests " +
+      "yourself. Send exploration to `Explore` (model haiku) and verification to `haikrew:haiku-checker` (`HAIKREW job=check`), " +
+      "and act on their short reports. When you must act directly, put the steps in one tool call. Keep inline only decisions, " +
+      "specs, and edits of a few lines.",
     "- Code to a clear spec (new modules, edits, refactors, renames, tests from a list of cases): write the spec, launch " +
-      "`haiku-coder`, then verify the result yourself. Follow the crew-overseer skill. Several small agents beat one big one.",
+      "`haiku-coder`, then verify it with `haikrew:haiku-checker`. Follow the crew-overseer skill. Several small agents beat one big one.",
     "- Web fact-finding: `haiku-scout`. Broad read-only code search: `Explore`.",
     "- Keep inline: design, decisions, reviewing anything security- or concurrency-sensitive, and edits of a few lines.",
     "- Start each agent prompt with a tag line, e.g. `HAIKREW job=implement lang=ts name=Katherine_JSON`, so routing rules and " +
       "the ledger can match it. Give each agent a name: a famous scientist, artist or inventor with a coding twist that suits " +
       "its task (Vincent van Go, Marie Curl, Ludwig van Buildhoven), underscores for spaces; HaiKrew picks one if you don't.",
-    `- When HaiKrew posts a review note after an agent finishes, follow it: ${review}; a deep note may instead say to review ` +
-      "the risky hunks yourself. Fix or re-run failed work before building on it.",
+    `- When HaiKrew posts a review note after an agent finishes, follow it: ${review}. Only a note that says inline (when the ` +
+      "settings let the main model review deep changes) means you review the risky hunks yourself. Fix or re-run failed work before building on it.",
     `- Gate settings now: agents launched without a model run on ${name(g.default_model)}; ` +
       (g.allow_opus ? "Opus subagents are allowed; " : "Opus subagents are refused, so don't request them; ") +
       `routing rules (first match wins): ${rules}; ` +

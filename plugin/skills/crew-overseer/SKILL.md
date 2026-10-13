@@ -10,7 +10,8 @@ description: Overseer workflow for getting code written by cheap haiku-coder sub
 ## Model tiers
 | Work | Who |
 |---|---|
-| Design, decisions, contracts, reviewing diffs that touch security, protocol or concurrency | Main model (Opus), inline, no subagent |
+| Design, decisions, contracts | Main model (Opus), inline, no subagent |
+| Reviewing diffs that touch security, protocol or concurrency | A deep reviewer agent (see Review tiers) |
 | Writing code to a spec, mechanical refactors, renames, tests from a list of cases, codegen adoption | `haiku-coder` |
 | A task Haiku blocked on twice, or one needing judgment across many files | `Agent` with `model: "sonnet"`, same spec |
 | Broad read-only search | `Explore` with `model: "haiku"` |
@@ -31,11 +32,14 @@ Split work so each spec is one crate or module and about 300 lines of output or 
 When a subagent finishes, HaiKrew writes a review packet (spec, report, files changed, test claim) and posts a review note naming a tier. Don't open the agent's transcript; the packet and the report (120 words at most) are enough. The note says what to do. If HaiKrew's review tools are on (Settings › General › Agent control set to read or change), it names them; if they are off, the note carries the packet text and names no tool.
 - **Light** (only docs or tests, a small diff, tests not failing): launch the checker the note names, `haikrew:haiku-checker`, with `HAIKREW job=check name=<Name>`. It is an adversarial Haiku checker: it checks each spec item, runs verify and tries to break the change, and ends with `VERDICT: PASS|FAIL for <Name>`, which sets the run's verdict. Its `job=check` tag keeps it off the `job:review` routing rule. With `review.light_reviewer` set to inline, glance at the diff and call `record_verdict` with pass or fail instead (with the tools off, say pass or fail in your reply).
 - **Standard** (everything else): launch the reviewer the note names with `HAIKREW job=review name=<Name>`. With the tools on, tell it to call `review_packet` first; with them off, paste the packet from the note into its prompt. Either way it ends with `VERDICT: PASS|FAIL for <Name>`.
-- **Deep** (a sensitive path, a large diff, a job such as security, migration, concurrency or protocol (`security-review` counts too), failing tests, or a model with a weak record on this job): if the main model is at least as strong as the deep reviewer (haiku < sonnet < opus), the note says the review is inline. Then review the risky hunks yourself (public API, security, concurrency, permissions, data loss), record the result, and launch no reviewer. Otherwise the same as standard, with the deep reviewer.
+- **Deep** (a sensitive path, a large diff, a job such as security, migration, concurrency or protocol (`security-review` counts too), failing tests, or a model with a weak record on this job): the same as standard, with the deep reviewer the note names. Only when `review.deep_inline` is on and the main model is at least as strong as that reviewer (haiku < sonnet < opus) does the note say the review is inline. Then review the risky hunks yourself (public API, security, concurrency, permissions, data loss), record the result, and launch no reviewer.
 
 The checker's verdict replaces the run's own in the ledger, marked with the checker's name. Then:
-1. Run `haikrew verify` yourself in the worktree. Trust the verdict, not the report, and read only the diff hunks that carry risk: public API, unsafe code, concurrency, permissions.
-2. If a review or verify fails, send a short correction with SendMessage to the same agent (its context is intact), or re-run the work. Fix failed work before building on it. After two failed corrections, escalate to Sonnet or do it inline.
+1. Launch `haikrew:haiku-checker` with the spec and the agent's name, and read only its five-line report. Do not run `haikrew verify` or read diff hunks yourself.
+2. On FAIL, SendMessage the worker the failing lines. After two failed corrections, re-run the work on the next model up.
+
+## Thin main thread
+Every tool call re-reads the whole conversation, so the main thread must not explore, read diffs or logs, or run tests. Send exploration to `Explore` (model haiku) and verification to `haikrew:haiku-checker`, act on their short reports, put the steps of any direct action in one tool call, and keep inline only decisions, specs and edits of a few lines.
 
 ## Budget discipline
 - One round of agents per user message. Say up front how many agents and what each does.
