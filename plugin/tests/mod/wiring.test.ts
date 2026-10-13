@@ -1,6 +1,7 @@
 /** Hook wiring through the mounted mod: spawn gets model, instructions and effort; turn.step applies it; checks fire. */
 import { expect, test } from "claude-code/testing";
 import { resetCrew } from "../../src/mod/crew.ts";
+import { leadNote } from "../../src/mod/delegate.ts";
 import { resetEffort } from "../../src/mod/effort.ts";
 import { resetHealth } from "../../src/mod/health.ts";
 import { resetSeams } from "../../src/mod/seam.ts";
@@ -279,4 +280,49 @@ test("a slow decider health check does not hold up a spawn, and a decider known 
   expect(seen.spawn.model).toBe("haiku"); // known offline: the gate's default stands and no decider call is made
   expect(seen.asks).toBe(1);
   resetHealth();
+});
+
+/** The lead note's opening line, as the spawn prompt carries it when it has one. */
+const LEAD = "# HaiKrew: you lead a Haiku crew";
+const IMPLEMENT = "HAIKREW job=implement lang=ts name=Ada\nedit it";
+
+test("a Sonnet implement spawn's prompt gets the lead note, once", async (ctx: any, on: any) => {
+  const seen: Record<string, any> = {};
+  host(on, seen, [], { gate: { enabled: true, rules: ["job:implement=sonnet"] } });
+  await ctx.agent.spawn({ prompt: IMPLEMENT, description: "d", subagentType: "general-purpose", parentModel: "opus", background: false, fork: false });
+  expect(seen.spawn.model).toBe("sonnet");
+  expect(seen.spawn.prompt.split(LEAD).length - 1).toBe(1);
+  expect(seen.spawn.prompt.endsWith("- Run independent pieces in parallel.")).toBe(true);
+});
+
+test("a Haiku implement spawn gets no lead note", async (ctx: any, on: any) => {
+  const seen: Record<string, any> = {};
+  host(on, seen, [], { gate: { enabled: true, rules: ["job:implement=sonnet"] } });
+  await ctx.agent.spawn({ prompt: IMPLEMENT, description: "d", subagentType: "general-purpose", parentModel: "opus", background: false, fork: false, model: "haiku" });
+  expect(seen.spawn.model).toBe("haiku");
+  expect(seen.spawn.prompt).not.toContain(LEAD);
+});
+
+test("a Sonnet review spawn gets no lead note", async (ctx: any, on: any) => {
+  const seen: Record<string, any> = {};
+  host(on, seen);
+  await ctx.agent.spawn({ prompt: "HAIKREW job=review lang=ts\nReview it.", description: "review", subagentType: "general-purpose", parentModel: "opus", background: false, fork: false });
+  expect(seen.spawn.model).toBe("sonnet");
+  expect(seen.spawn.prompt).not.toContain(LEAD);
+});
+
+test("no lead note when nesting is off", async (ctx: any, on: any) => {
+  const seen: Record<string, any> = {};
+  host(on, seen, [], { gate: { enabled: true, rules: ["job:implement=sonnet"], allow_nested: false } });
+  await ctx.agent.spawn({ prompt: IMPLEMENT, description: "d", subagentType: "general-purpose", parentModel: "opus", background: false, fork: false });
+  expect(seen.spawn.model).toBe("sonnet");
+  expect(seen.spawn.prompt).not.toContain(LEAD);
+});
+
+test("a prompt that already carries the lead note is not given a second copy", async (ctx: any, on: any) => {
+  const seen: Record<string, any> = {};
+  host(on, seen, [], { gate: { enabled: true, rules: ["job:implement=sonnet"] } });
+  const once = `${IMPLEMENT}\n\n${leadNote({ enabled: true, delegate: true, allow_nested: true } as any)}`;
+  await ctx.agent.spawn({ prompt: once, description: "d", subagentType: "general-purpose", parentModel: "opus", background: false, fork: false });
+  expect(seen.spawn.prompt.split(LEAD).length - 1).toBe(1);
 });

@@ -79,6 +79,16 @@ export function subagentNote(g: DelegateSettings, family: string, job: string): 
   return leadNote(g);
 }
 
+/**
+ * The spawn prompt with the subagent's lead note appended, when its model family and job get one (see subagentNote). A prompt
+ * that already carries the note is returned unchanged, so a re-sent prompt never doubles it.
+ */
+export function withLeadNote(g: DelegateSettings, prompt: string, family: string, job: string): string {
+  const note = subagentNote(g, family, job);
+  if (!note || prompt.includes(note)) return prompt;
+  return `${prompt}\n\n${note}`;
+}
+
 /** Context blocks with `note` appended to the CLAUDE.md block (added as one when there is none). Unchanged for "". */
 export function withNote(blocks: unknown, note: string): unknown {
   if (!note || !Array.isArray(blocks)) return blocks;

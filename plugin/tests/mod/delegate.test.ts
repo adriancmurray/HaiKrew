@@ -1,6 +1,6 @@
 /** The delegation note: off with the gate or the switch, built from the gate settings, appended once. */
 import { expect, test } from "claude-code/testing";
-import { delegationNote, leadNote, subagentNote, withNote } from "../../src/mod/delegate.ts";
+import { delegationNote, leadNote, subagentNote, withLeadNote, withNote } from "../../src/mod/delegate.ts";
 import type { DelegateSettings } from "../../src/mod/delegate.ts";
 
 const GATE: DelegateSettings = {
@@ -96,4 +96,19 @@ test("a Sonnet implement agent gets the lead note; Haiku, review and check agent
 test("the main thread still gets the delegation note, not the lead note", () => {
   expect(delegationNote(GATE)).toContain("# HaiKrew: delegate to the crew");
   expect(delegationNote(GATE)).not.toContain("you lead a Haiku crew");
+});
+
+test("withLeadNote appends the lead note to a Sonnet implement prompt, once", () => {
+  const prompt = "HAIKREW job=implement lang=ts name=Ada\nedit it";
+  const once = withLeadNote(GATE, prompt, "sonnet", "implement");
+  expect(once).toBe(`${prompt}\n\n${leadNote(GATE)}`);
+  expect(withLeadNote(GATE, once, "sonnet", "implement")).toBe(once);
+});
+
+test("withLeadNote leaves Haiku, review, check and nesting-off prompts unchanged", () => {
+  const prompt = "HAIKREW job=implement lang=ts name=Ada\nedit it";
+  expect(withLeadNote(GATE, prompt, "haiku", "implement")).toBe(prompt);
+  expect(withLeadNote(GATE, prompt, "sonnet", "review")).toBe(prompt);
+  expect(withLeadNote(GATE, prompt, "sonnet", "check")).toBe(prompt);
+  expect(withLeadNote({ ...GATE, allow_nested: false }, prompt, "sonnet", "implement")).toBe(prompt);
 });

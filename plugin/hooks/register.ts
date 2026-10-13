@@ -24,7 +24,7 @@ import { buildPacket, reviewNote, testsClaim } from "../src/mod/packet.ts";
 import { reviewPlan } from "../src/mod/review.ts";
 import type { ReviewSettings } from "../src/mod/review.ts";
 import { registerPane } from "../src/mod/pane.ts";
-import { delegationNote, subagentNote, withNote } from "../src/mod/delegate.ts";
+import { delegationNote, withLeadNote, withNote } from "../src/mod/delegate.ts";
 import type { DelegateSettings } from "../src/mod/delegate.ts";
 import { ledgerLock } from "../src/mod/serial.ts";
 import { checkHealth, healthLine } from "../src/mod/health.ts";
@@ -60,7 +60,11 @@ export function register(on) {
       }
     }
     return gate(gateCfg, named, async (passed) => {
-      const reply = await next(passed);
+      // The lead note rides in the spawn prompt: a subagent's first turn is then sure to carry it, with no lookup racing
+      // the spawn. Forks inherit the parent's model, so they get none.
+      const lead = passed.fork ? passed : { ...passed, prompt: withLeadNote(gateCfg as unknown as DelegateSettings,
+        String(passed.prompt ?? ""), modelFamily(String(passed.model ?? "")), promptTag(passed.prompt, "job")) };
+      const reply = await next(lead);
       noteSpawn(passed, reply, Date.now(), choice.rule);
       $.ui.invalidate("ui.render"); // crew changed: the band and pane redraw
       const id = typeof reply?.agentId === "string" ? reply.agentId : "";
@@ -75,15 +79,12 @@ export function register(on) {
   });
 
   // The main conversation's context: while the gate is on, the user's standing request to delegate (see delegate.ts).
-  // A subagent gets only the lead note, and only when it is Sonnet or Opus on a job that is not a review or check, so a
-  // haiku-coder is not told to hand its work on again.
+  // A subagent gets none here: its lead note, when it has one, is in its spawn prompt (agent.spawn).
   on("prompt.context", async ($, e, next) => {
     const cfg = await loadSettings($);
     const gate = cfg.gate as unknown as DelegateSettings;
     const id = typeof e.agentId === "string" ? e.agentId : "";
-    const note = id
-      ? subagentNote(gate, modelFamily(agentModel(id)), promptTag(specOf(id), "job"))
-      : delegationNote(gate, toolsOn(cfg));
+    const note = id ? "" : delegationNote(gate, toolsOn(cfg));
     return next(note ? { ...e, blocks: withNote(e.blocks, note) } : e);
   });
 
