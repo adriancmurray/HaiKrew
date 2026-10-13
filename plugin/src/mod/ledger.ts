@@ -42,6 +42,8 @@ export type Run = {
   defects_found?: number;
   /** On a checked run: how many defects its checker found. Absent on runs checked before this was recorded. */
   checker_defects?: number;
+  /** On a light run whose checker was skipped by review.checker_skip_after. */
+  checker_skipped?: boolean;
   /** What the decider said about this launch, when it was asked. Folded away with the run by condense(). */
   decision?: DecisionRecord;
 } & LateFields;

@@ -12,6 +12,7 @@ const CFG: ReviewSettings = {
   light_lines: 60,
   light_reviewer: "checker",
   checker_skip_after: 15,
+  checker_recheck_every: 5,
   deep_lines: 400,
   standard_reviewer: "sonnet@medium",
   deep_reviewer: "opus@high",
@@ -48,9 +49,9 @@ test("a light review with the checker names the checker agent and keeps the ligh
   expect(plan.reviewer).toEqual({ model: "haiku", effort: "medium", agent: "haikrew:haiku-checker" });
 });
 
-/** A docs-only light change of 20 lines, with a checker bucket of `checked` runs and `defects` defects. */
-function light(checked: number, defects: number, over: Partial<ReviewInput> = {}): ReviewInput {
-  return input({ paths: ["docs/guide.md"], lines: 20, checkerBucket: { checked, defects }, ...over });
+/** A docs-only light change of 20 lines, with a checker bucket of `checked` clean runs and `skipped` skipped runs. */
+function light(checked: number, skipped: number, over: Partial<ReviewInput> = {}): ReviewInput {
+  return input({ paths: ["docs/guide.md"], lines: 20, checkerBucket: { checked, skipped }, ...over });
 }
 
 const CHECKER = { model: "haiku", effort: "medium", agent: "haikrew:haiku-checker" };
@@ -59,17 +60,19 @@ test("the checker is skipped at exactly checker_skip_after clean runs, and the m
   const plan = reviewPlan(light(15, 0), CFG, false);
   expect(plan.tier).toBe("light");
   expect(plan.reviewer).toBe(null);
+  expect(plan.skipped).toBe(true);
   expect(plan.reasons).toEqual(["only light paths changed, 20 lines", "checker found nothing in 15 runs of this kind"]);
 });
 
-test("the checker still runs one clean run short of checker_skip_after", () => {
+test("the checker still runs one clean run short of checker_skip_after, and the plan is not marked skipped", () => {
   const plan = reviewPlan(light(14, 0), CFG, false);
   expect(plan.reviewer).toEqual(CHECKER);
   expect(plan.reasons).toEqual(["only light paths changed, 20 lines"]);
+  expect(plan.skipped).toBe(undefined);
 });
 
-test("one checker-found defect in the bucket keeps the checker, however many clean runs", () => {
-  const plan = reviewPlan(light(20, 1), CFG, false);
+test("a defect resets the clean count, so a kind with too few clean runs since keeps the checker", () => {
+  const plan = reviewPlan(light(0, 0), CFG, false);
   expect(plan.reviewer).toEqual(CHECKER);
   expect(plan.reasons).toEqual(["only light paths changed, 20 lines"]);
 });
@@ -93,8 +96,28 @@ test("the inline light reviewer is unchanged by the skip: no reviewer, and no sk
   expect(plan.reasons).toEqual(["only light paths changed, 20 lines"]);
 });
 
+test("a skipped kind still skips while fewer than checker_recheck_every runs have been skipped", () => {
+  const plan = reviewPlan(light(15, 3), CFG, false);
+  expect(plan.reviewer).toBe(null);
+  expect(plan.skipped).toBe(true);
+  expect(plan.reasons).toEqual(["only light paths changed, 20 lines", "checker found nothing in 15 runs of this kind"]);
+});
+
+test("the fifth run of a skipped kind is checked again, with the skipped count as the reason", () => {
+  const plan = reviewPlan(light(15, 4), CFG, false);
+  expect(plan.reviewer).toEqual(CHECKER);
+  expect(plan.skipped).toBe(undefined);
+  expect(plan.reasons).toEqual(["only light paths changed, 20 lines", "checker re-run: 4 runs skipped since the last check"]);
+});
+
+test("checker_recheck_every 0 never re-checks a skipped kind", () => {
+  const plan = reviewPlan(light(15, 100), { ...CFG, checker_recheck_every: 0 }, false);
+  expect(plan.reviewer).toBe(null);
+  expect(plan.skipped).toBe(true);
+});
+
 test("the skip does not apply to a standard review", () => {
-  const plan = reviewPlan(input({ checkerBucket: { checked: 20, defects: 0 } }), CFG, false);
+  const plan = reviewPlan(input({ checkerBucket: { checked: 20, skipped: 0 } }), CFG, false);
   expect(plan.tier).toBe("standard");
   expect(plan.reviewer).toEqual({ model: "sonnet", effort: "medium" });
   expect(plan.reasons).toEqual(["changes outside the light paths"]);
@@ -229,7 +252,7 @@ test("every review schema default validates", () => {
   const d = defaults().review ?? {};
   const fields = SCHEMA.review?.fields ?? {};
   expect(Object.keys(fields)).toEqual(["enabled", "sensitive_paths", "light_paths", "light_lines", "light_reviewer",
-    "checker_skip_after", "deep_lines", "standard_reviewer", "deep_reviewer", "deep_inline", "deep_jobs"]);
+    "checker_skip_after", "checker_recheck_every", "deep_lines", "standard_reviewer", "deep_reviewer", "deep_inline", "deep_jobs"]);
   for (const key of Object.keys(fields)) expect(validate("review", key, d[key])).toBe(null);
   expect(d.light_reviewer).toBe("checker");
   expect(validate("review", "light_reviewer", "inline")).toBe(null);
@@ -237,6 +260,9 @@ test("every review schema default validates", () => {
   expect(d.checker_skip_after).toBe(15);
   expect(validate("review", "checker_skip_after", 0)).toBe(null);
   expect(validate("review", "checker_skip_after", -1)).not.toBe(null);
+  expect(d.checker_recheck_every).toBe(5);
+  expect(validate("review", "checker_recheck_every", 0)).toBe(null);
+  expect(validate("review", "checker_recheck_every", -1)).not.toBe(null);
   expect(d.deep_reviewer).toBe("sonnet@high");
   expect(d.deep_inline).toBe(false);
   expect(validate("review", "deep_inline", "yes")).not.toBe(null);

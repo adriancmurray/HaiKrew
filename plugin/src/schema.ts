@@ -141,7 +141,10 @@ export const SCHEMA: Record<string, Section> = {
         help: "checker: a Haiku agent checks each spec item, runs verify and tries to break the change; its VERDICT line sets the run's verdict. " +
           "inline: the main model glances at the diff and records the verdict itself." },
       checker_skip_after: { label: "Skip the checker after", type: "int", default: 15, min: 0, max: 100000,
-        help: "Light changes: once this many checked runs of the same job, language and size found no defect, the checker is skipped for that kind and the main model glances instead. 0 never skips." },
+        help: "Light changes: once this many checked runs of the same job, language and size found no defect, the checker is skipped for that kind and the main model glances instead. " +
+          "A defect found resets the skip. 0 never skips." },
+      checker_recheck_every: { label: "Re-check every", type: "int", default: 5, min: 0, max: 100000,
+        help: "Once the checker is being skipped for a kind, it still checks every Nth light run of that kind. A defect found resets the skip. 0 never re-checks." },
       deep_lines: { label: "Deep from (lines)", type: "int", default: 400, min: 1, max: 1000000,
         help: "Changes of at least this many lines always get a deep review." },
       standard_reviewer: { label: "Standard reviewer", type: "enum", default: "sonnet@medium",

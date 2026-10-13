@@ -334,6 +334,13 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
   const bucket = checkerBucket(state.runs, run.job, run.lang, own ? sizeOf(own) : "");
   const plan = reviewPlan({ checkerBucket: bucket, mainModel: await sessionModel($), job: run.job, lang: run.lang, paths, lines, testsPassed: testsClaim(run.report), model: run.model, record, explored: wasExplored(id) },
     (cfg as unknown as { review: ReviewSettings }).review, Boolean(cfg.gate.allow_opus));
+  if (plan.skipped) {
+    // Counted per bucket by checkerBucket, so every Nth skipped kind gets a checker again.
+    await ledgerLock(async () => {
+      const cur = readState(await $.store.get("ledger"));
+      await $.store.set("ledger", { ...cur, runs: cur.runs.map((r) => (r.agent_id === id ? { ...r, checker_skipped: true } : r)) });
+    });
+  }
   if (plan.tier === "none") return;
   const packet = buildPacket({ name, type: String(e.agent_type ?? "agent"), model: run.model, spec: specOf(id), report: run.report,
     paths, lines, testsPassed: testsClaim(run.report), plan });

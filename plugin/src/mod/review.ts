@@ -16,8 +16,11 @@ export type ReviewInput = {
   explored?: boolean;
   /** The model of the main conversation. With `deep_inline` on, a deep review stays with it when it is at least as strong as the deep reviewer. */
   mainModel?: string;
-  /** Checked runs of this job, language and size, and how many of them the checker found a defect in. The caller counts them. */
-  checkerBucket?: { checked: number; defects: number };
+  /**
+   * The checker's streak for this job, language and size: clean checked runs since the last defect, and skipped runs since
+   * the last checked run. The caller counts them (checkerBucket in outcomes.ts).
+   */
+  checkerBucket?: { checked: number; skipped: number };
 };
 
 /** The `review` section of the settings, as the decision reads it. */
@@ -28,8 +31,10 @@ export type ReviewSettings = {
   light_lines: number;
   /** "checker" (a Haiku checker agent) or "inline" (the main agent glances at the diff). */
   light_reviewer: string;
-  /** Checked runs of one kind with no checker-found defect after which the checker is skipped. 0 never skips. */
+  /** Clean checked runs of one kind after which the checker is skipped. 0 never skips. */
   checker_skip_after: number;
+  /** While the checker is skipped, it still checks every Nth light run of the kind. 0 never re-checks. */
+  checker_recheck_every: number;
   deep_lines: number;
   standard_reviewer: string;
   deep_reviewer: string;
@@ -48,11 +53,13 @@ export const REVIEWER_AGENT = "haikrew:sonnet-reviewer";
 /**
  * The chosen tier, the reviewer's model and effort, "inline" when the main model reviews the risky hunks itself,
  * null when nothing reviews, and the reasons for the choice. `agent` names the agent type that reviews, when one does.
+ * `skipped` is set when a light change's checker is skipped for its kind.
  */
 export type ReviewPlan = {
   tier: Tier;
   reviewer: { model: string; effort: string; agent?: string } | "inline" | null;
   reasons: string[];
+  skipped?: true;
 };
 
 // ponytail: only ** (any folders), * (one segment) and ? (one character); no braces or character classes, which the
@@ -144,11 +151,16 @@ function deepPlan(input: ReviewInput, cfg: ReviewSettings, allowOpus: boolean, d
   return { tier: "deep", reviewer, reasons };
 }
 
-/** The checked-run count when the checker can be skipped for this light change, else null. */
-function checkerSkip(input: ReviewInput, cfg: ReviewSettings): number | null {
+/**
+ * The checker's state for a light change whose kind has earned a skip, else null. `skip` is false when the re-check is due
+ * this run: the (N)th skipped run of the kind is checked, so `skipped + 1` reaches `checker_recheck_every`.
+ */
+function checkerSkip(input: ReviewInput, cfg: ReviewSettings): { skip: boolean; checked: number; skipped: number } | null {
   const b = input.checkerBucket;
   if (cfg.light_reviewer !== "checker" || cfg.checker_skip_after <= 0 || b === undefined) return null;
-  return b.checked >= cfg.checker_skip_after && b.defects === 0 ? b.checked : null;
+  if (b.checked < cfg.checker_skip_after) return null;
+  const recheck = cfg.checker_recheck_every > 0 && b.skipped + 1 >= cfg.checker_recheck_every;
+  return { skip: !recheck, checked: b.checked, skipped: b.skipped };
 }
 
 /**
@@ -164,11 +176,15 @@ export function reviewPlan(input: ReviewInput, cfg: ReviewSettings, allowOpus: b
   // An explored run is checked properly: a light glance would not tell whether the cheaper model did well.
   if (allLight && input.lines < cfg.light_lines && input.testsPassed !== false && !input.explored) {
     const reasons = [`only light paths changed, ${input.lines} lines`];
-    const skipped = checkerSkip(input, cfg);
-    if (skipped !== null) reasons.push(`checker found nothing in ${skipped} runs of this kind`);
-    const reviewer = cfg.light_reviewer === "checker" && skipped === null
+    const state = checkerSkip(input, cfg);
+    if (state?.skip) reasons.push(`checker found nothing in ${state.checked} runs of this kind`);
+    else if (state !== null) reasons.push(`checker re-run: ${state.skipped} runs skipped since the last check`);
+    const skipped = state?.skip === true;
+    const reviewer = cfg.light_reviewer === "checker" && !skipped
       ? { model: "haiku", effort: "medium", agent: CHECKER_AGENT } : null;
-    return { tier: "light", reviewer, reasons };
+    const plan: ReviewPlan = { tier: "light", reviewer, reasons };
+    if (skipped) plan.skipped = true;
+    return plan;
   }
   const reasons: string[] = [];
   if (!allLight) reasons.push("changes outside the light paths");

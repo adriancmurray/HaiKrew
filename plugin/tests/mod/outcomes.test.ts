@@ -83,16 +83,53 @@ test("checkerCatch leaves out runs with no checker or no recorded defect count; 
   expect(checkerCatch([run({ verdict: "pass" })])).toEqual([]);
 });
 
-test("checkerBucket counts the checked runs of one job, language and size, and those with a defect", () => {
+/** A run at hour `h` of 2026-10-08, for the checker bucket's oldest-first walk. */
+const at = (h: number, over: Partial<Run> = {}): Run => run({ ts: `2026-10-08T${String(h).padStart(2, "0")}:00:00Z`, ...over });
+
+test("checkerBucket counts the clean checked runs since the last defect, for one job, language and size", () => {
   const runs = [
-    run({ checked_by: "Ada", checker_defects: 0 }),
-    run({ checked_by: "Bo", checker_defects: 3 }),
-    run({ checked_by: "Cy" }),
-    run({ lang: "ts", checked_by: "Di", checker_defects: 1 }),
+    at(9, { checked_by: "Ada", checker_defects: 0 }),
+    at(10, { checked_by: "Bo", checker_defects: 0 }),
+    at(11, { checked_by: "Cy" }),
+    at(12, { lang: "ts", checked_by: "Di", checker_defects: 0 }),
   ];
-  expect(checkerBucket(runs, "implement", "rust", "")).toEqual({ checked: 2, defects: 1 });
-  expect(checkerBucket(runs, "implement", "ts", "")).toEqual({ checked: 1, defects: 1 });
-  expect(checkerBucket(runs, "implement", "rust", "large")).toEqual({ checked: 0, defects: 0 });
+  expect(checkerBucket(runs, "implement", "rust", "")).toEqual({ checked: 2, skipped: 0 });
+  expect(checkerBucket(runs, "implement", "ts", "")).toEqual({ checked: 1, skipped: 0 });
+  expect(checkerBucket(runs, "implement", "rust", "large")).toEqual({ checked: 0, skipped: 0 });
+});
+
+test("a checker-found defect resets the clean count, and the skipped count too", () => {
+  const runs = [
+    at(9, { checked_by: "Ada", checker_defects: 0 }),
+    at(10, { checked_by: "Bo", checker_defects: 0 }),
+    at(11, { checked_by: "Cy", checker_defects: 2 }),
+    at(12, { checked_by: "Di", checker_defects: 0 }),
+  ];
+  expect(checkerBucket(runs, "implement", "rust", "")).toEqual({ checked: 1, skipped: 0 });
+  expect(checkerBucket([...runs, at(13, { checker_skipped: true })], "implement", "rust", "")).toEqual({ checked: 1, skipped: 1 });
+  const defectLast = [at(9, { checker_skipped: true }), at(10, { checked_by: "Bo", checker_defects: 1 })];
+  expect(checkerBucket(defectLast, "implement", "rust", "")).toEqual({ checked: 0, skipped: 0 });
+});
+
+test("a checked run resets the skipped count, and skipped runs count since the last checked run", () => {
+  const runs = [
+    at(9, { checked_by: "Ada", checker_defects: 0 }),
+    at(10, { checker_skipped: true }),
+    at(11, { checker_skipped: true }),
+  ];
+  expect(checkerBucket(runs, "implement", "rust", "")).toEqual({ checked: 1, skipped: 2 });
+  expect(checkerBucket([...runs, at(12, { checked_by: "Bo", checker_defects: 0 }), at(13, { checker_skipped: true })],
+    "implement", "rust", "")).toEqual({ checked: 2, skipped: 1 });
+});
+
+test("checkerBucket walks the runs oldest first, whatever order they come in", () => {
+  const runs = [
+    at(12, { checker_skipped: true }),
+    at(10, { checked_by: "Bo", checker_defects: 4 }),
+    at(9, { checked_by: "Ada", checker_defects: 0 }),
+    at(11, { checked_by: "Cy", checker_defects: 0 }),
+  ];
+  expect(checkerBucket(runs, "implement", "rust", "")).toEqual({ checked: 1, skipped: 1 });
 });
 
 test("paid tokens per accepted result count Sonnet and Opus only; Haiku tokens are reported apart", () => {

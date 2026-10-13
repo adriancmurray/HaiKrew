@@ -326,3 +326,83 @@ test("a prompt that already carries the lead note is not given a second copy", a
   await ctx.agent.spawn({ prompt: once, description: "d", subagentType: "general-purpose", parentModel: "opus", background: false, fork: false });
   expect(seen.spawn.prompt.split(LEAD).length - 1).toBe(1);
 });
+
+/** A checked ts implement run already in the ledger, as `n` of them make a bucket the skip rule can read. */
+const priorRun = (i: number, defects: number) => ({
+  ts: `2026-10-01T09:00:${String(i).padStart(2, "0")}Z`, session: "s", agent_id: `old${i}`, agent_type: "haiku-coder", model: "claude-haiku-5-5",
+  job: "implement", lang: "ts", duration_s: 1, tokens_in: 1, tokens_out: 1, cache_read: 0, cache_write: 0, tokens_estimated: true,
+  tool_calls: 1, attempts: 1, verdict: "pass", quality: 1, name: `Old ${i}`, checked_by: "Karl Checker", checker_defects: defects,
+});
+
+/** Runs one light docs-only coder stop against a ledger holding `prior`; returns the stored state and the note appended. */
+async function lightStop(ctx: any, on: any, prior: unknown[]): Promise<{ stored: Record<string, any>; appended: any[] }> {
+  resetCrew();
+  resetEffort();
+  resetSeams();
+  on("session.cwd", async () => ({ value: "/Users/someone/projects/app" }));
+  on("agent.spawn", async (_$: any, e: any) => ({ model: e.model ?? "haiku", agentId: "n1" }));
+  on("classic.SubagentStop", async () => ({ value: null }));
+  on("tool.call", async () => ({ result: "ok" }));
+  const stored: Record<string, any> = { settings: SETTINGS, ledger: { runs: prior, buckets: [] } };
+  const appended: any[] = [];
+  on("store.get", async (_$: any, e: any) => ({ value: stored[e.key] }));
+  on("store.set", async (_$: any, e: any) => { stored[e.key] = e.value; return { value: undefined }; });
+  on("fs.read", async () => ({ value: transcriptOf("HAIKREW job=implement lang=ts name=Isaac_Newline\nedit docs", "Done. 5 passed, 0 failed.") }));
+  on("ui.invalidate", async () => ({ value: undefined }));
+  on("session.append", async (_$: any, e: any, next: any) => { appended.push(e); return next(e); });
+  const coder = await ctx.agent.spawn({
+    prompt: "HAIKREW job=implement lang=ts name=Isaac_Newline\nedit docs", description: "edit", subagentType: "haiku-coder",
+    parentModel: "opus", background: false, fork: false,
+  });
+  await ctx.tool.call({ tool: "Edit", agentId: coder.agentId, file_path: "/repo/docs/guide.md", new_string: "a\nb" });
+  await ctx.classic.SubagentStop({ agent_id: coder.agentId, agent_type: "haiku-coder", agent_transcript_path: "/c.jsonl" });
+  return { stored, appended };
+}
+
+test("reviewPlan gets the bucket stats: 15 clean checked runs skip the checker and mark the run", async (ctx: any, on: any) => {
+  const clean = await lightStop(ctx, on, Array.from({ length: 15 }, (_, i) => priorRun(i, 0)));
+  expect(clean.stored.ledger.runs.find((r: any) => r.name === "Isaac Newline").checker_skipped).toBe(true);
+  expect(clean.appended[0]?.message.content[0].text ?? "").not.toContain("haiku-checker");
+});
+
+test("reviewPlan gets the bucket stats: a defect among the checked runs resets the skip, so the checker runs", async (ctx: any, on: any) => {
+  const dirty = await lightStop(ctx, on, Array.from({ length: 15 }, (_, i) => priorRun(i, i === 14 ? 2 : 0)));
+  expect(dirty.stored.ledger.runs.find((r: any) => r.name === "Isaac Newline").checker_skipped).toBeUndefined();
+  expect(dirty.appended[0].message.content[0].text).toContain("haiku-checker");
+});
+
+test("a stopped job=check run with BROKE defects sets checker_defects on the checked run and defects_found on its own", async (ctx: any, on: any) => {
+  resetCrew();
+  resetEffort();
+  resetSeams();
+  on("session.cwd", async () => ({ value: "/Users/someone/projects/app" }));
+  const ids = ["c1", "k1"];
+  on("agent.spawn", async (_$: any, e: any) => ({ model: e.model ?? "haiku", agentId: ids.shift() }));
+  on("classic.SubagentStop", async () => ({ value: null }));
+  on("tool.call", async () => ({ result: "ok" }));
+  const stored: Record<string, any> = { settings: SETTINGS };
+  const transcripts: Record<string, string> = {
+    "/coder.jsonl": transcriptOf("HAIKREW job=implement lang=ts name=Isaac_Newline\nedit it", "Done."),
+    "/checker.jsonl": transcriptOf("HAIKREW job=check name=Karl_Checker\ncheck it",
+      "SPEC   1/1 met — missing: none\nTESTS  verify: PASS (5 passed)\nBROKE  empty → ok; 10k items → stack overflow; unicode → garbled\nRISK   none\nVERDICT: FAIL for Isaac Newline"),
+  };
+  on("store.get", async (_$: any, e: any) => ({ value: stored[e.key] }));
+  on("store.set", async (_$: any, e: any) => { stored[e.key] = e.value; return { value: undefined }; });
+  on("fs.read", async (_$: any, e: any) => ({ value: transcripts[e.path] }));
+  on("ui.invalidate", async () => ({ value: undefined }));
+  on("session.append", async (_$: any, e: any, next: any) => next(e));
+  const coder = await ctx.agent.spawn({
+    prompt: "HAIKREW job=implement lang=ts name=Isaac_Newline\nedit it", description: "edit", subagentType: "haiku-coder",
+    parentModel: "opus", background: false, fork: false,
+  });
+  await ctx.tool.call({ tool: "Edit", agentId: coder.agentId, file_path: "/repo/src/mod/a.ts", new_string: "a\nb" });
+  await ctx.classic.SubagentStop({ agent_id: coder.agentId, agent_type: "haiku-coder", agent_transcript_path: "/coder.jsonl" });
+  const checker = await ctx.agent.spawn({
+    prompt: "HAIKREW job=check name=Karl_Checker\ncheck it", description: "check", subagentType: "haikrew:haiku-checker",
+    parentModel: "opus", background: false, fork: false,
+  });
+  await ctx.classic.SubagentStop({ agent_id: checker.agentId, agent_type: "haikrew:haiku-checker", agent_transcript_path: "/checker.jsonl" });
+  const runs = stored.ledger.runs;
+  expect(runs.find((r: any) => r.name === "Isaac Newline").checker_defects).toBe(2);
+  expect(runs.find((r: any) => r.agent_id === "k1").defects_found).toBe(2);
+});

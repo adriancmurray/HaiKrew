@@ -163,14 +163,21 @@ export function checkerCatch(runs: Run[]): CatchRow[] {
   return rows.sort((a, b) => b.checked - a.checked || text(a.job, b.job) || text(a.lang, b.lang) || text(a.size_level, b.size_level));
 }
 
-/** The checked runs of one job, language and size, and how many of them had a defect. */
-export function checkerBucket(runs: Run[], job: string, lang: string, size: string): { checked: number; defects: number } {
-  const out = { checked: 0, defects: 0 };
-  for (const run of runs) {
+/**
+ * The checker's streak for one job, language and size, walking its runs oldest first. `checked` is the clean checked runs
+ * since the last checker-found defect, which resets it. `skipped` is the runs the checker was skipped for since the last
+ * checked run. A defect or a checked run resets `skipped`.
+ */
+export function checkerBucket(runs: Run[], job: string, lang: string, size: string): { checked: number; skipped: number } {
+  const mine = runs.filter((run) => run.job === job && run.lang === lang && sizeOf(run) === size);
+  mine.sort((a, b) => text(a.ts, b.ts));
+  const out = { checked: 0, skipped: 0 };
+  for (const run of mine) {
     const defects = checkedDefects(run);
-    if (defects === null || run.job !== job || run.lang !== lang || sizeOf(run) !== size) continue;
-    out.checked += 1;
-    if (defects > 0) out.defects += 1;
+    if (defects !== null) {
+      out.checked = defects > 0 ? 0 : out.checked + 1;
+      out.skipped = 0;
+    } else if (run.checker_skipped === true) out.skipped += 1;
   }
   return out;
 }
