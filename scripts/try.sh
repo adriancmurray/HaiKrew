@@ -26,7 +26,7 @@ if grep -q "^(fail)" "$log"; then grep "^(fail)" "$log" >&2; exit 1; fi
 tail -1 "$log"
 if ! claude plugin validate plugin > "$log" 2>&1; then cat "$log"; exit 1; fi
 tail -1 "$log"
-if ! node --test tests/squeeze.spec.ts > "$log" 2>&1; then tail -20 "$log"; exit 1; fi
+if ! node --test tests/*.spec.ts > "$log" 2>&1; then tail -20 "$log"; exit 1; fi
 rm -f "$log"
 
 # The next dev version: 0.6.2 -> 0.6.3-dev.1, 0.6.3-dev.1 -> 0.6.3-dev.2. scripts/release.sh sets the final one

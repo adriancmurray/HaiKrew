@@ -11,10 +11,18 @@ export type DelegateSettings = GateSettings & { delegate: boolean };
 
 const name = (m: string): string => m.charAt(0).toUpperCase() + m.slice(1);
 
-/** The note for these settings, or "" when the gate or the switch is off. */
-export function delegationNote(g: DelegateSettings): string {
+/**
+ * The note for these settings, or "" when the gate or the switch is off. `toolsOn` says whether agents may call HaiKrew's
+ * review tools; when it is off the note names none of them.
+ */
+export function delegationNote(g: DelegateSettings, toolsOn = true): string {
   if (!g.enabled || !g.delegate) return "";
   const rules = g.rules.length ? g.rules.map((r) => `\`${r}\``).join(", ") : "none";
+  const review = toolsOn
+    ? "light → glance at the diff and call `record_verdict`; standard/deep → launch the named reviewer model and effort " +
+      "with `HAIKREW job=review name=...`, telling it to call `review_packet` first and to end with `VERDICT: PASS|FAIL for <name>`"
+    : "light → glance at the diff; standard/deep → launch the named reviewer model and effort with `HAIKREW job=review name=...`, " +
+      "with the packet from the note in its prompt, and let it end with `VERDICT: PASS|FAIL for <name>`";
   return [
     "# HaiKrew: delegate to the crew (standing request from the user)",
     "I have HaiKrew's model gate on because I want work handed to cheap subagents. Treat this as my standing request to " +
@@ -26,9 +34,8 @@ export function delegationNote(g: DelegateSettings): string {
     "- Start each agent prompt with a tag line, e.g. `HAIKREW job=implement lang=ts name=Katherine_JSON`, so routing rules and " +
       "the ledger can match it. Give each agent a name: a famous scientist, artist or inventor with a coding twist that suits " +
       "its task (Vincent van Go, Marie Curl, Ludwig van Buildhoven), underscores for spaces; HaiKrew picks one if you don't.",
-    "- When HaiKrew posts a review note after an agent finishes, follow it: light → glance at the diff and call `record_verdict`; " +
-      "standard/deep → launch the named reviewer model and effort with `HAIKREW job=review name=...`, telling it to call " +
-      "`review_packet` first and to end with `VERDICT: PASS|FAIL for <name>`. Fix or re-run failed work before building on it.",
+    `- When HaiKrew posts a review note after an agent finishes, follow it: ${review}; a deep note may instead say to review ` +
+      "the risky hunks yourself. Fix or re-run failed work before building on it.",
     `- Gate settings now: agents launched without a model run on ${name(g.default_model)}; ` +
       (g.allow_opus ? "Opus subagents are allowed; " : "Opus subagents are refused, so don't request them; ") +
       `routing rules (first match wins): ${rules}; ` +

@@ -11,6 +11,8 @@ import { defaults } from "./schema.ts";
 /** Where full logs go: the system temp folder, so nothing is read from or written to the home folder. */
 const DATA = join(tmpdir(), "haikrew");
 const SQUEEZE_DEFAULTS = defaults().squeeze;
+/** Captured bytes allowed per stream. Node's spawnSync default is 1 MiB, which a noisy passing build exceeds. */
+const MAX_BUFFER = 256 * 1024 * 1024;
 
 /** How one squeezed run is printed and launched. Defaults come from the schema when the CLI gets no flags. */
 export type SqueezeOptions = { maxLines: number; wrap: string; cwd?: string };
@@ -52,22 +54,22 @@ export function run(argv: string[], opts: SqueezeOptions = SQUEEZE_OPTIONS): num
   const maxLines = opts.maxLines;
   const cmd = [...shellSplit(opts.wrap), ...argv];
   const started = performance.now();
-  const proc = spawnSync(cmd[0], cmd.slice(1), { cwd: opts.cwd, encoding: "utf8", stdio: ["inherit", "pipe", "pipe"] });
+  const proc = spawnSync(cmd[0], cmd.slice(1), {
+    cwd: opts.cwd,
+    encoding: "utf8",
+    stdio: ["inherit", "pipe", "pipe"],
+    maxBuffer: MAX_BUFFER,
+  });
   const elapsed = (performance.now() - started) / 1000;
-  let code: number;
-  let output: string;
-  if (proc.error) {
-    code = 127;
-    output = `${proc.error.message}\n`;
-  } else {
-    code = proc.status ?? 1;
-    output = `${proc.stdout ?? ""}${proc.stderr ?? ""}`;
-  }
-  const log = writeLog(argv, output);
-  const body = summarize(argv.join(" "), output).slice(0, maxLines - 2);
+  const err = proc.error as NodeJS.ErrnoException | undefined;
+  const captured = `${proc.stdout ?? ""}${proc.stderr ?? ""}`;
+  const code = err ? (err.code === "ENOENT" ? 127 : 1) : (proc.status ?? 1);
+  const notes = err ? [`squeeze: ${err.message}`] : [];
+  const log = writeLog(argv, err ? `${captured}${err.message}\n` : captured);
+  const body = summarize(argv.join(" "), captured).slice(0, maxLines - 2 - notes.length);
   const head = `squeeze: ${argv.join(" ")} -> exit ${code} in ${elapsed.toFixed(1)}s  (log: ${log})`;
   const verdict = code === 0 ? "VERDICT: PASS" : "VERDICT: FAIL";
-  process.stdout.write([head, ...body, verdict].join("\n") + "\n");
+  process.stdout.write([head, ...notes, ...body, verdict].join("\n") + "\n");
   return code;
 }
 

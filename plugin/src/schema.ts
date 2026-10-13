@@ -139,10 +139,11 @@ export const SCHEMA: Record<string, Section> = {
         help: "Model and effort of the reviewer for a standard review. An Opus choice needs Allow Opus." },
       deep_reviewer: { label: "Deep reviewer", type: "enum", default: "opus@high",
         choices: ["opus@high", "opus@medium", "opus@xhigh", "sonnet@high"],
-        help: "Model and effort of the reviewer for a deep review. Without Allow Opus, Sonnet at high effort reviews instead." },
+        help: "Model and effort of the reviewer for a deep review. Without Allow Opus, Sonnet at high effort reviews instead. " +
+          "When the main model is at least as strong, it reviews the risky hunks itself and no reviewer runs." },
       deep_jobs: { label: "Deep jobs", type: "list", default: ["security", "migration", "concurrency", "protocol"],
         pattern: "^[a-z0-9_-]+$",
-        help: "Agent jobs (the HAIKREW job= tag) that always get a deep review." },
+        help: "Agent jobs (the HAIKREW job= tag) that always get a deep review. A longer job starting with one and a - or _ matches too: security covers security-review." },
     },
   },
   ledger: {

@@ -34,6 +34,10 @@ const LEAD_H = 46;
 const GAP = 14;
 /** Scene pixels kept free at the right for the sun or moon, which opens the pane. */
 const ORB_ROOM = 70;
+/** The most characters the drawing may run to before anchoring, under the host's 131,072-character SVG source limit. */
+const MAX_CHARS = 125_000;
+/** Characters anchorAnimations adds: 1,797 for 16 agents at 1500 px, plus 10% headroom. */
+const ANCHOR_ALLOWANCE = 2_000;
 /** A bot's height by model family; an unknown family is drawn at the smallest size. */
 const HEIGHT: Record<Family, number> = { haiku: 26, sonnet: 30, opus: 34, unknown: 26 };
 const UNKNOWN_COLOUR = "#8a8f9c";
@@ -113,22 +117,38 @@ function placed(id: string, bot: ActResult, cx: number, h: number): { svg: strin
 }
 
 /**
+ * The scenery for the band. When it alone would not fit with the anchoring allowance, its optional extras go in turn:
+ * season particles, then clouds. The city's window blinks stay, since scenery() has no switch for them (at most ten).
+ */
+function sceneryFor(band: BandSettings, look: BandLook, width: number): SceneryResult {
+  const kind = String(band.scenery) as SceneryKind;
+  const clouds = Boolean(band.clouds);
+  const at = (season: Season, withClouds: boolean): SceneryResult =>
+    scenery(kind, look.time, { phase: look.phase, clouds: withClouds, season, width, idPrefix: "sky" });
+  const full = at(effectOf(look.season), clouds);
+  if (full.svg.length + ANCHOR_ALLOWANCE <= MAX_CHARS) return full;
+  const bare = at("none", clouds);
+  return bare.svg.length + ANCHOR_ALLOWANCE <= MAX_CHARS ? bare : at("none", false);
+}
+
+/**
  * The band `width` scene pixels wide: the scenery, the main agent at LEAD_X, then each subagent in turn, GAP past the
- * one before, stopping before the room kept for the sun or moon. Rows that do not fit count as overflow.
+ * one before, stopping before the room kept for the sun or moon. A subagent is added only while the drawing, with its
+ * anchoring allowance, stays within MAX_CHARS. Rows that do not fit count as overflow.
  */
 export function bandScene(crew: Crew, o: BandSceneOptions): BandScene {
   const { width, band, now } = o;
-  const { time, season, phase } = bandLook(band, now);
-  const background = scenery(String(band.scenery) as SceneryKind, time, {
-    phase, clouds: Boolean(band.clouds), season: effectOf(season), width, idPrefix: "sky",
-  });
+  const look = bandLook(band, now);
+  const background = sceneryFor(band, look, width);
   const lead = leadOf(crew);
   const leadFamily = modelFamily(lead.model);
   const headwear = String(band.headwear) as Headwear;
   const first = placed("lead", act(leadAct(lead), { x: 0, ground: FEET, h: LEAD_H, color: colourOf(band, leadFamily), headwear, idPrefix: "a0" }), LEAD_X, LEAD_H);
+  const open = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${H}">`;
   const parts = [first.svg];
   const spots = [first.spot];
   let right = first.right;
+  let length = open.length + "</svg>".length + background.svg.length + first.svg.length;
   let drawn = 0;
   for (const row of crew.rows) {
     const family = modelFamily(row.model);
@@ -136,11 +156,13 @@ export function bandScene(crew: Crew, o: BandSceneOptions): BandScene {
     const left = right + GAP;
     if (left + bot.width > width - ORB_ROOM) break;
     const at = placed(row.id, bot, left - bot.left, HEIGHT[family]);
+    if (length + at.svg.length + ANCHOR_ALLOWANCE > MAX_CHARS) break;
+    length += at.svg.length;
     parts.push(at.svg);
     spots.push(at.spot);
     right = at.right;
     drawn++;
   }
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${H}">${background.svg}${parts.join("")}</svg>`;
+  const svg = `${open}${background.svg}${parts.join("")}</svg>`;
   return { svg, spots, orb: background.orb, overflow: crew.rows.length - drawn };
 }

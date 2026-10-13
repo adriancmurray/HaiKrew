@@ -22,7 +22,7 @@ import { bannerSvg } from "./sprites.ts";
 import { anchorAnimations, gauges, inkFor, table } from "./svg.ts";
 import type { Ink } from "./svg.ts";
 import { C, CARD_INSET, compact, fillColor, foldCard, hexOf, hrow, labelled, modelColor, modelName, onOff, pxOf, thousands, txt, vcol, view, when } from "./ui.ts";
-import type { TimeStyle } from "./ui.ts";
+import type { ModelColours, TimeStyle } from "./ui.ts";
 import type { Actions, CardFrame, Ui } from "./ui.ts";
 
 export type HomeData = {
@@ -45,13 +45,14 @@ export function desktopView(ui: Ui, act: Actions, data: HomeData, gate: unknown,
   const inner = pxOf(cols - CARD_INSET);
   const bannerCols = Math.max(60, Math.round(full / 4));
   const frame: CardFrame = { cols: cols - CARD_INSET };
+  const colours = familyColours(data.settings.band);
   return vcol(ui, { width: cols }, [
     ui.Svg({ source: bannerSvg(full, ink), alt: "HaiKrew", width: full, height: Math.round((full * 22) / bannerCols) }),
     vcol(ui, { paddingX: 2, paddingBottom: 1, rowGap: 2 }, [
       gate,
       controls(ui, act, frame, data.settings),
-      crewCard(ui, act, frame, data.crew, data.messages, Boolean(data.settings.gate.allow_opus)),
-      tokenCard(ui, act, frame, data.usage, data.ledger, data.crew, inner, ink, data.settings.pane.time_style as TimeStyle),
+      crewCard(ui, act, frame, data.crew, data.messages, Boolean(data.settings.gate.allow_opus), colours),
+      tokenCard(ui, act, frame, data.usage, data.ledger, data.crew, inner, ink, data.settings.pane.time_style as TimeStyle, colours),
       recordSection(ui, act, frame, data.ledger, data.settings, inner, ink),
       settingsSection(ui, act, frame, data.settings, cols - 4),
     ]),
@@ -82,7 +83,8 @@ const LEAD_SAYS: Record<LeadState, string> = {
 /**
  * The band above the prompt: the scenery behind the crew, edge to edge, and the crew on its ground, each bot acting out
  * its work. Hovering a bot shows a card with who it is and what it is doing; hovering the sun or moon at the right
- * shows a button that opens the pane. Cards and button are styles the surface applies on hover; no hook runs.
+ * shows a button that opens the pane. Cards and button are styles the surface applies on hover; no hook runs. Bots the
+ * drawing had no room for leave a "+N" after the last one.
  */
 export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: BandOpts): unknown {
   const full = pxOf(cols);
@@ -131,8 +133,25 @@ export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: 
       ui.Button({ key: "band-open", label: `Open HaiKrew ${orb.kind === "sun" ? "☀" : "☾"}`, variant: "primary", onPress: () => opts.open() }),
     ] }),
   ] });
+  const last = scene.spots[scene.spots.length - 1];
+  const more = scene.overflow > 0 && last ? moreMark(ui, dark, scene.overflow, { from: toCol(last.x + last.w) + 1, limit: orbLeft, rows, cardWidth }) : null;
   // An explicit height, with the hover layers clipped to it, so nothing they place can make the band taller.
-  return ui.Box({ key: "crew-band", flexDirection: "column", height: rows, overflow: "hidden", children: [svg, ...targets, opener] });
+  return ui.Box({ key: "crew-band", flexDirection: "column", height: rows, overflow: "hidden", children: [svg, ...targets, opener, ...(more ? [more] : [])] });
+}
+
+/**
+ * The "+N" just after the last bot, for the bots the band did not draw. Hovering it shows a card on the band's top row
+ * that says how many. `from` is the column past the last bot, `limit` the sun or moon's column, `cardWidth` the widest card.
+ */
+function moreMark(ui: Ui, dark: boolean, n: number, geo: { from: number; limit: number; rows: number; cardWidth: number }): unknown {
+  const left = Math.min(geo.from, geo.limit - 1), top = geo.rows - 1;
+  const cardLeft = Math.max(0, Math.min(geo.limit - geo.cardWidth, left - 1));
+  return ui.Box({ key: "band-more", position: "absolute", left, top, width: Math.max(1, Math.min(4, geo.limit - left)), height: 1, children: [
+    txt(ui, { dimColor: true }, `+${n}`),
+    ui.Box({ position: "absolute", top: -top, left: cardLeft - left, width: Math.min(geo.cardWidth, geo.limit - cardLeft), height: 1,
+      display: "none", hover: { display: "flex" }, paddingX: 1, backgroundColor: dark ? "#2b2a27" : "#f1efe8",
+      children: [txt(ui, { wrap: "truncate-end" }, `${n} more ${n === 1 ? "agent" : "agents"} not drawn`)] }),
+  ] });
 }
 
 /** The last band drawing made, unanchored, with the key it was made for. */
@@ -213,14 +232,19 @@ function controls(ui: Ui, act: Actions, frame: CardFrame, s: Settings): unknown 
 }
 
 /** Who is working: one block per agent, its latest message under it while it works. */
-function crewCard(ui: Ui, act: Actions, frame: CardFrame, crew: Crew, messages: Record<string, string>, allowOpus: boolean): unknown {
+function crewCard(ui: Ui, act: Actions, frame: CardFrame, crew: Crew, messages: Record<string, string>, allowOpus: boolean, colours: ModelColours): unknown {
   const done = crew.rows.length - crew.working;
   const note = [crew.working ? `${crew.working} working` : "", done ? `${done} finished` : ""].filter(Boolean).join(" · ");
   const latest = crew.rows.find((r) => messages[r.id]);
   const summary = crew.rows.length === 0 ? "Nobody is working right now." : latest ? `${latest.name}: “${messages[latest.id]}”` : note;
   return foldCard(ui, act, frame, "card-crew", "Your crew", note, summary, true, crew.rows.length === 0
     ? [txt(ui, { dimColor: true }, "Nobody is working right now. When Claude starts a subagent it shows up here and joins the crew above the prompt.")]
-    : crew.rows.map((r) => member(ui, act, r, messages[r.id] ?? "", allowOpus)));
+    : crew.rows.map((r) => member(ui, act, r, messages[r.id] ?? "", allowOpus, colours)));
+}
+
+/** The band's colour settings by model family, so the pane's model dots and bars match the bots in the band. */
+function familyColours(band: Settings["band"]): ModelColours {
+  return { haiku: String(band.haiku_color), sonnet: String(band.sonnet_color), opus: String(band.opus_color) };
 }
 
 /** The model one step up from `model` (Haiku to Sonnet, Sonnet to Opus when Opus is allowed), or "" when none. */
@@ -229,7 +253,7 @@ export function stepUp(model: string, allowOpus: boolean): string {
   return fam === "haiku" ? "sonnet" : fam === "sonnet" && allowOpus ? "opus" : "";
 }
 
-function member(ui: Ui, act: Actions, r: Row, message: string, allowOpus: boolean): unknown {
+function member(ui: Ui, act: Actions, r: Row, message: string, allowOpus: boolean, colours: ModelColours): unknown {
   const live = r.state === "working";
   const detail = [r.task, r.last ? `last used ${r.last}` : ""].filter(Boolean).join(" · ");
   const stats = [fmtElapsed(r.elapsedMs), r.calls ? `${r.calls} ${r.calls === 1 ? "step" : "steps"}` : "", r.tokens ? `${compact(r.tokens)} tokens` : "", r.cached ? `+${compact(r.cached)} cached` : ""]
@@ -242,7 +266,7 @@ function member(ui: Ui, act: Actions, r: Row, message: string, allowOpus: boolea
         txt(ui, { color: r.state === "failed" ? C.bad : live ? C.ok : C.muted }, "●"),
         txt(ui, live ? { bold: true, wrap: "truncate-end" } : { dimColor: true, wrap: "truncate-end" }, r.name),
         txt(ui, { dimColor: true, wrap: "truncate-end" }, r.type),
-        r.model && r.model !== "unknown" ? txt(ui, { color: modelColor(r.model) }, modelName(r.model)) : null,
+        r.model && r.model !== "unknown" ? txt(ui, { color: modelColor(r.model, colours) }, modelName(r.model)) : null,
         r.rule ? txt(ui, { dimColor: true }, `chosen by ${r.rule}`) : null,
         r.state === "failed" ? txt(ui, { color: C.bad }, "failed") : r.state === "done" ? txt(ui, { dimColor: true }, "done") : null,
       ].filter((x) => x !== null)),
@@ -261,7 +285,7 @@ function member(ui: Ui, act: Actions, r: Row, message: string, allowOpus: boolea
 }
 
 /** Token use: rings for context and rate limits, then each model's share of subagent tokens. */
-function tokenCard(ui: Ui, act: Actions, frame: CardFrame, usage: Usage, ledger: LedgerState, crew: Crew, width: number, ink: Ink, style: TimeStyle): unknown {
+function tokenCard(ui: Ui, act: Actions, frame: CardFrame, usage: Usage, ledger: LedgerState, crew: Crew, width: number, ink: Ink, style: TimeStyle, colours: ModelColours): unknown {
   const now = Date.now();
   const ctx: Usage = usage.context ?? {};
   const rings = [{ label: "Context", fraction: Number(ctx.percent ?? 0) / 100, color: hexOf(fillColor(Number(ctx.percent ?? 0) / 100)),
@@ -282,7 +306,7 @@ function tokenCard(ui: Ui, act: Actions, frame: CardFrame, usage: Usage, ledger:
       : ui.Svg({ source: table(
         [{ label: "Subagents", share: 24 }, { label: "Tokens", share: 36 }, { label: "In", share: 10, end: true },
           { label: "Out", share: 10, end: true }, { label: "Cached", share: 10, end: true }, { label: "Runs", share: 10, end: true }],
-        models.map((m) => [{ dot: modelColor(m), text: modelName(m) }, { bar: sum(totals[m]) / most, color: modelColor(m), label: compact(sum(totals[m])) },
+        models.map((m) => [{ dot: modelColor(m, colours), text: modelName(m) }, { bar: sum(totals[m]) / most, color: modelColor(m, colours), label: compact(sum(totals[m])) },
           { text: compact(totals[m].tokens_in), muted: true }, { text: compact(totals[m].tokens_out), muted: true },
           { text: compact(totals[m].cache_read ?? 0), muted: true }, { text: String(totals[m].runs) }]),
         width, models.map((m) => `${modelName(m)}: ${thousands(totals[m].tokens_in)} in, ${thousands(totals[m].tokens_out)} out, ` +

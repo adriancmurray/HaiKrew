@@ -21,6 +21,9 @@ function input(over: Partial<ReviewInput> = {}): ReviewInput {
   return { job: "implement", lang: "ts", paths: ["src/mod/review.ts"], lines: 120, testsPassed: true, model: "sonnet", record: null, ...over };
 }
 
+/** A change that is deep by its path, so the deep reviewer decides how it is checked. */
+const SENSITIVE = { paths: ["plugin/hooks/register.ts"], lines: 10 };
+
 test("a docs-only small change gets a light review, with no reviewer", () => {
   const plan = reviewPlan(input({ paths: ["docs/guide.md", "README.md"], lines: 20 }), CFG, false);
   expect(plan.tier).toBe("light");
@@ -28,7 +31,7 @@ test("a docs-only small change gets a light review, with no reviewer", () => {
 });
 
 test("a change to plugin/hooks/register.ts is deep, and the reason names the path", () => {
-  const plan = reviewPlan(input({ paths: ["plugin/hooks/register.ts"], lines: 10 }), CFG, true);
+  const plan = reviewPlan(input(SENSITIVE), CFG, true);
   expect(plan.tier).toBe("deep");
   expect(plan.reasons).toEqual(["plugin/hooks/register.ts matches sensitive path **/hooks/**"]);
   expect(plan.reviewer).toEqual({ model: "opus", effort: "high" });
@@ -83,6 +86,64 @@ test("an agent that changed no files gets no review", () => {
   const plan = reviewPlan(input({ paths: [], lines: 0 }), CFG, true);
   expect(plan.tier).toBe("none");
   expect(plan.reasons).toEqual(["changed no files"]);
+});
+
+test("a deep review stays inline when the main model is at least as strong as the deep reviewer", () => {
+  const plan = reviewPlan(input({ ...SENSITIVE, mainModel: "claude-opus-5" }), CFG, true);
+  expect(plan.tier).toBe("deep");
+  expect(plan.reviewer).toBe("inline");
+  expect(plan.reasons).toEqual([
+    "plugin/hooks/register.ts matches sensitive path **/hooks/**",
+    "reviewed inline: Opus is at least as strong as Opus",
+  ]);
+});
+
+test("the model rank ignores case and reads the family inside a full model id", () => {
+  expect(reviewPlan(input({ ...SENSITIVE, mainModel: "CLAUDE-OPUS-5" }), CFG, true).reviewer).toBe("inline");
+  expect(reviewPlan(input({ ...SENSITIVE, mainModel: "Claude-Sonnet-5" }), { ...CFG, deep_reviewer: "SONNET@high" }, true).reviewer).toBe("inline");
+});
+
+test("a weaker main model leaves the deep review to the deep reviewer", () => {
+  const sonnet = reviewPlan(input({ ...SENSITIVE, mainModel: "claude-sonnet-5" }), CFG, true);
+  expect(sonnet.reviewer).toEqual({ model: "opus", effort: "high" });
+  const haiku = reviewPlan(input({ ...SENSITIVE, mainModel: "claude-haiku-5-5" }), CFG, true);
+  expect(haiku.reviewer).toEqual({ model: "opus", effort: "high" });
+});
+
+test("a main model that names no known family, or none at all, does not review inline", () => {
+  expect(reviewPlan(input({ ...SENSITIVE, mainModel: "inherit" }), CFG, true).reviewer).toEqual({ model: "opus", effort: "high" });
+  expect(reviewPlan(input(SENSITIVE), CFG, true).reviewer).toEqual({ model: "opus", effort: "high" });
+});
+
+test("a sonnet main model reviews inline for a sonnet deep reviewer, and an opus one does too", () => {
+  const cfg = { ...CFG, deep_reviewer: "sonnet@high" };
+  expect(reviewPlan(input({ ...SENSITIVE, mainModel: "claude-sonnet-5" }), cfg, false).reviewer).toBe("inline");
+  expect(reviewPlan(input({ ...SENSITIVE, mainModel: "claude-opus-5" }), cfg, false).reviewer).toBe("inline");
+});
+
+test("without the Opus allowance, the reviewer that would run is Sonnet, so a Sonnet main model reviews inline", () => {
+  const plan = reviewPlan(input({ ...SENSITIVE, mainModel: "claude-sonnet-5" }), CFG, false);
+  expect(plan.reviewer).toBe("inline");
+  expect(plan.reasons).not.toContain("Opus not allowed");
+});
+
+test("a standard review keeps its cheaper reviewer even when the main model is Opus", () => {
+  const plan = reviewPlan(input({ mainModel: "claude-opus-5" }), CFG, true);
+  expect(plan.tier).toBe("standard");
+  expect(plan.reviewer).toEqual({ model: "sonnet", effort: "medium" });
+});
+
+test("a job equal to a deep job, or starting with one and a - or _, is deep", () => {
+  const dash = reviewPlan(input({ job: "security-review" }), CFG, true);
+  expect(dash.tier).toBe("deep");
+  expect(dash.reasons).toEqual(["job security-review always gets a deep review"]);
+  expect(reviewPlan(input({ job: "security_audit" }), CFG, true).tier).toBe("deep");
+  expect(reviewPlan(input({ job: "migration" }), CFG, true).tier).toBe("deep");
+});
+
+test("a job that only shares a prefix with a deep job is not deep", () => {
+  expect(reviewPlan(input({ job: "securityfix" }), CFG, true).tier).toBe("standard");
+  expect(reviewPlan(input({ job: "migrations" }), CFG, true).tier).toBe("standard");
 });
 
 test("every review schema default validates", () => {

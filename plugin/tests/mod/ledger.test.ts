@@ -61,6 +61,29 @@ test("the last VERDICT or STATUS marker in the final message decides the verdict
   expect(verdictOf("nothing to report")).toBe("none");
 });
 
+test("a checker's VERDICT line for another agent does not judge the run that quotes it", () => {
+  expect(verdictOf("VERDICT: FAIL for Ada")).toBe("none");
+  expect(verdictOf("verdict: fail For Ada")).toBe("none");
+  expect(verdictOf("VERDICT: FAIL for Ada\nVERDICT: PASS")).toBe("pass");
+  expect(verdictOf("VERDICT: PASS for Ada\nSTATUS: blocked")).toBe("fail");
+});
+
+test("interrupted turns and tool results are not attempts, and a real follow-up is", () => {
+  const user = (content: unknown, ts: string) => JSON.stringify({ type: "user", timestamp: ts, message: { content } });
+  const text = [
+    user("HAIKREW job=fix lang=ts\nfix it", "2026-10-08T09:00:00.000Z"),
+    user([{ type: "text", text: "[Request interrupted by user]" }], "2026-10-08T09:00:01.000Z"),
+    user([{ type: "text", text: "[Request interrupted by user for tool use]" }], "2026-10-08T09:00:02.000Z"),
+    user([{ type: "tool_result", tool_use_id: "t1", content: "ok" }], "2026-10-08T09:00:03.000Z"),
+    user([{ type: "tool_result", tool_use_id: "t2", content: "ok" }, { type: "text", text: "[Request interrupted by user]" }],
+      "2026-10-08T09:00:04.000Z"),
+    user("try again", "2026-10-08T09:00:05.000Z"),
+    JSON.stringify({ type: "assistant", timestamp: "2026-10-08T09:00:06.000Z",
+      message: { id: "m5", content: [{ type: "text", text: "VERDICT: PASS" }] } }),
+  ].join("\n");
+  expect(parseTranscriptText(text)).toMatchObject({ attempts: 2, verdict: "pass", quality: 0.5, job: "fix", lang: "ts" });
+});
+
 test("only the final assistant message with text sets the verdict", () => {
   const text = [finalMessage("VERDICT: PASS"), finalMessage("STATUS: blocked")].join("\n");
   expect(parseTranscriptText(text).verdict).toBe("fail");
@@ -106,10 +129,13 @@ test("combineUsage takes the live counts when the transcript saw no more input t
     .toEqual(withLiveUsage(parsed, { input: 40, cacheWrite: 20, cacheRead: 300, output: 7 }));
 });
 
-test("combineUsage keeps the larger count per field when the transcript saw more input, and the live output", () => {
+test("combineUsage keeps the larger count per field when the transcript saw more input, output included", () => {
   const parsed = { ...run("2026-10-01T00:00:00Z", 1, "pass"), tokens_in: 500, cache_write: 100, cache_read: 900, tokens_out: 30 };
   expect(combineUsage(parsed, { input: 40, cacheWrite: 20, cacheRead: 300, output: 7 })).toMatchObject({
-    tokens_in: 500, cache_write: 100, cache_read: 900, tokens_out: 7, tokens_estimated: true,
+    tokens_in: 500, cache_write: 100, cache_read: 900, tokens_out: 30, tokens_estimated: true,
+  });
+  expect(combineUsage(parsed, { input: 40, cacheWrite: 20, cacheRead: 300, output: 45 })).toMatchObject({
+    tokens_in: 500, tokens_out: 45, tokens_estimated: true,
   });
 });
 
@@ -173,7 +199,7 @@ test("tokenTotals sums tokens, cache reads and runs per model across runs", () =
     duration_s: 1, cache_read: 0, tool_calls: 0, attempts: 1, verdict: "pass", quality: 1 };
   let state = addRun({ runs: [], buckets: [] }, { ...base, agent_id: "a1", model: "claude-haiku-5-5", tokens_in: 100, tokens_out: 10 } as never, settings);
   state = addRun(state, { ...base, agent_id: "a2", model: "claude-haiku-5-5", tokens_in: 100, tokens_out: 5 } as never, settings);
-  expect(tokenTotals(state)).toEqual({ "claude-haiku-5-5": { tokens_in: 200, tokens_out: 15, cache_read: 0, runs: 2 } });
+  expect(tokenTotals(state)).toEqual({ "claude-haiku-5-5": { tokens_in: 200, tokens_out: 15, cache_read: 0, runs: 2, estimated_runs: 0 } });
 });
 
 const group = (model: string, n: number, passes: number, lang = "rust", none = 0): Bucket => ({
@@ -188,7 +214,25 @@ test("tokenTotals includes cache reads from runs and from buckets", () => {
       { ...run("2026-10-02T00:00:00Z", 1, "pass"), model: "claude-haiku-5-5", cache_read: 12 }],
     buckets: [{ ...group("claude-haiku-5-5", 2, 1), sum_cache_read: 5 }],
   };
-  expect(tokenTotals(state)).toEqual({ "claude-haiku-5-5": { tokens_in: 10, tokens_out: 4, cache_read: 47, runs: 4 } });
+  expect(tokenTotals(state)).toEqual({ "claude-haiku-5-5": { tokens_in: 10, tokens_out: 4, cache_read: 47, runs: 4, estimated_runs: 2 } });
+});
+
+test("tokenTotals counts the kept runs whose tokens were transcript-counted, and no folded bucket", () => {
+  const haiku = (ts: string) => ({ ...run(ts, 1, "pass"), model: "claude-haiku-5-5" });
+  const state: LedgerState = {
+    runs: [withLiveUsage(haiku("2026-10-01T00:00:00Z"), { input: 1, cacheWrite: 0, cacheRead: 0, output: 9 }), haiku("2026-10-02T00:00:00Z")],
+    buckets: [group("claude-haiku-5-5", 3, 3)],
+  };
+  expect(tokenTotals(state)["claude-haiku-5-5"]).toMatchObject({ runs: 5, estimated_runs: 1, tokens_out: 11 });
+});
+
+test("summary averages output over a group's live-counted runs when it has any, and counts its estimated runs", () => {
+  const live = withLiveUsage(run("2026-10-01T00:00:00Z", 1, "pass"), { input: 1, cacheWrite: 0, cacheRead: 0, output: 100 });
+  const estimated = { ...run("2026-10-02T00:00:00Z", 1, "pass"), tokens_out: 4 };
+  const mixed = summary({ runs: [live, estimated], buckets: [] });
+  expect(mixed.by_key[0]).toMatchObject({ n: 2, tokens_out_mean: 100, estimated_runs: 1 });
+  expect(byModel(mixed.by_key)).toEqual([expect.objectContaining({ n: 2, estimated_runs: 1 })]);
+  expect(summary({ runs: [estimated], buckets: [] }).by_key[0]).toMatchObject({ tokens_out_mean: 4, estimated_runs: 1 });
 });
 
 test("pass rate is over judged runs: 2 pass, 1 fail and 5 none give judged 3 and pass rate 2/3", () => {
@@ -291,10 +335,20 @@ test("an untagged run gets a job inferred from its prompt or agent type, marked 
   expect(runFromStop({ agent_id: "a1", agent_type: "general-purpose" }, text).job).toBe("~research");
 });
 
-test("parseCheckerVerdict reads the last VERDICT line naming an agent", () => {
-  expect(parseCheckerVerdict("VERDICT: FAIL for Ada\nlater\nVERDICT: PASS for Isaac Newline\nlooks fine")).toEqual({ verdict: "pass", name: "Isaac Newline" });
+test("parseCheckerVerdict reads the last VERDICT line naming an agent, as a normalized name", () => {
+  expect(parseCheckerVerdict("VERDICT: FAIL for Ada\nlater\nVERDICT: PASS for Isaac Newline\nlooks fine")).toEqual({ verdict: "pass", name: "isaac newline" });
+  expect(parseCheckerVerdict("VERDICT: FAIL for Katherine_JSON — tests red.")).toEqual({ verdict: "fail", name: "katherine json" });
   expect(parseCheckerVerdict("VERDICT: PASS")).toBe(null);
   expect(parseCheckerVerdict("no verdict")).toBe(null);
+});
+
+test("applyChecked matches a run by name whatever the spelling of either side", () => {
+  const a = { ...run("2026-10-01T00:00:00Z", 0, "none"), name: "Katherine JSON", attempts: 2 };
+  const state: LedgerState = { runs: [a], buckets: [] };
+  expect(applyChecked(state, { name: "katherine_json" }, "pass", "Rev").runs[0]).toMatchObject({ verdict: "pass", quality: 0.5 });
+  expect(applyChecked(state, { name: "Katherine JSON — ok" }, "pass", "Rev").runs[0]).toMatchObject({ verdict: "pass", quality: 0.5 });
+  const from = parseCheckerVerdict("VERDICT: FAIL for Katherine_JSON.");
+  expect(applyChecked(state, { name: from?.name ?? "" }, "fail", "Rev").runs[0]).toMatchObject({ verdict: "fail", quality: 0, checked_by: "Rev" });
 });
 
 test("applyChecked sets the newest matching run's verdict, quality and checker", () => {

@@ -5,7 +5,9 @@
  */
 import { isObject } from "./api.ts";
 import type { Input } from "./api.ts";
+import { claimName, releaseName, resetNames, takenNames } from "./crew-names.ts";
 import { nameFromTag, pickName } from "./names.ts";
+import { outsideTree, shellWrites } from "./shell-writes.ts";
 
 /** Finished agents stay on the roster this long, dimmed, before they drop. */
 export const DONE_LINGER_MS = 60_000;
@@ -36,6 +38,8 @@ type Member = {
   /** Files its Edit, Write and NotebookEdit calls changed, and an estimate of the lines it wrote. */
   paths: Set<string>;
   lines: number;
+  /** Lines counted once for Bash calls that wrote files, whose size is unknown. */
+  shellLines: number;
   /** Its spawn prompt, the first SPEC_MAX characters. */
   spec: string;
 };
@@ -144,25 +148,21 @@ export function leadState(working: number): LeadState {
 
 const members = new Map<string, Member>();
 
-/** Forget every tracked agent. Tests call this so each starts from an empty roster. */
+/** Forget every tracked agent (tests call this). */
 export function resetCrew(): void {
   members.clear();
+  resetNames();
   mainTurn = null;
   activity = "other";
-}
-
-/** The display names the roster holds now. */
-function displayNames(): Set<string> {
-  return new Set([...members.values()].map((m) => m.display));
 }
 
 function member(id: string, now: number): Member {
   let m = members.get(id);
   if (!m) {
     m = {
-      id, display: pickName(id, displayNames()), model: "", subagentType: "", description: "", parentId: null, startedAt: now,
+      id, display: claimName(id, pickName(id, takenNames())), model: "", subagentType: "", description: "", parentId: null, startedAt: now,
       calls: 0, lastTool: "", lastTarget: "", endedAt: null, verdict: "", rule: "", tokens: 0,
-      usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, over: false, paths: new Set(), lines: 0, spec: "",
+      usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, over: false, paths: new Set(), lines: 0, shellLines: 0, spec: "",
     };
     members.set(id, m);
   }
@@ -177,7 +177,10 @@ export function noteSpawn(input: Input, reply: unknown, now: number, rule?: stri
   if (!isObject(reply) || typeof reply.agentId !== "string" || !reply.agentId) return;
   const m = member(reply.agentId, now);
   const tagged = nameFromTag(input.prompt);
-  if (tagged) m.display = tagged;
+  if (tagged && tagged.toLowerCase() !== m.display.toLowerCase()) {
+    releaseName(m.id, m.display);
+    m.display = claimName(m.id, tagged);
+  }
   m.model = String(reply.model ?? input.model ?? "");
   m.rule = rule ? rule.split("=")[0] : "";
   m.subagentType = String(input.subagentType ?? "");
@@ -196,30 +199,50 @@ function resume(m: Member): void {
   m.verdict = "";
 }
 
-/** Count a tool call made inside a subagent and keep its last tool and target. Calls on the main loop have no agentId. */
-export function noteToolCall(e: Input, now: number): void {
+/**
+ * Count a tool call made inside a subagent and keep its last tool and target. Calls on the main loop have no agentId.
+ * File changes are recorded by noteToolChange once the call has run, so pass `changes` false when calling this first.
+ */
+export function noteToolCall(e: Input, now: number, changes = true): void {
   if (typeof e.agentId !== "string" || !e.agentId) return;
   const m = member(e.agentId, now);
   resume(m);
   m.calls += 1;
   m.lastTool = String(e.tool ?? "");
   m.lastTarget = target(e);
-  noteChange(m, e);
+  if (changes) noteToolChange(e);
 }
 
 const lineCount = (v: unknown): number => (typeof v === "string" && v !== "" ? v.split("\n").length : 0);
+/** Lines an edit touched: the larger of what it removed and what it wrote, so a deletion still counts. */
+const editLines = (x: Record<string, unknown>): number => Math.max(lineCount(x.old_string), lineCount(x.new_string));
 
-/** Record the file and the lines an Edit, MultiEdit, Write or NotebookEdit call changed. */
-function noteChange(m: Member, e: Input): void {
+/**
+ * Record the files and lines a finished Edit, MultiEdit, Write, NotebookEdit or file-writing Bash call changed. Call it
+ * only after the call ran and was not refused. A Bash write counts `shellLines` once (its size is unknown) and adds
+ * its parsed paths, else "(shell)". Paths in scratch space (/tmp, the scratchpad) are ignored.
+ */
+export function noteToolChange(e: Input, shellLines = 60): void {
+  const m = typeof e.agentId === "string" ? members.get(e.agentId) : undefined;
+  if (!m) return;
   const tool = String(e.tool ?? "");
+  if (tool === "Bash") {
+    const written = typeof e.command === "string" ? shellWrites(e.command) : null;
+    if (!written) return;
+    const real = written.filter((p) => !outsideTree(p));
+    if (written.length > 0 && real.length === 0) return;
+    for (const p of real.length > 0 ? real : ["(shell)"]) m.paths.add(p);
+    m.shellLines = Math.max(m.shellLines, shellLines);
+    return;
+  }
   let path: unknown = e.file_path;
   let lines = 0;
-  if (tool === "Edit") lines = lineCount(e.new_string);
-  else if (tool === "MultiEdit") lines = Array.isArray(e.edits) ? e.edits.reduce((n: number, x) => n + (isObject(x) ? lineCount(x.new_string) : 0), 0) : 0;
+  if (tool === "Edit") lines = editLines(e);
+  else if (tool === "MultiEdit") lines = Array.isArray(e.edits) ? e.edits.reduce((n: number, x) => n + (isObject(x) ? editLines(x) : 0), 0) : 0;
   else if (tool === "Write") lines = lineCount(e.content);
   else if (tool === "NotebookEdit") { path = e.notebook_path; lines = 1; }
   else return;
-  if (typeof path !== "string" || !path) return;
+  if (typeof path !== "string" || !path || outsideTree(path)) return;
   m.paths.add(path);
   m.lines += lines;
 }
@@ -227,7 +250,7 @@ function noteChange(m: Member, e: Input): void {
 /** The files `id` changed and the estimated lines it wrote, from its tool calls. */
 export function touched(id: string): { paths: string[]; lines: number } {
   const m = members.get(id);
-  return { paths: m ? [...m.paths] : [], lines: m?.lines ?? 0 };
+  return { paths: m ? [...m.paths] : [], lines: m ? m.lines + m.shellLines : 0 };
 }
 
 /** The spawn prompt of `id` (first 4000 characters), or "" when unknown. */
@@ -268,7 +291,7 @@ export function liveUsage(id: string): LiveUsage | null {
   return m && m.tokens + m.usage.cacheRead > 0 ? { ...m.usage } : null;
 }
 
-/** The model the roster has for `id` (from its spawn or stop), or "" when none is known. */
+/** The model the roster has for `id`, or "". */
 export function agentModel(id: string): string {
   return members.get(id)?.model ?? "";
 }

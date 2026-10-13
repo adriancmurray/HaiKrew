@@ -28,10 +28,10 @@ A good spec makes Haiku's job mechanical. Each one fits on one screen and contai
 Split work so each spec is one crate or module and about 300 lines of output or less. Several small Haiku agents beat one big one. Run them in parallel only when they touch different repos, because builds queue on the heavy lock anyway.
 
 ## Review tiers (keep it cheap)
-When a subagent finishes, HaiKrew writes a review packet (spec, report, files changed, test claim) and posts a review note naming a tier. Don't open the agent's transcript; the packet and the report (120 words at most) are enough.
-- **Light** (only docs or tests, a small diff, tests not failing): glance at the diff, then call `record_verdict` with pass or fail.
-- **Standard** (everything else): launch the reviewer the note names with `HAIKREW job=review name=<Name>`. Tell it to call `review_packet` first and to end with `VERDICT: PASS|FAIL for <Name>`.
-- **Deep** (a sensitive path, a large diff, a security, migration, concurrency or protocol job, failing tests, or a model with a weak record on this job): the same, with the deep reviewer.
+When a subagent finishes, HaiKrew writes a review packet (spec, report, files changed, test claim) and posts a review note naming a tier. Don't open the agent's transcript; the packet and the report (120 words at most) are enough. The note says what to do. If HaiKrew's review tools are on (Settings › General › Agent control set to read or change), it names them; if they are off, the note carries the packet text and names no tool.
+- **Light** (only docs or tests, a small diff, tests not failing): glance at the diff, then call `record_verdict` with pass or fail. With the tools off, say pass or fail in your reply.
+- **Standard** (everything else): launch the reviewer the note names with `HAIKREW job=review name=<Name>`. With the tools on, tell it to call `review_packet` first; with them off, paste the packet from the note into its prompt. Either way it ends with `VERDICT: PASS|FAIL for <Name>`.
+- **Deep** (a sensitive path, a large diff, a job such as security, migration, concurrency or protocol (`security-review` counts too), failing tests, or a model with a weak record on this job): if the main model is at least as strong as the deep reviewer (haiku < sonnet < opus), the note says the review is inline. Then review the risky hunks yourself (public API, security, concurrency, permissions, data loss), record the result, and launch no reviewer. Otherwise the same as standard, with the deep reviewer.
 
 The checker's verdict replaces the run's own in the ledger, marked with the checker's name. Then:
 1. Run `haikrew verify` yourself in the worktree. Trust the verdict, not the report, and read only the diff hunks that carry risk: public API, unsafe code, concurrency, permissions.

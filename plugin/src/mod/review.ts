@@ -14,6 +14,8 @@ export type ReviewInput = {
   record: { judged: number; passRate: number } | null;
   /** The decider had the agent run a cheaper model than its pick, to learn what that model can do. */
   explored?: boolean;
+  /** The model of the main conversation. A deep review stays with it when it is at least as strong as the deep reviewer. */
+  mainModel?: string;
 };
 
 /** The `review` section of the settings, as the decision reads it. */
@@ -31,8 +33,15 @@ export type ReviewSettings = {
 /** How deep the check goes: none, light (the main agent glances at it), standard or deep. */
 export type Tier = "none" | "light" | "standard" | "deep";
 
-/** The chosen tier, the reviewer's model and effort (null when no subagent reviews) and the reasons for the choice. */
-export type ReviewPlan = { tier: Tier; reviewer: { model: string; effort: string } | null; reasons: string[] };
+/**
+ * The chosen tier, the reviewer's model and effort, "inline" when the main model reviews the risky hunks itself,
+ * null when nothing reviews, and the reasons for the choice.
+ */
+export type ReviewPlan = {
+  tier: Tier;
+  reviewer: { model: string; effort: string } | "inline" | null;
+  reasons: string[];
+};
 
 // ponytail: only ** (any folders), * (one segment) and ? (one character); no braces or character classes, which the
 // defaults do not need. Upgrade path: a glob library, if a setting ever needs braces.
@@ -54,10 +63,28 @@ function pathGlob(glob: string, path: string): boolean {
   return new RegExp(`^(?:.*/)?${re}$`, "i").test(path);
 }
 
+/** The family of a model id, lower case: "haiku", "sonnet" or "opus" in any case, else undefined. */
+function family(model: string): string | undefined {
+  return /haiku|sonnet|opus/i.exec(model)?.[0]?.toLowerCase();
+}
+
 /** The family name of a model id, capitalised: "claude-haiku-5-5" reads "Haiku". */
 function modelName(model: string): string {
-  const family = /haiku|sonnet|opus/i.exec(model)?.[0] ?? model;
-  return family.charAt(0).toUpperCase() + family.slice(1).toLowerCase();
+  const name = family(model) ?? model;
+  return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+}
+
+const RANKS = ["haiku", "sonnet", "opus"];
+
+/** How strong a model id is: haiku 0, sonnet 1, opus 2; -1 when the id names none of them. */
+function rank(model: string | undefined): number {
+  const f = family(model ?? "");
+  return f === undefined ? -1 : RANKS.indexOf(f);
+}
+
+/** True when the job is a listed one, or a longer name that starts with it and a "-" or "_": "security" covers "security-review". */
+function deepJob(job: string, listed: string[]): boolean {
+  return listed.some((j) => job === j || job.startsWith(`${j}-`) || job.startsWith(`${j}_`));
 }
 
 /** Why a change needs a deep review: its first sensitive path, a large diff, a deep job, failing tests or a poor record. */
@@ -71,7 +98,7 @@ function deepReasons(input: ReviewInput, cfg: ReviewSettings): string[] {
     }
   }
   if (input.lines >= cfg.deep_lines) reasons.push(`${input.lines} lines, at least ${cfg.deep_lines}`);
-  if (cfg.deep_jobs.includes(input.job)) reasons.push(`job ${input.job} always gets a deep review`);
+  if (deepJob(input.job, cfg.deep_jobs)) reasons.push(`job ${input.job} always gets a deep review`);
   if (input.testsPassed === false) reasons.push("tests failed");
   const r = input.record;
   if (r !== null && r.judged >= 4 && r.passRate < 0.6) {
@@ -89,6 +116,22 @@ function reviewerFor(spec: string, allowOpus: boolean, reasons: string[]): { mod
 }
 
 /**
+ * A deep plan. The main model reviews inline when it is known and at least as strong as the reviewer that would run,
+ * so no fresh reviewer re-derives context the main model already has. Otherwise the deep reviewer runs.
+ */
+function deepPlan(input: ReviewInput, cfg: ReviewSettings, allowOpus: boolean, deep: string[]): ReviewPlan {
+  const reasons = [...deep];
+  const reviewer = reviewerFor(cfg.deep_reviewer, allowOpus, reasons);
+  const main = rank(input.mainModel);
+  const r = rank(reviewer.model);
+  if (main >= 0 && r >= 0 && main >= r) {
+    const why = `reviewed inline: ${modelName(input.mainModel ?? "")} is at least as strong as ${modelName(reviewer.model)}`;
+    return { tier: "deep", reviewer: "inline", reasons: [...deep, why] };
+  }
+  return { tier: "deep", reviewer, reasons };
+}
+
+/**
  * The review tier, reviewer and reasons for one finished agent. Pure: the settings and the Opus allowance come in as values.
  * Order: disabled, then no files changed, then deep, then light, else standard.
  */
@@ -96,7 +139,7 @@ export function reviewPlan(input: ReviewInput, cfg: ReviewSettings, allowOpus: b
   if (!cfg.enabled) return { tier: "none", reviewer: null, reasons: ["review is off"] };
   if (input.paths.length === 0) return { tier: "none", reviewer: null, reasons: ["changed no files"] };
   const deep = deepReasons(input, cfg);
-  if (deep.length > 0) return { tier: "deep", reviewer: reviewerFor(cfg.deep_reviewer, allowOpus, deep), reasons: deep };
+  if (deep.length > 0) return deepPlan(input, cfg, allowOpus, deep);
   const allLight = input.paths.every((p) => cfg.light_paths.some((g) => pathGlob(g, p)));
   // An explored run is checked properly: a light glance would not tell whether the cheaper model did well.
   if (allLight && input.lines < cfg.light_lines && input.testsPassed !== false && !input.explored) {

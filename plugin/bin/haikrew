@@ -1,0 +1,11 @@
+#!/bin/sh
+# Launcher for `haikrew` on PATH. Follows symlinks first, so a link to this file still finds haikrew.mjs.
+src=$0
+while [ -h "$src" ]; do
+  target=$(readlink "$src")
+  case $target in
+    /*) src=$target ;;
+    *) src=$(dirname "$src")/$target ;;
+  esac
+done
+exec node "$(dirname "$src")/haikrew.mjs" "$@"

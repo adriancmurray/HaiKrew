@@ -6,6 +6,7 @@
  * Pure logic lives in src/mod. The validator forbids passing `$` across imports, so `$` is used only here and in
  * the hooks of src/mod/pane.ts (the pane and band) and src/mod/agents.ts (the agent tools).
  */
+import { isObject } from "../src/mod/api.ts";
 import { settingsFrom } from "../src/mod/config.ts";
 import type { Api } from "../src/mod/api.ts";
 import { decideSpawn, decisionFor, historyFrom, noteDecision, wasExplored } from "../src/mod/decider.ts";
@@ -17,7 +18,7 @@ import { hookGuard, readGuard, squeeze, tokenLimit } from "../src/mod/guards.ts"
 import type { ChecksSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
-import { activityOf, agentModel, liveUsage, noteMainChunk, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteTurnEnd, rowFor, specOf, touched } from "../src/mod/crew.ts";
+import { activityOf, agentModel, liveUsage, noteMainChunk, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteToolChange, noteTurnEnd, rowFor, specOf, touched } from "../src/mod/crew.ts";
 import { addRun, applyChecked, combineUsage, finalReport, parseCheckerVerdict, readState, runFromStop, summary } from "../src/mod/ledger.ts";
 import { buildPacket, reviewNote, testsClaim } from "../src/mod/packet.ts";
 import { reviewPlan } from "../src/mod/review.ts";
@@ -25,6 +26,7 @@ import type { ReviewSettings } from "../src/mod/review.ts";
 import { registerPane } from "../src/mod/pane.ts";
 import { delegationNote, withNote } from "../src/mod/delegate.ts";
 import type { DelegateSettings } from "../src/mod/delegate.ts";
+import { ledgerLock } from "../src/mod/serial.ts";
 import { registerAgentTools } from "../src/mod/agents.ts";
 import type { Settings } from "../src/schema.ts";
 
@@ -66,7 +68,8 @@ export function register(on) {
   // Subagents are left alone, so a haiku-coder is not told to hand its work on again.
   on("prompt.context", async ($, e, next) => {
     if (e.agentId) return next(e);
-    const note = delegationNote((await loadSettings($)).gate as unknown as DelegateSettings);
+    const cfg = await loadSettings($);
+    const note = delegationNote(cfg.gate as unknown as DelegateSettings, toolsOn(cfg));
     return next(note ? { ...e, blocks: withNote(e.blocks, note) } : e);
   });
 
@@ -117,10 +120,17 @@ export function register(on) {
     const now = Date.now();
     const id = typeof e.agentId === "string" ? e.agentId : "";
     const before = id ? rowFor(id, now) : undefined;
-    noteToolCall(e, now);
+    noteToolCall(e, now, false);
     const after = id ? rowFor(id, now) : undefined;
     if (after && (!before || activityOf(before) !== activityOf(after))) $.ui.invalidate("ui.render");
-    return next(e);
+    const reply = await next(e);
+    // Changes count only once the call ran and succeeded: a refused call (`deny`) or a failed one (`isError`, e.g. an
+    // Edit whose old text was not found) wrote nothing.
+    if (id && !(isObject(reply) && (reply.deny || reply.isError))) {
+      const shell = e.tool === "Bash" ? Number(((await loadSettings($)).review as unknown as ReviewSettings).light_lines) : 0;
+      noteToolChange(e, shell || undefined);
+    }
+    return reply;
   });
 
   on("tool.call", { tool: "Bash" }, async ($, e, next) => {
@@ -193,6 +203,15 @@ async function sessionCwd($): Promise<string> {
   }
 }
 
+/** The main conversation's model, or "" when Claude Code cannot say. */
+async function sessionModel($): Promise<string> {
+  try {
+    return String(await $.session.model());
+  } catch {
+    return "";
+  }
+}
+
 /** Settings from the mod store, merged over defaults. */
 async function loadSettings($: Api): Promise<Settings> {
   return settingsFrom(await $.store.get("settings"));
@@ -222,8 +241,10 @@ async function recordStop($: Api, e: Record<string, unknown>): Promise<StopRun |
   const live = liveUsage(String(e.agent_id ?? ""));
   const run = live ? combineUsage(parsed, live) : parsed;
   const decision = decisionFor(run.agent_id);
-  const state = addRun(readState(await $.store.get("ledger")), { ...run, name: rowFor(run.agent_id, Date.now())?.name, ...(decision ? { decision } : {}) }, cfg);
-  await $.store.set("ledger", state);
+  const entry = { ...run, name: rowFor(run.agent_id, Date.now())?.name, ...(decision ? { decision } : {}) };
+  await ledgerLock(async () => {
+    await $.store.set("ledger", addRun(readState(await $.store.get("ledger")), entry, cfg));
+  });
   return { verdict: run.verdict, model: run.model, job: run.job, lang: run.lang, report: finalReport(transcript) };
 }
 
@@ -237,8 +258,9 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
   const name = rowFor(id, Date.now())?.name ?? id;
   const checked = parseCheckerVerdict(run.report);
   if (checked) {
-    const state = applyChecked(readState(await $.store.get("ledger")), { name: checked.name }, checked.verdict, name);
-    await $.store.set("ledger", state);
+    await ledgerLock(async () => {
+      await $.store.set("ledger", applyChecked(readState(await $.store.get("ledger")), { name: checked.name }, checked.verdict, name));
+    });
     return;
   }
   if (run.job === "review") return;
@@ -247,17 +269,25 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
     .find((k) => k.model === run.model && k.job === run.job && k.lang === run.lang);
   const record = stats && Number(stats.judged) > 0 ? { judged: Number(stats.judged), passRate: Number(stats.pass_rate) } : null;
   const { paths, lines } = touched(id);
-  const plan = reviewPlan({ job: run.job, lang: run.lang, paths, lines, testsPassed: testsClaim(run.report), model: run.model, record, explored: wasExplored(id) },
+  const plan = reviewPlan({ mainModel: await sessionModel($), job: run.job, lang: run.lang, paths, lines, testsPassed: testsClaim(run.report), model: run.model, record, explored: wasExplored(id) },
     (cfg as unknown as { review: ReviewSettings }).review, Boolean(cfg.gate.allow_opus));
   if (plan.tier === "none") return;
   const packet = buildPacket({ name, type: String(e.agent_type ?? "agent"), model: run.model, spec: specOf(id), report: run.report,
     paths, lines, testsPassed: testsClaim(run.report), plan });
-  const packets = asRecord(await $.store.get("review_packets"));
-  delete packets[name];
-  packets[name] = packet;
-  const keep = Object.keys(packets).slice(-20); // insertion order: the newest last
-  await $.store.set("review_packets", Object.fromEntries(keep.map((k) => [k, packets[k]])));
-  const text = reviewNote(name, plan, paths, lines);
+  // Packets are keyed by the (session-unique) name; review_packet_ids maps agent id -> name so a lookup by id finds it first.
+  await ledgerLock(async () => {
+    const packets = asRecord(await $.store.get("review_packets"));
+    const ids = asRecord(await $.store.get("review_packet_ids"));
+    for (const k of Object.keys(ids)) if (ids[k]?.toLowerCase() === name.toLowerCase() || k === id) delete ids[k];
+    for (const k of Object.keys(packets)) if (k.toLowerCase() === name.toLowerCase()) delete packets[k];
+    packets[name] = packet;
+    ids[id] = name;
+    const keep = Object.keys(packets).slice(-20); // insertion order: the newest last
+    await $.store.set("review_packets", Object.fromEntries(keep.map((k) => [k, packets[k]])));
+    await $.store.set("review_packet_ids", Object.fromEntries(Object.entries(ids).filter(([, n]) => keep.includes(n))));
+  });
+  // Without agent tools the reviewer cannot fetch the packet, so the note carries it.
+  const text = reviewNote(name, plan, paths, lines, { toolsOn: toolsOn(cfg), packet: String(packet) });
   if (!text) return;
   try {
     // A plugin's append takes the row alone; the engine stamps its origin (this plugin) and door itself.
@@ -265,6 +295,11 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
   } catch {
     // A refused append only loses the note.
   }
+}
+
+/** Whether models can call record_verdict (agent control "change"); "read" refuses it and "off" registers no tools. */
+function toolsOn(cfg: unknown): boolean {
+  return (cfg as { agents?: { control?: string } }).agents?.control === "change";
 }
 
 type StopRun = { verdict: string; model: string; job: string; lang: string; report: string };

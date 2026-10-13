@@ -1,6 +1,16 @@
 /** Crew names: a tag reads as a name, a pick is stable and skips taken names, and the list has no repeats. */
 import { expect, test } from "claude-code/testing";
-import { NAMES, nameFromTag, pickName } from "../../src/mod/names.ts";
+import { NAMES, nameFromTag, normName, pickName } from "../../src/mod/names.ts";
+
+test("normName reads a crew name the same way in every form it arrives in", () => {
+  expect(normName("Katherine_JSON")).toBe("katherine json");
+  expect(normName("  Marie   Curl  ")).toBe("marie curl");
+  expect(normName("Ada Lovebytes - looks fine")).toBe("ada lovebytes");
+  expect(normName("Ada Lovebytes — looks fine")).toBe("ada lovebytes");
+  expect(normName("Ada Lovebytes.")).toBe("ada lovebytes");
+  expect(normName("Ada. Lovebytes")).toBe("ada. lovebytes");
+  expect(normName("")).toBe("");
+});
 
 test("a name tag reads as a name, and no tag gives an empty name", () => {
   expect(nameFromTag("HAIKREW job=x name=Katherine_JSON\nbody")).toBe("Katherine JSON");

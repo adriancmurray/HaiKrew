@@ -33,6 +33,24 @@ test("the note tells the main model how to follow a review note, once", () => {
   expect(bullets[0]).toContain("`HAIKREW job=review name=...`");
   expect(bullets[0]).toContain("call `review_packet` first");
   expect(bullets[0]).toContain("`VERDICT: PASS|FAIL for <name>`");
+  expect(bullets[0]).toContain("a deep note may instead say to review the risky hunks yourself");
+});
+
+test("with the tools on given explicitly, the note is the same as by default", () => {
+  expect(delegationNote(GATE, true)).toBe(delegationNote(GATE));
+});
+
+test("with the tools off, the note names neither review tool and still tells the main model to follow the note", () => {
+  const note = delegationNote(GATE, false);
+  expect(note).not.toContain("record_verdict");
+  expect(note).not.toContain("review_packet");
+  expect(note).not.toContain("mcp__haikrew__");
+  const bullets = note.split("\n").filter((l) => l.includes("review note"));
+  expect(bullets.length).toBe(1);
+  expect(bullets[0]).toContain("light → glance at the diff;");
+  expect(bullets[0]).toContain("`HAIKREW job=review name=...`");
+  expect(bullets[0]).toContain("the packet from the note in its prompt");
+  expect(bullets[0]).toContain("`VERDICT: PASS|FAIL for <name>`");
 });
 
 test("withNote appends to the CLAUDE.md block once, adds one when missing, and leaves other blocks alone", () => {

@@ -25,6 +25,15 @@ export function nameFromTag(prompt: unknown): string {
 }
 
 /**
+ * A crew name as both sides of a name comparison read it: underscores as spaces, spaces collapsed and trimmed, lowercase,
+ * cut at " - " or " — " or a trailing period.
+ */
+export function normName(s: string): string {
+  const head = s.replace(/_/g, " ").split(/ - | — /)[0] ?? "";
+  return head.replace(/\s+/g, " ").trim().replace(/\.$/, "").trim().toLowerCase();
+}
+
+/**
  * A name for agent `id` that no taken name uses: the one its hash picks, or the next free one walking forward through
  * the list. When every name is taken, the hashed one with " II" after it.
  */

@@ -12,6 +12,7 @@ import type { Input } from "./api.ts";
 import { inferJob } from "./infer.ts";
 import type { LiveUsage } from "./crew.ts";
 import type { DecisionRecord } from "./decider.ts";
+import { normName } from "./names.ts";
 
 /** One finished subagent. */
 export type Run = {
@@ -68,6 +69,8 @@ export type KeyStats = Record<string, string | number>;
 
 const TS_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?Z$/;
 const LINE_SPLIT = /\r\n|\r|\n/;
+// The text Claude Code writes for a turn the user interrupted; it is not a new attempt.
+const INTERRUPT_RE = /^\[Request interrupted by user/;
 const RECENT = 50;
 
 type Scan = {
@@ -129,7 +132,8 @@ function scan(entries: Record<string, unknown>[]): Scan {
     if (when !== null) out.times.push(when);
     const msg = isObject(entry.message) ? entry.message : {};
     if (entry.type === "user" && !entry.isMeta) {
-      const text = textBlocks(msg.content);
+      // Tool results have no text block, so they are not turns either.
+      const text = textBlocks(msg.content).filter((t) => !INTERRUPT_RE.test(t.trim()));
       if (text.length) out.turns.push(text.join("\n"));
     } else if (entry.type === "assistant") {
       scanAssistant(out, msg, idx);
@@ -160,7 +164,8 @@ function tag(prompt: string, name: string): string {
   return value ? value[0] : "unknown";
 }
 
-const VERDICT_RE = /VERDICT:\s*(PASS|FAIL)\b|STATUS:\s*(done|blocked)\b/gi;
+// A `VERDICT: PASS|FAIL for <name>` line is a checker's verdict on someone else's run, so it does not judge this one.
+const VERDICT_RE = /VERDICT:\s*(PASS|FAIL)\b(?!\s+for\b)|STATUS:\s*(done|blocked)\b/gi;
 
 /** The verdict the text ends on: the last VERDICT or STATUS marker decides, "none" when there is none. */
 function verdict(text: string): string {
@@ -275,45 +280,78 @@ export function condense(state: LedgerState, settings: Settings, now: Date = new
   };
 }
 
-/** {recent: newest 50 runs, by_key: stats per (model, job, lang) merged across runs and buckets}. */
+/**
+ * {recent: newest 50 runs, by_key: stats per (model, job, lang) merged across runs and buckets}. A group's mean output
+ * is over its live-counted runs when it has any, else over all of its runs.
+ */
 export function summary(state: LedgerState): { recent: Run[]; by_key: KeyStats[] } {
   const recent = state.runs.map((run, idx) => ({ run, idx })).sort((a, b) =>
     (a.run.ts < b.run.ts ? 1 : a.run.ts > b.run.ts ? -1 : b.idx - a.idx))
     .slice(0, RECENT).map((x) => x.run);
   const groups = new Map<string, Bucket>();
   const parts = [...state.runs.map(fromRun), ...state.buckets];
-  for (const b of parts) mergeInto(groups, JSON.stringify([b.model, b.job, b.lang]), { ...b, period: "", agent_type: "" });
-  const rows = [...groups.values()].sort((a, b) =>
+  for (const b of parts) mergeInto(groups, groupKey(b), { ...b, period: "", agent_type: "" });
+  const counts = outputCounts(state.runs);
+  const rows = [...groups.entries()].sort(([, a], [, b]) =>
     b.n - a.n || cmp(a.model, b.model) || cmp(a.job, b.job) || cmp(a.lang, b.lang));
-  return { recent, by_key: rows.map(keyStats) };
+  return { recent, by_key: rows.map(([key, b]) => keyStats(b, counts.get(key))) };
 }
 
-/** One model's token and run totals. */
-export type ModelTokens = { tokens_in: number; tokens_out: number; cache_read: number; runs: number };
+function groupKey(b: Pick<Bucket, "model" | "job" | "lang">): string {
+  return JSON.stringify([b.model, b.job, b.lang]);
+}
 
-/** Tokens in, tokens out, cache reads and run count per model, summed over the kept runs and the monthly and
- * yearly buckets. */
-export function tokenTotals(state: LedgerState): Record<string, ModelTokens> {
-  const out: Record<string, ModelTokens> = {};
-  const add = (model: string, t: ModelTokens): void => {
-    const acc = (out[model] ??= { tokens_in: 0, tokens_out: 0, cache_read: 0, runs: 0 });
-    acc.tokens_in += t.tokens_in;
-    acc.tokens_out += t.tokens_out;
-    acc.cache_read += t.cache_read;
-    acc.runs += t.runs;
-  };
-  for (const run of state.runs) {
-    add(run.model, { tokens_in: run.tokens_in, tokens_out: run.tokens_out, cache_read: run.cache_read, runs: 1 });
-  }
-  for (const b of state.buckets) {
-    add(b.model, { tokens_in: b.sum_tokens_in, tokens_out: b.sum_tokens_out, cache_read: b.sum_cache_read, runs: b.n });
+/** One group's output over its kept runs: the live-counted runs' output sum and count, and how many runs were
+ * transcript-counted. */
+type OutputCounts = { live_sum: number; live_n: number; estimated_runs: number };
+
+function outputCounts(runs: Run[]): Map<string, OutputCounts> {
+  const out = new Map<string, OutputCounts>();
+  for (const r of runs) {
+    const key = groupKey(r);
+    const acc = out.get(key) ?? { live_sum: 0, live_n: 0, estimated_runs: 0 };
+    if (r.tokens_estimated) {
+      acc.estimated_runs += 1;
+    } else {
+      acc.live_sum += r.tokens_out;
+      acc.live_n += 1;
+    }
+    out.set(key, acc);
   }
   return out;
 }
 
-/** One model's totals across its groups: runs, judged runs, pass rate over the judged ones, and mean tokens (in
- * plus out) and seconds per run. */
-export type ModelStats = { model: string; n: number; judged: number; pass_rate: number; tokens_mean: number; duration_mean: number };
+/** One model's token and run totals. `estimated_runs` counts the kept runs whose tokens came from a transcript, so
+ * their output is a lower bound; folded buckets do not record that and count as none. */
+export type ModelTokens = { tokens_in: number; tokens_out: number; cache_read: number; runs: number; estimated_runs: number };
+
+/** Tokens in, tokens out, cache reads, run count and estimated run count per model, summed over the kept runs and the
+ * monthly and yearly buckets. */
+export function tokenTotals(state: LedgerState): Record<string, ModelTokens> {
+  const out: Record<string, ModelTokens> = {};
+  const add = (model: string, t: ModelTokens): void => {
+    const acc = (out[model] ??= { tokens_in: 0, tokens_out: 0, cache_read: 0, runs: 0, estimated_runs: 0 });
+    acc.tokens_in += t.tokens_in;
+    acc.tokens_out += t.tokens_out;
+    acc.cache_read += t.cache_read;
+    acc.runs += t.runs;
+    acc.estimated_runs += t.estimated_runs;
+  };
+  for (const run of state.runs) {
+    add(run.model, { tokens_in: run.tokens_in, tokens_out: run.tokens_out, cache_read: run.cache_read, runs: 1,
+      estimated_runs: run.tokens_estimated ? 1 : 0 });
+  }
+  for (const b of state.buckets) {
+    add(b.model, { tokens_in: b.sum_tokens_in, tokens_out: b.sum_tokens_out, cache_read: b.sum_cache_read, runs: b.n,
+      estimated_runs: 0 });
+  }
+  return out;
+}
+
+/** One model's totals across its groups: runs, judged runs, pass rate over the judged ones, mean tokens (in plus out)
+ * and seconds per run, and how many runs had transcript-counted tokens. */
+export type ModelStats = { model: string; n: number; judged: number; pass_rate: number; tokens_mean: number; duration_mean: number;
+  estimated_runs: number };
 
 /** Per-model stats from summary()'s groups. Tokens and seconds are weighted by each group's runs, the pass rate by
  * its judged runs; most runs first. */
@@ -323,12 +361,13 @@ export function byModel(groups: KeyStats[]): ModelStats[] {
     const n = Number(g.n);
     const judged = Number(g.judged);
     const m = out.get(String(g.model)) ??
-      { model: String(g.model), n: 0, judged: 0, pass_rate: 0, tokens_mean: 0, duration_mean: 0 };
+      { model: String(g.model), n: 0, judged: 0, pass_rate: 0, tokens_mean: 0, duration_mean: 0, estimated_runs: 0 };
     m.n += n;
     m.judged += judged;
     m.pass_rate += Number(g.pass_rate) * judged; // the group's passes, divided by judged below
     m.tokens_mean += (Number(g.tokens_in_mean) + Number(g.tokens_out_mean)) * n;
     m.duration_mean += Number(g.duration_mean) * n;
+    m.estimated_runs += Number(g.estimated_runs ?? 0);
     out.set(m.model, m);
   }
   return [...out.values()].filter((m) => m.n > 0).map((m) => ({
@@ -342,18 +381,20 @@ function cmp(a: string, b: string): number {
 }
 
 /** Stats for one group. `n` counts every run; pass_rate is over the judged runs (passes plus fails) only. Stdev is
- * the sample stdev. */
-function keyStats(b: Bucket): KeyStats {
+ * the sample stdev. Mean output is over the live-counted runs when there are any (counts), else over all of them. */
+function keyStats(b: Bucket, counts?: OutputCounts): KeyStats {
   const n = b.n;
   const judged = b.passes + b.fails;
   const variance = n > 1 ? (b.sumsq_quality - (b.sum_quality * b.sum_quality) / n) / (n - 1) : 0;
+  const outMean = counts && counts.live_n > 0 ? counts.live_sum / counts.live_n : b.sum_tokens_out / n;
   return {
     model: b.model, job: b.job, lang: b.lang, n, judged,
     quality_mean: b.sum_quality / n,
     quality_stdev: Math.sqrt(Math.max(variance, 0)),
     pass_rate: judged > 0 ? b.passes / judged : 0,
     tokens_in_mean: b.sum_tokens_in / n,
-    tokens_out_mean: b.sum_tokens_out / n,
+    tokens_out_mean: outMean,
+    estimated_runs: counts?.estimated_runs ?? 0,
     duration_mean: b.sum_duration / n,
   };
 }
@@ -412,8 +453,8 @@ export function withLiveUsage(run: Run, live: { input: number; cacheWrite: numbe
 /**
  * A run with its live usage where the transcript saw more input than the live count did, as when a resumed agent's
  * earlier steps came before this session counted them. Each input-side field keeps the larger of the two, and output
- * keeps the live count when it has one. Otherwise the run is withLiveUsage's. Tokens in come from the transcript here,
- * so the counts are estimated.
+ * keeps the larger too. Otherwise the run is withLiveUsage's. Tokens in come from the transcript here, so the counts
+ * are estimated.
  */
 export function combineUsage(parsed: Run, live: LiveUsage): Run {
   const liveIn = live.input + live.cacheWrite;
@@ -423,7 +464,7 @@ export function combineUsage(parsed: Run, live: LiveUsage): Run {
     tokens_in: Math.max(liveIn, parsed.tokens_in),
     cache_write: Math.max(live.cacheWrite, parsed.cache_write),
     cache_read: Math.max(live.cacheRead, parsed.cache_read),
-    tokens_out: live.output > 0 ? live.output : parsed.tokens_out,
+    tokens_out: Math.max(live.output, parsed.tokens_out),
     tokens_estimated: true,
   };
 }
@@ -460,11 +501,11 @@ export function finalReport(transcript: string): string {
 
 const CHECKER_RE = /VERDICT:\s*(PASS|FAIL)\s+for\s+([^\r\n]+)/gi;
 
-/** The last `VERDICT: PASS|FAIL for <name>` line of a checker's report, or null. */
+/** The last `VERDICT: PASS|FAIL for <name>` line of a checker's report, or null. The name is normName'd. */
 export function parseCheckerVerdict(text: string): { verdict: "pass" | "fail"; name: string } | null {
   let found: { verdict: "pass" | "fail"; name: string } | null = null;
   for (const m of text.matchAll(CHECKER_RE)) {
-    const name = (m[2] ?? "").trim().replace(/[.*_`]+$/, "").trim();
+    const name = normName((m[2] ?? "").replace(/[*`]/g, ""));
     if (name) found = { verdict: (m[1] ?? "").toLowerCase() === "pass" ? "pass" : "fail", name };
   }
   return found;
@@ -475,7 +516,8 @@ export function parseCheckerVerdict(text: string): { verdict: "pass" | "fail"; n
  * quality 1/attempts, fail 0. Unchanged when no run matches.
  */
 export function applyChecked(state: LedgerState, target: { agentId?: string; name?: string }, verdict: "pass" | "fail", checker: string): LedgerState {
-  const hit = (r: Run): boolean => (target.agentId ? r.agent_id === target.agentId : !!target.name && r.name === target.name);
+  const want = target.name ? normName(target.name) : "";
+  const hit = (r: Run): boolean => (target.agentId ? r.agent_id === target.agentId : !!want && normName(r.name ?? "") === want);
   let at = -1;
   state.runs.forEach((r, i) => {
     if (hit(r) && (at < 0 || r.ts >= (state.runs[at]?.ts ?? ""))) at = i;

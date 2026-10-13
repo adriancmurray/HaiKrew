@@ -42,10 +42,25 @@ function matchRule(rules: string[], ctx: SelectCtx): { model: string; effort?: s
   return null;
 }
 
+/** The model name in lower case, so "Opus" and "opus" get the same checks everywhere in this file. */
+function lowerModel(model: unknown): string {
+  return String(model ?? "").toLowerCase();
+}
+
+/** Whether a model name is an Opus model, whatever its case. */
+function isOpus(model: unknown): boolean {
+  return lowerModel(model).includes("opus");
+}
+
 /** The deny reason for an Opus model, naming the rule when a rule chose it. */
 function opusDenial(rule: string | undefined): string {
   const why = rule ? `Opus subagents are turned off (rule ${rule} chose it). ` : "Opus subagents are turned off. ";
   return why + "Use model haiku or sonnet, or set gate.allow_opus to true in haikrew settings.";
+}
+
+/** A refusal when the caller named an Opus model and Opus is off; otherwise no choice. For spawns that no rule routes. */
+function refuseNamedOpus(cfg: GateSettings, model: unknown): Choice {
+  return isOpus(model) && !cfg.allow_opus ? { deny: opusDenial(undefined) } : {};
 }
 
 /**
@@ -53,7 +68,9 @@ function opusDenial(rule: string | undefined): string {
  * the first matching rule decides, then nested_model (nested) or default_model. The Opus check runs on the result.
  */
 export function resolveModel(cfg: GateSettings, e: Input, cwd = ""): Choice {
-  if (!cfg.enabled || e.fork) return {};
+  if (!cfg.enabled) return {};
+  // Forks inherit the parent's model on purpose, so a fork is only checked for a model it names itself.
+  if (e.fork) return refuseNamedOpus(cfg, e.model);
   const nested = Boolean(e.parentAgentId);
   if (nested && !cfg.allow_nested) {
     return { deny: "Subagents can't start agents of their own here. Do the work yourself, or set " +
@@ -61,15 +78,16 @@ export function resolveModel(cfg: GateSettings, e: Input, cwd = ""): Choice {
   }
   // A plugin's agent arrives as "<plugin>:<name>" (haikrew:haiku-coder); a pinned name matches it with or without the prefix.
   const type = String(e.subagentType ?? "");
-  if (cfg.pinned_types.includes(type) || cfg.pinned_types.includes(type.slice(type.indexOf(":") + 1))) return {};
+  // A pinned type keeps the model in its own definition, so only a model the caller names is checked.
+  if (cfg.pinned_types.includes(type) || cfg.pinned_types.includes(type.slice(type.indexOf(":") + 1))) {
+    return refuseNamedOpus(cfg, e.model);
+  }
   const named = Boolean(e.model);
   const hit = named && !cfg.rules_override ? undefined : matchRule(cfg.rules, ctxFrom(e, cwd));
   // A caller-named model stands unless a rule matched and rules_override lets it replace the name.
-  if (named && !hit) {
-    return String(e.model).includes("opus") && !cfg.allow_opus ? { deny: opusDenial(undefined) } : {};
-  }
+  if (named && !hit) return refuseNamedOpus(cfg, e.model);
   const model = hit?.model ?? (nested ? cfg.nested_model : cfg.default_model);
-  if (model.includes("opus") && !cfg.allow_opus) return { deny: opusDenial(hit?.rule) };
+  if (isOpus(model) && !cfg.allow_opus) return { deny: opusDenial(hit?.rule) };
   const choice: Choice = { model };
   if (hit) {
     choice.rule = hit.rule;
@@ -87,7 +105,7 @@ export function effortFor(cfg: GateSettings, choice: Choice, model: string): str
   if (choice.effort) return choice.effort;
   for (const entry of cfg.default_effort) {
     const eq = entry.lastIndexOf("=");
-    if (model.includes(entry.slice(0, eq))) return entry.slice(eq + 1);
+    if (lowerModel(model).includes(entry.slice(0, eq))) return entry.slice(eq + 1);
   }
   return undefined;
 }

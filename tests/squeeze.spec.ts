@@ -119,6 +119,21 @@ describe("run and verify", () => {
     assert.ok(readdirSync(logs).some((f) => readFileSync(join(logs, f), "utf8") === "hi\n"));
   });
 
+  it("passes when a successful command prints more than 1 MiB", () => {
+    const { code, out } = capture(() =>
+      squeeze.run([process.execPath, "-e", "console.log('x'.repeat(2 * 1024 * 1024))"]));
+    assert.equal(code, 0);
+    assert.doesNotMatch(out, /exit 127/);
+    assert.match(out, /VERDICT: PASS/);
+  });
+
+  it("reports a missing command as exit 127 with the spawn error", () => {
+    const { code, out } = capture(() => squeeze.run(["haikrew-no-such-command-xyz"]));
+    assert.equal(code, 127);
+    assert.match(out, /squeeze: spawnSync haikrew-no-such-command-xyz ENOENT/);
+    assert.match(out, /VERDICT: FAIL/);
+  });
+
   it("reports failure with the command's exit code", () => {
     const { code, out } = capture(() =>
       squeeze.run([process.execPath, "-e", "console.log('boom'); process.exit(3)"]));

@@ -52,9 +52,16 @@ export const C = {
 
 const MODEL_HEX: Record<string, string> = { haiku: "#9b7fc7", sonnet: "#4f9c98", opus: "#d97757", unknown: "#8a8f9c" };
 
-/** The colour of a model's dot or bar: the crew sprite colour of its family. */
-export function modelColor(model: string): string {
-  return MODEL_HEX[modelFamily(model)];
+/** The colour the band's settings give each model family, as #rrggbb; a family left out keeps its default. */
+export type ModelColours = { haiku?: string; sonnet?: string; opus?: string };
+
+/**
+ * The colour of a model's dot, bar or name: the crew sprite colour of its family, or the band's colour for that
+ * family when `colours` gives one.
+ */
+export function modelColor(model: string, colours: ModelColours = {}): string {
+  const family = modelFamily(model);
+  return (family === "unknown" ? undefined : colours[family]) ?? MODEL_HEX[family];
 }
 
 /**

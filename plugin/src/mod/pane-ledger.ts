@@ -88,12 +88,17 @@ function modelRow(ui: Ui, m: ModelStats, cols: number): unknown {
     txt(ui, {}, ` ${String(m.n).padStart(5)}  `),
     bw ? meter(ui, m.pass_rate, bw, passColor(m.pass_rate)) : null,
     txt(ui, { color: passColor(m.pass_rate) }, `${bw ? " " : ""}${pct(m.pass_rate).padStart(4)} `),
-    txt(ui, {}, `${compact(m.tokens_mean).padStart(8)} ${duration(m.duration_mean).padStart(8)}`),
+    txt(ui, {}, `${(lowerBound(m.estimated_runs > 0) + compact(m.tokens_mean)).padStart(8)} ${duration(m.duration_mean).padStart(8)}`),
   ]);
 }
 
 function pct(rate: number): string {
   return `${Math.round(rate * 100)}%`;
+}
+
+/** "≥" in front of a token count that includes transcript-counted output, which is only a lower bound. */
+function lowerBound(estimated: boolean): string {
+  return estimated ? "≥" : "";
 }
 
 /** Suggestions in an amber box, each with an Add rule button that adds nothing until pressed twice. */
@@ -146,7 +151,7 @@ function detailRow(ui: Ui, g: KeyStats, cols: number): unknown {
     txt(ui, {}, fit(jobLabel(String(g.job)), w.job) + fit(String(g.lang), w.lang) + String(g.n).padStart(6)),
     txt(ui, { color: passColor(rate) }, pct(rate).padStart(6)),
     txt(ui, {}, Number(g.quality_mean).toFixed(2).padStart(6)),
-    txt(ui, { dimColor: true }, compact(Number(g.tokens_in_mean) + Number(g.tokens_out_mean)).padStart(8)),
+    txt(ui, { dimColor: true }, (lowerBound(Number(g.estimated_runs) > 0) + compact(Number(g.tokens_in_mean) + Number(g.tokens_out_mean))).padStart(8)),
   ]);
 }
 
@@ -161,7 +166,7 @@ function runRow(ui: Ui, r: Run, cols: number): unknown {
   const [mark, color] = verdictMark(r.verdict);
   const when = r.ts.slice(5, 16).replace("T", " ");
   const what = `${jobLabel(r.job)}/${r.lang}`;
-  const tail = `${duration(r.duration_s)} · ${compact(r.tokens_in + r.tokens_out)} tok`;
+  const tail = `${duration(r.duration_s)} · ${lowerBound(r.tokens_estimated)}${compact(r.tokens_in + r.tokens_out)} tok`;
   return hrow(ui, { columnGap: 1 }, [
     txt(ui, { color }, mark),
     txt(ui, { dimColor: true }, when),
@@ -179,9 +184,9 @@ function modelTable(models: ModelStats[], width: number, ink: Ink): string {
   ], models.map((m): Cell[] => [
     { dot: modelColor(m.model), text: modelName(m.model) }, { text: String(m.n) },
     { bar: m.pass_rate, color: hexOf(passColor(m.pass_rate)), label: pct(m.pass_rate) },
-    { text: compact(m.tokens_mean) }, { text: duration(m.duration_mean), muted: true },
+    { text: lowerBound(m.estimated_runs > 0) + compact(m.tokens_mean) }, { text: duration(m.duration_mean), muted: true },
   ]), width, models.map((m) => `${modelName(m.model)}: ${m.n} runs, ${pct(m.pass_rate)} passed, ` +
-    `${Math.round(m.tokens_mean).toLocaleString("en-US")} tokens and ${duration(m.duration_mean)} per run on average`), ink);
+    `${lowerBound(m.estimated_runs > 0)}${Math.round(m.tokens_mean).toLocaleString("en-US")} tokens and ${duration(m.duration_mean)} per run on average`), ink);
 }
 
 /** Model, job and language groups with runs, pass rate and mean tokens. */
@@ -192,7 +197,7 @@ function detailTable(groups: KeyStats[], width: number, ink: Ink): string {
   ], groups.map((g): Cell[] => [
     { dot: modelColor(String(g.model)), text: modelName(String(g.model)) }, { text: jobLabel(String(g.job)) }, { text: String(g.lang), muted: true },
     { text: String(g.n) }, { bar: Number(g.pass_rate), color: hexOf(passColor(Number(g.pass_rate))), label: pct(Number(g.pass_rate)) },
-    { text: compact(Number(g.tokens_in_mean) + Number(g.tokens_out_mean)), muted: true },
+    { text: lowerBound(Number(g.estimated_runs) > 0) + compact(Number(g.tokens_in_mean) + Number(g.tokens_out_mean)), muted: true },
   ]), width, groups.map((g) => `${jobLabel(String(g.job))} ${g.lang} on ${modelName(String(g.model))}: ${g.n} runs, mean quality ${Number(g.quality_mean).toFixed(2)}`), ink);
 }
 
@@ -206,6 +211,6 @@ function runTable(runs: Run[], width: number, ink: Ink, style: TimeStyle): strin
     const [mark, color] = verdictMark(r.verdict);
     return [{ text: mark, bold: true, color: hexOf(color) }, { text: when(r.ts, now, style), muted: true },
       { dot: modelColor(r.model), text: modelName(r.model) }, { text: `${jobLabel(r.job)} / ${r.lang}` },
-      { text: duration(r.duration_s), muted: true }, { text: compact(r.tokens_in + r.tokens_out), muted: true }];
+      { text: duration(r.duration_s), muted: true }, { text: lowerBound(r.tokens_estimated) + compact(r.tokens_in + r.tokens_out), muted: true }];
   }), width, runs.map((r) => `${r.agent_type || "agent"}: ${r.verdict}, ${r.tool_calls} tool calls, ${r.attempts} attempts`), ink);
 }

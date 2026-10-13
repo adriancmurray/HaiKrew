@@ -20,6 +20,9 @@ type Answer = { ok: true; change: string; settings: Settings } | { ok: false; re
 
 const KIND_KEYS = KINDS.map((k) => k.key);
 
+/** Gate settings only the person changes: whether the gate runs, which types it leaves alone, and whether rules override a named model. */
+const PERSON_GATE_KEYS = ["enabled", "pinned_types", "rules_override"];
+
 /** The tools, as `$.tool.register` takes them. Names are listed to the model as `mcp__<plugin>__<name>`. */
 export const AGENT_TOOLS = [
   {
@@ -31,7 +34,7 @@ export const AGENT_TOOLS = [
   {
     name: "set_setting",
     description: "Change one HaiKrew setting, validated as in the /haikrew pane. Call status first for sections, keys and current values. " +
-      "Refused: anything under agents, and turning gate.allow_opus on.",
+      "Refused: anything under agents, turning gate.allow_opus on, and changing gate.enabled, gate.pinned_types or gate.rules_override.",
     inputSchema: {
       type: "object",
       properties: {
@@ -128,6 +131,9 @@ export function answer(tool: string, input: Record<string, unknown>, settings: S
     if (section === "agents") return { ok: false, reason: "Agent control is the person's setting; agents cannot change it." };
     if (section === "gate" && key === "allow_opus" && input.value === true) {
       return { ok: false, reason: "Only the person can allow Opus, in /haikrew: Settings › Routing." };
+    }
+    if (section === "gate" && PERSON_GATE_KEYS.includes(key)) {
+      return { ok: false, reason: `Only the person can change gate.${key}, in /haikrew: Settings › Routing.` };
     }
     const error = validate(section, key, input.value);
     if (error) return { ok: false, reason: error };

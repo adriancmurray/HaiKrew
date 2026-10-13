@@ -6,6 +6,9 @@ export type PacketInput = {
   paths: string[]; lines: number; testsPassed: boolean | null; plan: ReviewPlan;
 };
 
+/** How a note reaches the main conversation: whether HaiKrew's review tools are on (default on), and the packet text to carry when they are off. */
+export type NoteOptions = { toolsOn?: boolean; packet?: string };
+
 /** A fence longer than any backtick run in `text`, so the text cannot close it. */
 function fenced(text: string): string {
   const longest = Math.max(2, ...[...text.matchAll(/`+/g)].map((m) => m[0].length));
@@ -39,23 +42,45 @@ export function buildPacket(o: PacketInput): string {
   ].join("\n");
 }
 
-/** Whether the report claims passing tests: pass counts with 0 fail or VERDICT: PASS is true; FAIL or fail>0 false; else null. */
+// A verdict line, or a count of failed or passed tests ("2 failing", "12 passed").
+const MARKER = /VERDICT:\s*(PASS|FAIL)\b|\b(\d+)\s+(fail(?:ed|ures?|ing)?|pass(?:ed|ing)?)\b/gi;
+
+/**
+ * Whether the report claims passing tests, read from its last marker: a VERDICT line or a non-zero count of
+ * passed or failed tests. A zero count says nothing. True for pass, false for fail, null when no marker says either.
+ */
 export function testsClaim(report: string): boolean | null {
-  const verdicts = [...report.matchAll(/VERDICT:\s*(PASS|FAIL)\b/gi)];
-  const last = verdicts[verdicts.length - 1]?.[1]?.toLowerCase();
-  const failN = [...report.matchAll(/\b(\d+)\s+fail(?:ed|ures?|ing)?\b/gi)].map((m) => Number(m[1]));
-  const passN = [...report.matchAll(/\b(\d+)\s+pass(?:ed|ing)?\b/gi)].map((m) => Number(m[1]));
-  if (last === "fail" || failN.some((n) => n > 0)) return false;
-  if (last === "pass" || passN.some((n) => n > 0)) return true;
-  return null;
+  let claim: boolean | null = null;
+  for (const m of report.matchAll(MARKER)) {
+    if (m[1] !== undefined) claim = m[1].toLowerCase() === "pass";
+    else if (Number(m[2]) > 0) claim = (m[3] ?? "").toLowerCase().startsWith("pass");
+  }
+  return claim;
+}
+
+/** The instruction after a note's head: what the main conversation does for the tier. Tools off: no tool names; the packet travels in the note. */
+function action(name: string, plan: ReviewPlan, toolsOn: boolean, packet: string): string {
+  if (plan.reviewer === "inline") {
+    const risky = "Review the risky hunks yourself (public API, security, concurrency, permissions, data loss)";
+    return toolsOn
+      ? `${risky}, then call mcp__haikrew__record_verdict. No subagent review for this one.`
+      : `${risky} and say in your reply whether the change passes. No subagent review for this one.`;
+  }
+  if (plan.tier === "light") {
+    return toolsOn
+      ? "Glance at the diff and call mcp__haikrew__record_verdict."
+      : "Glance at the diff and say in your reply whether it passes.";
+  }
+  const who = plan.reviewer ? `on ${plan.reviewer.model} at ${plan.reviewer.effort} effort ` : "";
+  const start = `Launch a reviewer ${who}with prompt starting \`HAIKREW job=review name=<a name>\``;
+  return toolsOn
+    ? `${start} and telling it to call mcp__haikrew__review_packet with agent "${name}" first.`
+    : `${start} and put this review packet in its prompt:\n\n${packet}`;
 }
 
 /** One line for the main conversation; "" when no review is planned. */
-export function reviewNote(name: string, plan: ReviewPlan, paths: string[] = [], lines = 0): string {
+export function reviewNote(name: string, plan: ReviewPlan, paths: string[] = [], lines = 0, o: NoteOptions = {}): string {
   if (plan.tier === "none") return "";
   const head = `HaiKrew review: ${name} finished (${paths.length} file${paths.length === 1 ? "" : "s"}, ~${lines} lines). Tier ${plan.tier}: ${plan.reasons.join("; ") || "no specific reason"}.`;
-  if (plan.tier === "light") return `${head} Glance at the diff and call mcp__haikrew__record_verdict.`;
-  const r = plan.reviewer;
-  const who = r ? `on ${r.model} at ${r.effort} effort ` : "";
-  return `${head} Launch a reviewer ${who}with prompt starting \`HAIKREW job=review name=<a name>\` and telling it to call mcp__haikrew__review_packet with agent "${name}" first.`;
+  return `${head} ${action(name, plan, o.toolsOn ?? true, o.packet ?? "")}`;
 }

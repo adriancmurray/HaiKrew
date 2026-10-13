@@ -3,7 +3,7 @@
  * per model from the ledger, each bar scaled to the model that used the most.
  */
 import { tokenTotals } from "./ledger.ts";
-import type { LedgerState } from "./ledger.ts";
+import type { LedgerState, ModelTokens } from "./ledger.ts";
 import { compact, empty, fillColor, fit, heading, hrow, meter, modelColor, modelName, thousands, when, txt, vcol } from "./ui.ts";
 import type { Ui } from "./ui.ts";
 
@@ -37,8 +37,9 @@ function gauge(ui: Ui, label: string, fraction: number, width: number, detail: s
   ]);
 }
 
-/** One bar per model, scaled to the busiest; or a note when the ledger has no runs. */
-function subagentTokens(ui: Ui, totals: Record<string, { tokens_in: number; tokens_out: number; runs: number }>, width: number): unknown[] {
+/** One bar per model, scaled to the busiest; or a note when the ledger has no runs. Output carries "≥" when any run's
+ * output was read from a transcript, since that count is only a lower bound. */
+function subagentTokens(ui: Ui, totals: Record<string, ModelTokens>, width: number): unknown[] {
   const models = Object.keys(totals).sort((a, b) => sum(totals[b]) - sum(totals[a]));
   if (models.length === 0) {
     return [vcol(ui, {}, [heading(ui, "Subagent tokens by model"),
@@ -53,7 +54,7 @@ function subagentTokens(ui: Ui, totals: Record<string, { tokens_in: number; toke
         txt(ui, { color: modelColor(m) }, fit(modelName(m), 11)),
         meter(ui, sum(t) / most, width, modelColor(m)),
         txt(ui, {}, `${compact(sum(t))}`),
-        txt(ui, { dimColor: true }, `in ${compact(t.tokens_in)} · out ${compact(t.tokens_out)} · ${t.runs} ${t.runs === 1 ? "run" : "runs"}`),
+        txt(ui, { dimColor: true }, `in ${compact(t.tokens_in)} · out ${t.estimated_runs > 0 ? "≥" : ""}${compact(t.tokens_out)} · ${t.runs} ${t.runs === 1 ? "run" : "runs"}`),
       ]);
     }),
   ])];

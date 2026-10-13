@@ -5,6 +5,7 @@ import { noteSpawn, noteToolCall, resetCrew, specOf, touched } from "../../src/m
 
 const deep = { tier: "deep" as const, reviewer: { model: "opus", effort: "high" }, reasons: ["touches hooks/register.ts"] };
 const light = { tier: "light" as const, reviewer: null, reasons: ["small change"] };
+const inline = { tier: "deep" as const, reviewer: "inline" as const, reasons: ["touches hooks/register.ts", "reviewed inline: Opus is at least as strong as Opus"] };
 
 test("buildPacket carries who, tier, spec, report, files, test claim and the verdict instruction", () => {
   const p = buildPacket({ name: "Isaac Newline", type: "haiku-coder", model: "haiku", spec: "Do X\n```js\ncode\n```", report: "All done.",
@@ -31,6 +32,19 @@ test("testsClaim reads pass and fail claims", () => {
   expect(testsClaim("I changed the file.")).toBe(null);
 });
 
+test("testsClaim reads the last marker: a later VERDICT or count settles an earlier one", () => {
+  expect(testsClaim("2 failing earlier, then fixed.\nVERDICT: PASS")).toBe(true);
+  expect(testsClaim("VERDICT: PASS\nbut then 2 failing")).toBe(false);
+  expect(testsClaim("VERDICT: FAIL\nthen VERDICT: PASS")).toBe(true);
+  expect(testsClaim("1 failing\n12 passing")).toBe(true);
+  expect(testsClaim("12 passing\n1 failing")).toBe(false);
+});
+
+test("testsClaim ignores a zero count, which says nothing either way", () => {
+  expect(testsClaim("0 failed")).toBe(null);
+  expect(testsClaim("5 passed\n0 failed")).toBe(true);
+});
+
 test("reviewNote words each tier", () => {
   const d = reviewNote("Isaac Newline", deep, ["a", "b", "c"], 140);
   expect(d).toContain("HaiKrew review: Isaac Newline finished (3 files, ~140 lines)");
@@ -42,6 +56,41 @@ test("reviewNote words each tier", () => {
   expect(l).toContain("Tier light");
   expect(l).toContain("mcp__haikrew__record_verdict");
   expect(reviewNote("Isaac Newline", { tier: "none", reviewer: null, reasons: [] })).toBe("");
+});
+
+test("with the tools on, the default and an explicit toolsOn give the same note", () => {
+  expect(reviewNote("Isaac Newline", deep, ["a"], 3)).toBe(reviewNote("Isaac Newline", deep, ["a"], 3, { toolsOn: true }));
+});
+
+test("an inline deep plan tells the main model to review the risky hunks itself and record, never to launch a reviewer", () => {
+  const on = reviewNote("Isaac Newline", inline, ["a"], 3);
+  expect(on).toContain("Tier deep: touches hooks/register.ts; reviewed inline");
+  expect(on).toContain("Review the risky hunks yourself (public API, security, concurrency, permissions, data loss)");
+  expect(on).toContain("call mcp__haikrew__record_verdict");
+  expect(on).not.toContain("HAIKREW job=review");
+  expect(on).not.toContain("Launch a reviewer");
+  const off = reviewNote("Isaac Newline", inline, ["a"], 3, { toolsOn: false });
+  expect(off).toContain("Review the risky hunks yourself");
+  expect(off).not.toContain("HAIKREW job=review");
+  expect(off).not.toContain("record_verdict");
+});
+
+test("with the tools off, a light note names no tool and asks for the result in the reply", () => {
+  const l = reviewNote("Isaac Newline", light, ["a"], 3, { toolsOn: false });
+  expect(l).toContain("Glance at the diff");
+  expect(l).not.toContain("record_verdict");
+  expect(l).not.toContain("review_packet");
+  expect(l).not.toContain("mcp__haikrew__");
+});
+
+test("with the tools off, a standard or deep note carries the packet and names no tool", () => {
+  const packet = "# Review packet: Isaac Newline\n\nVERDICT: PASS for Isaac Newline";
+  const d = reviewNote("Isaac Newline", deep, ["a"], 3, { toolsOn: false, packet });
+  expect(d).toContain("opus at high effort");
+  expect(d).toContain("HAIKREW job=review name=<a name>");
+  expect(d).toContain(`put this review packet in its prompt:\n\n${packet}`);
+  expect(d).not.toContain("review_packet");
+  expect(d).not.toContain("record_verdict");
 });
 
 test("touched records files and line estimates from Edit, MultiEdit, Write and NotebookEdit; specOf keeps the prompt", () => {
