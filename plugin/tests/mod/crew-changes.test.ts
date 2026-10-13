@@ -29,7 +29,7 @@ test("shellWrites reads simple paths and leaves the rest unparsed", () => {
   expect(shellWrites("git commit -m x")).toEqual([]);
   expect(shellWrites('echo hi > "$OUT"')).toEqual([]);
   expect(outsideTree("/tmp/x")).toBe(true);
-  expect(outsideTree("/private/tmp/claude-1/scratchpad/a")).toBe(true);
+  expect(outsideTree("/var/folders/xy/T/scratchpad/a")).toBe(true);
   expect(outsideTree("/var/folders/ab/T/x")).toBe(true);
   expect(outsideTree("/Users/a/repo/scratchpad/a")).toBe(true);
   expect(outsideTree("/Users/a/repo/tmp/x.ts")).toBe(false);
@@ -41,7 +41,7 @@ test("Bash writes count as unknown size, scratch writes and deleted lines are ha
   noteToolCall({ agentId: "b1", tool: "Bash", command: "npm test" }, 1);
   expect(touched("b1")).toEqual({ paths: [], lines: 0 });
   noteToolCall({ agentId: "b1", tool: "Bash", command: "echo x > /tmp/a.txt" }, 2);
-  noteToolCall({ agentId: "b1", tool: "Write", file_path: "/private/tmp/claude/scratchpad/n.ts", content: "a\nb" }, 3);
+  noteToolCall({ agentId: "b1", tool: "Write", file_path: "/tmp/session/scratchpad/n.ts", content: "a\nb" }, 3);
   expect(touched("b1")).toEqual({ paths: [], lines: 0 });
   noteToolCall({ agentId: "b1", tool: "Bash", command: "git commit -m x" }, 4);
   noteToolCall({ agentId: "b1", tool: "Bash", command: "mv a.ts b.ts" }, 5);
