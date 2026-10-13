@@ -1,5 +1,11 @@
 HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gate), adds squeeze and read guards on tool calls, keeps a ledger of agent runs, and shows the crew in a `/haikrew` pane. Release 0.1.0 introduced the gate, guards, ledger, pane, the haiku-coder and haiku-scout agents and the crew-overseer skill. Releases 0.4.0 to 0.5.5 added per-task model rules, rule effort and selectors, checks, ledger suggestions and a packaging change. Releases 0.6.0 to 0.6.4 redesigned the `/haikrew` pane and the band above the prompt, made the crew the default route for spec-able work, gave subagents names and set token warnings per model. The newest release covered here is 0.6.4, dated 2026-10-12.
 
+## Unreleased
+
+- Decider slot: a `decider` settings section (`mode` off, shadow or decide; `url`, `timeout_ms`, `min_confidence`, `explore_rate`) asks a SystemOne-compatible endpoint (the local Clefkit server at http://127.0.0.1:8790, Jev or a proxy) for a model, effort and review need for launches that name no model and match no rule. Shadow only records the answer; decide applies a confident model and effort (Opus still needs Allow Opus). Errors and timeouts leave the launch as it was. The task text (first 4000 characters), the tag, the session folder's name and a table of past results are sent to the endpoint.
+- Exploration: with probability `explore_rate`, a pick above Haiku runs on the next cheaper model when the endpoint gives it at least 0.25. Such runs are marked and get at least a standard review. Shadow mode records "would explore" only.
+- Each ledger run keeps a `decision` (mode, model, effort, review, confidence, explored, latency, model probabilities) until the run is folded into a monthly bucket. History sent to the endpoint uses mean tokens in the `median_tokens` field.
+
 ## 0.6.5 — 2026-10-12
 
 - Review tiers: when a subagent finishes, HaiKrew picks how its work gets checked from the files it changed, the size of the change, its test claim, its job and the model's checked record: light (the main agent glances), standard (a Sonnet reviewer) or deep (an Opus reviewer, or Sonnet when Opus is not allowed). Thresholds and reviewer models are `review.*` settings.

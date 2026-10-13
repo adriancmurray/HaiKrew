@@ -12,6 +12,8 @@ export type ReviewInput = {
   testsPassed: boolean | null;
   model: string;
   record: { judged: number; passRate: number } | null;
+  /** The decider had the agent run a cheaper model than its pick, to learn what that model can do. */
+  explored?: boolean;
 };
 
 /** The `review` section of the settings, as the decision reads it. */
@@ -96,9 +98,13 @@ export function reviewPlan(input: ReviewInput, cfg: ReviewSettings, allowOpus: b
   const deep = deepReasons(input, cfg);
   if (deep.length > 0) return { tier: "deep", reviewer: reviewerFor(cfg.deep_reviewer, allowOpus, deep), reasons: deep };
   const allLight = input.paths.every((p) => cfg.light_paths.some((g) => pathGlob(g, p)));
-  if (allLight && input.lines < cfg.light_lines && input.testsPassed !== false) {
+  // An explored run is checked properly: a light glance would not tell whether the cheaper model did well.
+  if (allLight && input.lines < cfg.light_lines && input.testsPassed !== false && !input.explored) {
     return { tier: "light", reviewer: null, reasons: [`only light paths changed, ${input.lines} lines`] };
   }
-  const reasons = [allLight ? `${input.lines} lines, at least ${cfg.light_lines}` : "changes outside the light paths"];
+  const reasons: string[] = [];
+  if (!allLight) reasons.push("changes outside the light paths");
+  else if (input.lines >= cfg.light_lines) reasons.push(`${input.lines} lines, at least ${cfg.light_lines}`);
+  if (input.explored) reasons.push("explored: a cheaper model than the decider's pick");
   return { tier: "standard", reviewer: reviewerFor(cfg.standard_reviewer, allowOpus, reasons), reasons };
 }

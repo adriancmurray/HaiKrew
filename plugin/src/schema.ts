@@ -7,6 +7,7 @@ export type Value = boolean | number | string | string[];
 export type Field = { label?: string; short?: string } & (
   | { type: "bool"; default: boolean; help: string }
   | { type: "int"; default: number; min: number; max: number; help: string }
+  | { type: "num"; default: number; min: number; max: number; help: string }
   | { type: "str"; default: string; help: string; pattern?: string }
   | { type: "enum"; default: string; choices: string[]; help: string }
   | { type: "list"; default: string[]; help: string; pattern?: string });
@@ -54,6 +55,23 @@ export const SCHEMA: Record<string, Section> = {
         short: "Text added to matching subagent prompts, e.g. cwd:~/projects/*: never disable git hooks.",
         help: "Text added to the prompt of matching subagents, one entry each: <selectors>: <text>, " +
           "e.g. cwd:~/projects/*: never disable git hooks. Same selectors as rules. Empty: prompts are not changed." },
+    },
+  },
+  decider: {
+    title: "Decider",
+    help: "Ask a SystemOne-compatible endpoint (the local Clefkit server, Jev or a proxy) which model, effort and review a launch should get. " +
+      "Only launches with no named model and no matching rule are asked. Errors and timeouts leave the launch as the gate would have it.",
+    fields: {
+      mode: { label: "Mode", type: "enum", choices: ["off", "shadow", "decide"], default: "off",
+        help: "Off: never asked. Shadow: asked and recorded in the ledger, but the launch is not changed. Decide: the confident answer is applied." },
+      url: { label: "Endpoint", type: "str", default: "http://127.0.0.1:8790", pattern: "^https?://\\S+$",
+        help: "Base URL of the server; HaiKrew posts to <url>/v1/systemone. The task text and a table of past results are sent there." },
+      timeout_ms: { label: "Timeout (ms)", type: "int", default: 800, min: 100, max: 10000,
+        help: "How long a launch waits for the answer before going ahead without it." },
+      min_confidence: { label: "Minimum confidence", type: "num", default: 0.6, min: 0, max: 1,
+        help: "A model or effort answer below this confidence is ignored." },
+      explore_rate: { label: "Explore rate", type: "num", default: 0.1, min: 0, max: 1,
+        help: "Chance that a pick above Haiku runs on the next cheaper model instead, when that model is plausible, so the ledger learns what it can do. Such runs get at least a standard review." },
     },
   },
   squeeze: {
@@ -201,6 +219,9 @@ export function validate(section: string, key: string, value: unknown): string |
     case "bool": return typeof value === "boolean" ? null : "expected true or false";
     case "int":
       if (typeof value !== "number" || !Number.isInteger(value)) return "expected a whole number";
+      return value >= f.min && value <= f.max ? null : `must be between ${f.min} and ${f.max}`;
+    case "num":
+      if (typeof value !== "number" || !Number.isFinite(value)) return "expected a number";
       return value >= f.min && value <= f.max ? null : `must be between ${f.min} and ${f.max}`;
     case "str":
       if (typeof value !== "string") return "expected text";

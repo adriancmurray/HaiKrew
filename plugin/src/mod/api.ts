@@ -15,6 +15,8 @@ export type Api = {
     set(key: string, value: unknown): Promise<void>;
   };
   plugin: { root: string };
+  http: { fetch(url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }): Promise<{ status: number; ok: boolean; text: string }> };
+  clock: { after(ms: number, fn: () => void): unknown };
 };
 
 /** True for a plain JSON object (not null, not an array). */

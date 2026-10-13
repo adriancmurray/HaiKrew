@@ -19,13 +19,13 @@ export function labelOf(key: string, field: Field): string {
 
 /** The typed value of an Input's text: a whole number for int (NaN when blank), else the text. */
 export function parseText(field: Field, text: string): unknown {
-  if (field.type === "int") return text.trim() === "" ? NaN : Number(text.trim());
+  if (field.type === "int" || field.type === "num") return text.trim() === "" ? NaN : Number(text.trim());
   return text;
 }
 
 /** The Settings tab's groups: what each covers, in the order shown. */
 export const GROUPS = [
-  { id: "routing", label: "Routing", sections: ["gate"] },
+  { id: "routing", label: "Routing", sections: ["gate", "decider"] },
   { id: "guards", label: "Guards", sections: ["squeeze", "read_guard", "checks"] },
   { id: "widget", label: "Prompt widget", sections: ["band"] },
   { id: "general", label: "General", sections: ["pane", "agents", "ledger"] },
@@ -132,7 +132,7 @@ function control(act: Actions, ui: Ui, id: string, section: string, key: string,
       onPress: () => act.save(id, section, key, c),
     })));
   }
-  const placeholder = field.type === "int" ? `${field.min} to ${field.max}` : "empty";
+  const placeholder = field.type === "int" || field.type === "num" ? `${field.min} to ${field.max}` : "empty";
   return ui.Input({
     key: id, placeholder, submitLabel: "Save", value: view.drafts[id] ?? String(current),
     onInput: (text: string) => {

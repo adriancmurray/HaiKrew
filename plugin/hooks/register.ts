@@ -8,8 +8,11 @@
  */
 import { settingsFrom } from "../src/mod/config.ts";
 import type { Api } from "../src/mod/api.ts";
+import { decideSpawn, decisionFor, historyFrom, noteDecision, wasExplored } from "../src/mod/decider.ts";
+import type { DecisionRecord, DeciderSettings } from "../src/mod/decider.ts";
+import { tag as promptTag } from "../src/mod/select.ts";
 import { effortFor, gate, resolveModel } from "../src/mod/gate.ts";
-import type { GateSettings } from "../src/mod/gate.ts";
+import type { Choice, GateSettings } from "../src/mod/gate.ts";
 import { hookGuard, readGuard, squeeze, tokenLimit } from "../src/mod/guards.ts";
 import type { ChecksSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
@@ -31,8 +34,19 @@ export function register(on) {
     const cfg = await loadSettings($);
     const gateCfg = cfg.gate as unknown as GateSettings;
     const cwd = await sessionCwd($);
-    const choice = resolveModel(gateCfg, e, cwd);
-    return gate(gateCfg, e, async (passed) => {
+    let choice = resolveModel(gateCfg, e, cwd);
+    let record: DecisionRecord | undefined;
+    let named = e;
+    const dcfg = cfg.decider as unknown as DeciderSettings;
+    if (dcfg.mode !== "off" && gateCfg.enabled) {
+      const found = await decide($, dcfg, gateCfg, e, choice, cwd);
+      if (found) {
+        ({ choice, record } = found);
+        // The gate keeps a named model (and refuses Opus itself), so the decided model goes in as one.
+        if (choice.model) named = { ...e, model: choice.model };
+      }
+    }
+    return gate(gateCfg, named, async (passed) => {
       const reply = await next(passed);
       noteSpawn(passed, reply, Date.now(), choice.rule);
       $.ui.invalidate("ui.render"); // crew changed: the band and pane redraw
@@ -40,6 +54,7 @@ export function register(on) {
       if (id) {
         const effort = effortFor(gateCfg, choice, String(reply.model ?? passed.model ?? ""));
         if (effort) noteEffort(id, effort);
+        if (record) noteDecision(id, record);
         noteSeamStart(id, cwd);
       }
       return reply;
@@ -146,6 +161,28 @@ export function register(on) {
   registerAgentTools(on, "haikrew");
 }
 
+/** Asks the decider endpoint about a spawn the gate left to its default; null on any failure or when it does not apply. */
+async function decide($: Api, dcfg: DeciderSettings, gateCfg: GateSettings, e: Record<string, unknown>, choice: Choice, cwd: string) {
+  try {
+    const history = historyFrom(summary(readState(await $.store.get("ledger"))).by_key);
+    const deps = {
+      ask: async (body: Record<string, unknown>) => {
+        const r = await $.http.fetch(`${dcfg.url.replace(/\/+$/, "")}/v1/systemone`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+        });
+        return r.ok ? JSON.parse(r.text) : null;
+      },
+      wait: (ms: number) => new Promise<void>((resolve) => { $.clock.after(ms, resolve); }),
+      random: Math.random,
+      now: Date.now,
+    };
+    const tags = Object.fromEntries(["job", "lang", "name"].map((k) => [k, promptTag(e.prompt, k)]).filter(([, v]) => v));
+    return await decideSpawn(deps, dcfg, gateCfg, e, choice, cwd, history, tags);
+  } catch {
+    return null;
+  }
+}
+
 /** The session's folder, or "" when Claude Code cannot say. */
 async function sessionCwd($): Promise<string> {
   try {
@@ -183,7 +220,8 @@ async function recordStop($: Api, e: Record<string, unknown>): Promise<StopRun |
   const parsed = runFromStop(e, transcript);
   const live = liveUsage(String(e.agent_id ?? ""));
   const run = live ? combineUsage(parsed, live) : parsed;
-  const state = addRun(readState(await $.store.get("ledger")), { ...run, name: rowFor(run.agent_id, Date.now())?.name }, cfg);
+  const decision = decisionFor(run.agent_id);
+  const state = addRun(readState(await $.store.get("ledger")), { ...run, name: rowFor(run.agent_id, Date.now())?.name, ...(decision ? { decision } : {}) }, cfg);
   await $.store.set("ledger", state);
   return { verdict: run.verdict, model: run.model, job: run.job, lang: run.lang, report: finalReport(transcript) };
 }
@@ -208,7 +246,7 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
     .find((k) => k.model === run.model && k.job === run.job && k.lang === run.lang);
   const record = stats && Number(stats.judged) > 0 ? { judged: Number(stats.judged), passRate: Number(stats.pass_rate) } : null;
   const { paths, lines } = touched(id);
-  const plan = reviewPlan({ job: run.job, lang: run.lang, paths, lines, testsPassed: testsClaim(run.report), model: run.model, record },
+  const plan = reviewPlan({ job: run.job, lang: run.lang, paths, lines, testsPassed: testsClaim(run.report), model: run.model, record, explored: wasExplored(id) },
     (cfg as unknown as { review: ReviewSettings }).review, Boolean(cfg.gate.allow_opus));
   if (plan.tier === "none") return;
   const packet = buildPacket({ name, type: String(e.agent_type ?? "agent"), model: run.model, spec: specOf(id), report: run.report,

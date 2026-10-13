@@ -11,6 +11,7 @@ import { isObject } from "./api.ts";
 import type { Input } from "./api.ts";
 import { inferJob } from "./infer.ts";
 import type { LiveUsage } from "./crew.ts";
+import type { DecisionRecord } from "./decider.ts";
 
 /** One finished subagent. */
 export type Run = {
@@ -35,6 +36,8 @@ export type Run = {
   name?: string;
   /** Who checked it (the reviewer's name) when a checker's verdict replaced the run's own. */
   checked_by?: string;
+  /** What the decider said about this launch, when it was asked. Folded away with the run by condense(). */
+  decision?: DecisionRecord;
 };
 
 /** Sums of runs for one (period, model, agent_type, job, lang); period is 'YYYY-MM', 'YYYY', or ''. */
