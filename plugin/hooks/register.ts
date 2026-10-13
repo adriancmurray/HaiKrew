@@ -28,7 +28,7 @@ import { delegationNote, withNote } from "../src/mod/delegate.ts";
 import type { DelegateSettings } from "../src/mod/delegate.ts";
 import { ledgerLock } from "../src/mod/serial.ts";
 import { checkHealth } from "../src/mod/health.ts";
-import { flagLate, repoOf } from "../src/mod/late.ts";
+import { flagLate, mergeLate, repoOf } from "../src/mod/late.ts";
 import type { RunGit } from "../src/mod/late.ts";
 import { registerAgentTools } from "../src/mod/agents.ts";
 import type { Settings } from "../src/schema.ts";
@@ -223,8 +223,7 @@ async function lateFailures($: Api, cfg: Settings): Promise<void> {
   // Merge by agent id and time into the freshest ledger, so runs added while git ran are kept.
   await ledgerLock(async () => {
     const fresh = readState(await $.store.get("ledger"));
-    const hit = new Map(found.runs.filter((r) => r.late_fail).map((r) => [r.agent_id + "|" + r.ts, r]));
-    await $.store.set("ledger", { ...fresh, runs: fresh.runs.map((r) => hit.get(r.agent_id + "|" + r.ts) ?? r) });
+    await $.store.set("ledger", { ...fresh, runs: mergeLate(fresh.runs, found.runs) });
   });
 }
 
@@ -291,7 +290,7 @@ async function recordStop($: Api, e: Record<string, unknown>): Promise<StopRun |
   const live = liveUsage(String(e.agent_id ?? ""));
   const run = live ? combineUsage(parsed, live) : parsed;
   const decision = decisionFor(run.agent_id);
-  const entry = { ...run, ...(await repoOf(touched(run.agent_id).paths, gitOf($)).catch(() => ({}))), name: rowFor(run.agent_id, Date.now())?.name, ...(decision ? { decision } : {}) };
+  const entry = { ...run, ...(await Promise.race([repoOf(touched(run.agent_id).paths, gitOf($)).catch(() => ({})), new Promise<object>((r) => { $.clock.after(2000, () => r({})); })])), name: rowFor(run.agent_id, Date.now())?.name, ...(decision ? { decision } : {}) };
   await ledgerLock(async () => {
     await $.store.set("ledger", addRun(readState(await $.store.get("ledger")), entry, cfg));
   });

@@ -19,7 +19,7 @@ const DAY_MS = 86_400_000;
 const SEP = "\x01";
 /** `git log` arguments: one header line per commit (marker, hash, unix time, subject), then its files. */
 export const logArgs = (sinceMs: number): string[] =>
-  ["git", "log", `--since=${Math.floor(sinceMs / 1000)}`, "--name-only", "--no-merges", `--format=${SEP}%H${SEP}%ct${SEP}%s`];
+  ["git", "-c", "core.quotepath=off", "log", `--since=${Math.floor(sinceMs / 1000)}`, "--name-only", "--no-merges", `--format=${SEP}%H${SEP}%ct${SEP}%s`];
 
 /** Commits from `git log` output made with logArgs. */
 export function parseLog(text: string): Commit[] {
@@ -62,12 +62,32 @@ export async function flagLate(runs: Run[], now: number, days: number, git: RunG
   return { changed: hits.size > 0, runs: runs.map((r) => (hits.has(r) ? { ...r, late_fail: true, late_fail_commit: hits.get(r) } : r)) };
 }
 
-/** The repo root and repo-relative paths for absolute changed `paths`; {} when they are not in one git repo. */
+/**
+ * The repo root and repo-relative paths for absolute changed `paths`; {} when they are not in one git repo. Git itself
+ * names the root and each folder's prefix, so a symlinked path (/tmp for /private/tmp) still lands in the right place.
+ */
 export async function repoOf(paths: string[], git: RunGit): Promise<LateFields> {
-  const abs = paths.filter((p) => p.startsWith("/"));
-  if (!abs.length) return {};
-  const root = (await git(["git", "rev-parse", "--show-toplevel"], abs[0].slice(0, abs[0].lastIndexOf("/")) || "/")).trim();
-  if (!root) return {};
-  const files = abs.filter((p) => p.startsWith(root + "/")).map((p) => p.slice(root.length + 1));
-  return files.length ? { repo: root, files } : {};
+  const dirs = new Map<string, string[]>();
+  for (const p of paths.filter((x) => x.startsWith("/"))) {
+    const dir = p.slice(0, p.lastIndexOf("/")) || "/";
+    dirs.set(dir, [...(dirs.get(dir) ?? []), p.slice(p.lastIndexOf("/") + 1)]);
+  }
+  let repo = "";
+  const files: string[] = [];
+  for (const [dir, names] of dirs) {
+    const [root, prefix = ""] = (await git(["git", "rev-parse", "--show-toplevel", "--show-prefix"], dir)).split("\n");
+    if (!root || (repo && root !== repo)) continue;
+    repo = root;
+    files.push(...names.map((n) => prefix + n));
+  }
+  return files.length ? { repo, files } : {};
+}
+
+/** `fresh` runs with only the late-failure fields of the matching `flagged` runs copied on, so nothing else is overwritten. */
+export function mergeLate(fresh: Run[], flagged: Run[]): Run[] {
+  const hit = new Map(flagged.filter((r) => r.late_fail).map((r) => [r.agent_id + "|" + r.ts, r]));
+  return fresh.map((r) => {
+    const h = hit.get(r.agent_id + "|" + r.ts);
+    return h ? { ...r, late_fail: true, late_fail_commit: h.late_fail_commit } : r;
+  });
 }

@@ -18,17 +18,24 @@ export function healthLine(): string {
 /** Forget the last check (tests; a mode change to "off"). */
 export function resetHealth(): void {
   state = null;
+  inflight = null;
 }
 
+let inflight: Promise<string> | null = null;
+
 /**
- * Check the endpoint unless a check ran in the last 10 minutes for this url. Returns the toast text when the decider
- * just went (or stayed newly) offline, else "". `get` resolves true for a 2xx answer and rejects or resolves false otherwise.
+ * Check the endpoint unless a check ran in the last 10 minutes for this url or one is running now (parallel callers
+ * share it, so only one can toast). Returns the toast text when the decider just went offline, else "". `get` resolves
+ * true for a 2xx answer and rejects or resolves false otherwise.
  */
-export async function checkHealth(url: string, now: number, get: (url: string, timeoutMs: number) => Promise<boolean>): Promise<string> {
+export function checkHealth(url: string, now: number, get: (url: string, timeoutMs: number) => Promise<boolean>): Promise<string> {
   const base = url.replace(/\/+$/, "");
-  if (state && state.url === base && now - state.checkedAt < HEALTH_EVERY_MS) return "";
+  if (inflight || (state && state.url === base && now - state.checkedAt < HEALTH_EVERY_MS)) return Promise.resolve("");
   const was = state && state.url === base ? state.ok : true;
-  const ok = await get(`${base}/health`, HEALTH_TIMEOUT_MS).catch(() => false);
-  state = { checkedAt: now, ok, url: base };
-  return !ok && was ? `Clef decider offline at ${base}: decisions are skipped. Start it: ${START_HINT}` : "";
+  state = { checkedAt: now, ok: was, url: base }; // claimed before the await
+  inflight = get(`${base}/health`, HEALTH_TIMEOUT_MS).catch(() => false).then((ok) => {
+    state = { checkedAt: now, ok, url: base };
+    return !ok && was ? `Clef decider offline at ${base}: decisions are skipped. Start it: ${START_HINT}` : "";
+  }).finally(() => { inflight = null; });
+  return inflight;
 }

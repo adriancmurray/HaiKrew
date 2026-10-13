@@ -1,7 +1,7 @@
 /** Late-failure helpers with canned git output (the real-repo fixture is tests/late.spec.ts), and the decider health check with a fake fetch. */
 import { expect, test } from "claude-code/testing";
 import { checkHealth, healthLine, resetHealth } from "../../src/mod/health.ts";
-import { flagLate, parseLog, repoOf } from "../../src/mod/late.ts";
+import { flagLate, mergeLate, parseLog, repoOf } from "../../src/mod/late.ts";
 import type { RunGit } from "../../src/mod/late.ts";
 import { readState } from "../../src/mod/ledger.ts";
 import type { Run } from "../../src/mod/ledger.ts";
@@ -35,8 +35,9 @@ test("flagLate asks git once per repo and flags only passed runs with a fix comm
 });
 
 test("repoOf stores the repo root and repo-relative paths, and nothing outside a repo", async () => {
-  const git: RunGit = async (argv, cwd) => (cwd === "/work/repo/src" ? "/work/repo\n" : "");
-  expect(await repoOf(["/work/repo/src/x.ts", "/work/repo/y.ts", "(shell)", "rel.ts"], git)).toEqual({ repo: "/work/repo", files: ["src/x.ts", "y.ts"] });
+  // git names the root and the folder's prefix itself, so a symlinked spelling of the path still resolves
+  const git: RunGit = async (argv, cwd) => (cwd === "/link/repo/src" ? "/work/repo\nsrc/\n" : cwd === "/link/repo" ? "/work/repo\n\n" : "");
+  expect(await repoOf(["/link/repo/src/x.ts", "/link/repo/y.ts", "(shell)", "rel.ts"], git)).toEqual({ repo: "/work/repo", files: ["src/x.ts", "y.ts"] });
   expect(await repoOf(["(shell)"], git)).toEqual({});
   expect(await repoOf(["/elsewhere/x.ts"], git)).toEqual({});
 });
@@ -65,5 +66,28 @@ test("decider health: one warning when it goes down, a line on the card, recheck
   expect(healthLine()).toBe("");
   resetHealth();
   expect(await checkHealth(url, 5, async () => { throw new Error("refused"); })).toContain("offline");
+  resetHealth();
+});
+
+test("the late-fail merge copies only its fields onto the fresh run, keeping a verdict that landed during the git call", async () => {
+  const before = [run({ agent_id: "x", repo: "/r", files: ["a.ts"] })];
+  let fresh: Run[] = before;
+  const found = await flagLate(before, Date.parse("2026-10-11T00:00:00Z"), 5, async () => {
+    fresh = [{ ...before[0], verdict: "fail", checked_by: "Reviewer" }]; // a checker's verdict lands while git runs
+    return `\x01abc\x01${Math.floor(Date.parse("2026-10-10T13:00:00Z") / 1000)}\x01fix a\n\na.ts\n`;
+  });
+  const merged = mergeLate(fresh, found.runs);
+  expect(merged[0].late_fail).toBe(true);
+  expect(merged[0].verdict).toBe("fail");
+  expect(merged[0].checked_by).toBe("Reviewer");
+});
+
+test("parallel health checks share one request and toast once", async () => {
+  resetHealth();
+  let calls = 0;
+  const get = async (): Promise<boolean> => { calls++; return false; };
+  const texts = await Promise.all([checkHealth("http://h", 1, get), checkHealth("http://h", 1, get)]);
+  expect(texts.filter(Boolean).length).toBe(1);
+  expect(calls).toBe(1);
   resetHealth();
 });
