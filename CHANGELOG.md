@@ -1,6 +1,18 @@
 HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gate), adds squeeze and read guards on tool calls, keeps a ledger of agent runs, and shows the crew in a `/haikrew` pane. Release 0.1.0 introduced the gate, guards, ledger, pane, the haiku-coder and haiku-scout agents and the crew-overseer skill. Releases 0.4.0 to 0.5.5 added per-task model rules, rule effort and selectors, checks, ledger suggestions and a packaging change. Releases 0.6.0 to 0.6.5 redesigned the `/haikrew` pane and the band above the prompt, made the crew the default route for spec-able work, gave subagents names, set token warnings per model and added review tiers. The newest release covered here is 0.6.5, dated 2026-10-12.
 
-## Unreleased
+## 0.6.6 — 2026-10-12
+
+Fixes from a full audit (five auditors, one checker, every fix reviewed), plus a decider slot for decision models.
+
+- Gate: a model the caller names is checked against `allow_opus` on every path, pinned agent types and forks included, in any letter case. Agents can no longer change `gate.enabled`, `gate.pinned_types` or `gate.rules_override`.
+- `haikrew verify` works as a bare command: the plugin ships an extensionless `bin/haikrew` launcher. `squeeze` keeps up to 256 MiB of output, so a long passing build is no longer reported as failed.
+- Verdicts: reports handed back through `SubagentHandback` are read again, so coders' STATUS and VERDICT lines count. A checker's `VERDICT: PASS|FAIL for <name>` no longer judges the checker's own run, names match however they are spelled (underscores, case, trailing text), and interrupted turns are not counted as attempts.
+- Review tiers: writes made through shell commands count as changes; scratch paths, refused calls and failed calls do not; removed lines count. Deep reviews stay with the main agent when it is at least as strong as the deep reviewer. With agent tools off, review notes carry the context packet instead of naming tools. `deep_jobs` entries match by prefix (`security` covers `security-review`). Subagent names are unique within a session.
+- Ledger: reads and writes are serialised, so two agents finishing together both get recorded. Output averages use live-counted runs; transcript-only output counts are lower bounds and show with "≥".
+- Band: the drawing stays under the 131,072-character limit at any width and crew size (largest measured 124,869), and a "+N" mark counts agents not drawn. Model dots on the home page follow the band colours.
+- `scripts/try.sh` runs every CLI spec; `scripts/release.sh` stages CHANGELOG.md and checks it for private paths.
+
+Decider slot (off by default):
 
 - Decider slot: a `decider` settings section (`mode` off, shadow or decide; `url`, `timeout_ms`, `min_confidence`, `explore_rate`) asks a SystemOne-compatible endpoint (the local Clefkit server at http://127.0.0.1:8790, Jev or a proxy) for a model, effort and review need for launches that name no model and match no rule. Shadow only records the answer; decide applies a confident model and effort (Opus still needs Allow Opus). Errors and timeouts leave the launch as it was. The task text (first 4000 characters), the tag, the session folder's name and a table of past results are sent to the endpoint.
 - Exploration: with probability `explore_rate`, a pick above Haiku runs on the next cheaper model when the endpoint gives it at least 0.25. Such runs are marked and get at least a standard review. Shadow mode records "would explore" only.
