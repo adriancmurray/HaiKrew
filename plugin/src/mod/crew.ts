@@ -7,7 +7,8 @@ import { isObject } from "./api.ts";
 import type { Input } from "./api.ts";
 import { claimName, releaseName, resetNames, takenNames } from "./crew-names.ts";
 import { nameFromTag, pickName } from "./names.ts";
-import { outsideTree, shellWrites } from "./shell-writes.ts";
+import { commandDir, resolvePath } from "./guards.ts";
+import { DYNAMIC_WRITE, outsideTree, REPO_WRITE, shellWrites } from "./shell-writes.ts";
 
 /** Finished agents stay on the roster this long, dimmed, before they drop. */
 export const DONE_LINGER_MS = 60_000;
@@ -160,6 +161,10 @@ const DROPPED_NAMES_MAX = 200;
 const STOPPED_WINDOW_MS = 10 * 60_000;
 const stopped = new Map<string, { at: number; paths: string[] }>();
 
+// Paths the main loop (holder "main", no agent id) changed, by path and time. They explain an unattributed change for
+// the same window as a stopped agent's paths; the main loop is one holder, so one map per path is enough.
+const mainWrites = new Map<string, number>();
+
 /** A repo's `git status` path set taken at a spawn: the root its paths are relative to, and the paths already changed. */
 export type RepoSnapshot = { root: string; paths: Set<string> };
 const SNAPSHOTS_MAX = 50;
@@ -170,6 +175,7 @@ export function resetCrew(): void {
   members.clear();
   droppedNames.clear();
   stopped.clear();
+  mainWrites.clear();
   snapshots.clear();
   resetNames();
   mainTurn = null;
@@ -239,30 +245,32 @@ export function noteToolCall(e: Input, now: number, changes = true): void {
   m.calls += 1;
   m.lastTool = String(e.tool ?? "");
   m.lastTarget = target(e);
-  if (changes) noteToolChange(e);
+  if (changes) noteToolChange(e, "");
 }
 
 const lineCount = (v: unknown): number => (typeof v === "string" && v !== "" ? v.split("\n").length : 0);
 /** Lines an edit touched: the larger of what it removed and what it wrote, so a deletion still counts. */
 const editLines = (x: Record<string, unknown>): number => Math.max(lineCount(x.old_string), lineCount(x.new_string));
 
+/** What a finished call changed: its paths, whether the shell wrote them, and the lines an edit wrote. */
+type Change = { paths: string[]; shell: boolean; lines: number };
+
 /**
- * Record the files and lines a finished Edit, MultiEdit, Write, NotebookEdit or file-writing Bash call changed. Call it
- * only after the call ran and was not refused. A Bash write counts `shellLines` once (its size is unknown) and adds
- * its parsed paths, else "(shell)". Paths in scratch space (/tmp, the scratchpad) are ignored.
+ * What a finished Edit, MultiEdit, Write, NotebookEdit or file-writing Bash call changed, as absolute paths, or null when
+ * it changed no file outside scratch space. Relative paths resolve from `base` (the session's folder), and a leading
+ * `cd` in a Bash command moves it. With no base they stay as written. A Bash write with no parsed path is "(shell)".
  */
-export function noteToolChange(e: Input, shellLines = 60): void {
-  const m = typeof e.agentId === "string" ? members.get(e.agentId) : undefined;
-  if (!m) return;
+function changeOf(e: Input, base: string): Change | null {
   const tool = String(e.tool ?? "");
   if (tool === "Bash") {
-    const written = typeof e.command === "string" ? shellWrites(e.command) : null;
-    if (!written) return;
-    const real = written.filter((p) => !outsideTree(p));
-    if (written.length > 0 && real.length === 0) return;
-    for (const p of real.length > 0 ? real : ["(shell)"]) { m.paths.add(p); m.shellPaths.add(p); }
-    m.shellLines = Math.max(m.shellLines, shellLines);
-    return;
+    const command = String(e.command ?? "");
+    const written = typeof e.command === "string" ? shellWrites(command) : null;
+    if (!written) return null;
+    const dir = commandDir(command, base);
+    const at = (p: string): string => (p === REPO_WRITE || p === DYNAMIC_WRITE ? p : resolvePath(dir, p));
+    const real = written.map(at).filter((p) => !outsideTree(p));
+    if (written.length > 0 && real.length === 0) return null;
+    return { paths: real.length > 0 ? real : ["(shell)"], shell: true, lines: 0 };
   }
   let path: unknown = e.file_path;
   let lines = 0;
@@ -270,11 +278,40 @@ export function noteToolChange(e: Input, shellLines = 60): void {
   else if (tool === "MultiEdit") lines = Array.isArray(e.edits) ? e.edits.reduce((n: number, x) => n + (isObject(x) ? editLines(x) : 0), 0) : 0;
   else if (tool === "Write") lines = lineCount(e.content);
   else if (tool === "NotebookEdit") { path = e.notebook_path; lines = 1; }
-  else return;
-  if (typeof path !== "string" || !path || outsideTree(path)) return;
-  m.paths.add(path);
-  m.editPaths.add(path);
-  m.lines += lines;
+  else return null;
+  if (typeof path !== "string" || !path) return null;
+  const abs = resolvePath(base, path);
+  if (outsideTree(abs)) return null;
+  return { paths: [abs], shell: false, lines };
+}
+
+/**
+ * Record the files and lines a finished Edit, MultiEdit, Write, NotebookEdit or file-writing Bash call changed. Call it
+ * only after the call ran and was not refused. `base` is the session's folder, for relative paths (see changeOf). A Bash
+ * write counts `shellLines` once (its size is unknown) and adds its parsed paths, else "(shell)". Scratch paths are ignored.
+ */
+export function noteToolChange(e: Input, base: string, shellLines = 60): void {
+  const m = typeof e.agentId === "string" ? members.get(e.agentId) : undefined;
+  if (!m) return;
+  const change = changeOf(e, base);
+  if (!change) return;
+  for (const p of change.paths) {
+    m.paths.add(p);
+    (change.shell ? m.shellPaths : m.editPaths).add(p);
+  }
+  if (change.shell) m.shellLines = Math.max(m.shellLines, shellLines);
+  else m.lines += change.lines;
+}
+
+/**
+ * Record a change the main loop made (a call with no agent id), so an unattributed check does not blame it on no one.
+ * Call it only after the call ran and was not refused, as noteToolChange, with `base` the session's folder.
+ */
+export function noteMainChange(e: Input, base: string, now: number): void {
+  const change = changeOf(e, base);
+  if (!change) return;
+  for (const p of change.paths) mainWrites.set(p, now);
+  for (const [p, at] of mainWrites) if (now - at > STOPPED_WINDOW_MS) mainWrites.delete(p);
 }
 
 /** The files `id` changed and the estimated lines it wrote, from its tool calls. */
@@ -324,7 +361,16 @@ export function attributedPaths(now: number): string[] {
   const out = new Set<string>();
   for (const m of members.values()) if (m.endedAt === null) for (const p of m.paths) out.add(p);
   for (const s of stopped.values()) if (now - s.at <= STOPPED_WINDOW_MS) for (const p of s.paths) out.add(p);
+  for (const [p, at] of mainWrites) if (now - at <= STOPPED_WINDOW_MS) out.add(p);
   return [...out];
+}
+
+/**
+ * The name a ledger run is shown by when no live roster row has one: the `name=` tag on its spawn prompt, else "agent"
+ * and the first 8 characters of its id, so a run recorded after an app restart still reads as itself.
+ */
+export function untrackedName(id: string, prompt: unknown): string {
+  return nameFromTag(prompt) || `agent ${id.slice(0, 8)}`;
 }
 
 /** How many unattributed paths a run keeps. */
@@ -332,15 +378,17 @@ export const UNATTRIBUTED_MAX = 20;
 
 /**
  * The repo-relative paths newly changed since a spawn (in `after` but not `before`) that no known agent path explains,
- * sorted and capped at UNATTRIBUTED_MAX. `known` holds absolute paths (the edit tool's) and root-relative ones (shell
- * parses); an absolute path outside `root` matches nothing. With parallel agents this says only that something wrote it.
+ * sorted and capped at UNATTRIBUTED_MAX. `after` and `before` are root-relative, as porcelainPaths gives them. `known`
+ * holds absolute paths (the edit tool's and the shell's, resolved when recorded); a root-relative entry is joined with
+ * `root`. Both sides are compared as absolute paths, so a path outside `root` matches nothing. With parallel agents
+ * this says only that something wrote it.
  */
 export function unattributedChanges(root: string, before: ReadonlySet<string>, after: ReadonlySet<string>, known: readonly string[]): string[] {
-  const prefix = root.endsWith("/") ? root : `${root}/`;
-  const explained = new Set(known.map((p) => (p.startsWith(prefix) ? p.slice(prefix.length) : p)));
+  const absolute = (p: string): string => (p.startsWith("/") ? p : `${root}/${p}`);
+  const explained = new Set(known.map(absolute));
   // ponytail: compares path sets, not content, so a file already dirty at spawn that an unattributed writer changes
   // again is missed. Upgrade: hash each dirty file's content at spawn and compare at stop.
-  return [...after].filter((p) => !before.has(p) && !explained.has(p)).sort().slice(0, UNATTRIBUTED_MAX);
+  return [...after].filter((p) => !before.has(p) && !explained.has(absolute(p))).sort().slice(0, UNATTRIBUTED_MAX);
 }
 
 /** The spawn prompt of `id` (first 4000 characters), or "" when unknown. */

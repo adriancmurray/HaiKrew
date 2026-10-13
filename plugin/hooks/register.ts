@@ -18,9 +18,9 @@ import { callerType, hookGuard, isReadOnlyType, readGuard, readOnlyGuard, squeez
 import type { ChecksSettings, GuardsSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
-import { activityOf, agentModel, liveUsage, modelFamily, noteMainChunk, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteToolChange, noteTurnEnd, noteSnapshot, attributedPaths, porcelainPaths, rowFor, specOf, takeSnapshot, touched, touchedBy, unattributedChanges } from "../src/mod/crew.ts";
+import { activityOf, agentModel, liveUsage, modelFamily, noteMainChunk, noteMainChange, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteToolChange, noteTurnEnd, noteSnapshot, attributedPaths, porcelainPaths, rowFor, specOf, takeSnapshot, touched, touchedBy, unattributedChanges, untrackedName } from "../src/mod/crew.ts";
 import type { RepoSnapshot } from "../src/mod/crew.ts";
-import { addRun, applyOrHold, combineUsage, finalReport, parseCheckerVerdict, readState, runFromStop, summary } from "../src/mod/ledger.ts";
+import { addRun, applyOrHold, combineUsage, finalReport, parseCheckerVerdict, parseTranscriptText, readState, runFromStop, summary } from "../src/mod/ledger.ts";
 import { buildPacket, reviewNote, testsClaim } from "../src/mod/packet.ts";
 import { applyDefects, countDefects } from "../src/mod/checker.ts";
 import { checkerBucket, sizeOf } from "../src/mod/outcomes.ts";
@@ -159,9 +159,16 @@ export function register(on) {
     const reply = await next(e);
     // Changes count only once the call ran and succeeded: a refused call (`deny`) or a failed one (`isError`, e.g. an
     // Edit whose old text was not found) wrote nothing.
-    if (id && !(isObject(reply) && (reply.deny || reply.isError))) {
-      const shell = e.tool === "Bash" ? Number(((await loadSettings($)).review as unknown as ReviewSettings).light_lines) : 0;
-      noteToolChange(e, shell || undefined);
+    if (!(isObject(reply) && (reply.deny || reply.isError))) {
+      // Relative paths in the call resolve from the session's folder, the same base the Bash hook uses.
+      const cwd = await sessionCwd($);
+      if (id) {
+        const shell = e.tool === "Bash" ? Number(((await loadSettings($)).review as unknown as ReviewSettings).light_lines) : 0;
+        noteToolChange(e, cwd, shell || undefined);
+      } else {
+        // A main-loop write is not an agent's, but it still explains a change in the repo during a run.
+        noteMainChange(e, cwd, Date.now());
+      }
     }
     return reply;
   });
@@ -391,7 +398,7 @@ async function recordStop($: Api, e: Record<string, unknown>, unattributed: stri
   const live = liveUsage(String(e.agent_id ?? ""));
   const run = live ? combineUsage(parsed, live) : parsed;
   const decision = decisionFor(run.agent_id);
-  const entry = { ...run, ...(await locateFiles($, touchedBy(run.agent_id))), ...(unattributed.length ? { unattributed } : {}), name: rowFor(run.agent_id, Date.now())?.name, ...(decision ? { decision } : {}) };
+  const entry = { ...run, ...(await locateFiles($, touchedBy(run.agent_id))), ...(unattributed.length ? { unattributed } : {}), name: rowFor(run.agent_id, Date.now())?.name ?? untrackedName(run.agent_id, parseTranscriptText(transcript).prompt), ...(decision ? { decision } : {}) };
   await ledgerLock(async () => {
     await $.store.set("ledger", addRun(readState(await $.store.get("ledger")), entry, cfg));
   });

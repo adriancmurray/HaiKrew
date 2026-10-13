@@ -1,6 +1,6 @@
 /** Recorded file changes: Bash writes, scratch paths, deletions, refused calls, unique names, and the ledger lock. */
 import { expect, test } from "claude-code/testing";
-import { noteSpawn, noteToolCall, noteToolChange, resetCrew, rowFor, touched } from "../../src/mod/crew.ts";
+import { noteSpawn, noteToolCall, noteToolChange, resetCrew, rowFor, touched, untrackedName } from "../../src/mod/crew.ts";
 import { outsideTree, shellWrites } from "../../src/mod/shell-writes.ts";
 import { serial } from "../../src/mod/serial.ts";
 import { resetEffort } from "../../src/mod/effort.ts";
@@ -124,4 +124,19 @@ test("serial runs overlapping read-modify-writes one at a time, so none is lost"
   expect(store).toBe(2);
   await lock(async () => { throw new Error("x"); }).catch(() => undefined);
   expect(await lock(async () => "after")).toBe("after");
+});
+
+test("a run with no live row is named by its prompt's tag, else by the first 8 characters of its id", () => {
+  expect(untrackedName("abcdef1234", "HAIKREW job=fix name=Ada_Test\nx")).toBe("Ada Test");
+  expect(untrackedName("abcdef1234", "HAIKREW job=fix\nx")).toBe("agent abcdef12");
+  expect(untrackedName("abcdef1234", undefined)).toBe("agent abcdef12");
+});
+
+test("a subagent's relative write is recorded at its absolute path, from the session folder or a leading cd", () => {
+  resetCrew();
+  noteSpawn({ prompt: "x" }, { model: "haiku", agentId: "s1" }, 0);
+  noteToolChange({ agentId: "s1", tool: "Bash", command: "echo x > tests/a.ts" }, "/r/plugin");
+  noteToolChange({ agentId: "s1", tool: "Edit", file_path: "src/b.ts", old_string: "a", new_string: "b" }, "/r/plugin");
+  noteToolChange({ agentId: "s1", tool: "Bash", command: "cd /r/other && echo x > c.ts" }, "/r/plugin");
+  expect(touched("s1").paths.sort()).toEqual(["/r/other/c.ts", "/r/plugin/src/b.ts", "/r/plugin/tests/a.ts"]);
 });

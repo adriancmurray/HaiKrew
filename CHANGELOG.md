@@ -4,6 +4,8 @@ HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gat
 
 - `board` tool (crew board Phases 2 and 4): `query` returns claims and decisions on given paths (default 40 lines, `limit` up to 400, end directories with "/"), `decide` appends to the per-repo decision log (200 lines, older moved to an archive), `status` shows an agent its own state, `summary` gives a director one screen of its subtree (agents, conflicts, new decisions, unattributed changes). Not gated by `agents.control`. Settings `board.decisions`, `board.decisions_max`.
 - Runs whose files are all in temp or scratchpad folders get no review note.
+- Recall (off by default, `recall.enabled`): search old conversations by meaning. Indexes person messages, assistant text and agent hand-backs (not tool output, notices or compaction summaries) with EmbeddingGemma through a local Ollama (`recall.url` must be a loopback address). Per-project index in 3 MiB shards with a manifest; `haikrew recall index|search|prune|reset`, a `recall` tool for agents that works in the desktop app, and a SessionStart hook that indexes new lines when enabled. `recall.max_mb` caps the size, oldest sessions dropped first. Spec: docs/specs/recall.md.
+- Board summary: main-thread writes count as attributed; unattributed changes compare absolute paths (relative writes resolve against a leading `cd` or the session folder); runs are named by crew name, then tag name, then id.
 - Contracts (Phase 3) are on hold: the seams bench baseline scored 12 of 12 integration suites on the first try, so the current tasks cannot show a gain.
 
 ## 0.6.12 — 2026-10-13

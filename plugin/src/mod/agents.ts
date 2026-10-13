@@ -8,7 +8,7 @@
 import { SCHEMA, validate } from "../schema.ts";
 import type { Settings } from "../schema.ts";
 import { checkChanges, mergeChanges, settingsFrom } from "./config.ts";
-import { rowFor, snapshot, touched } from "./crew.ts";
+import { rowFor, snapshot, touched, untrackedName } from "./crew.ts";
 import { claimBook, liveClaims, normalise } from "./claims.ts";
 import type { BoardSettings } from "./claims.ts";
 import { addDecision, decisionTextError, limitOf, queryText, readConflicts, readRepo, scopeRows, statusText, summaryText } from "./board.ts";
@@ -18,6 +18,9 @@ import { isObject } from "./api.ts";
 import { applyChecked, byModel, readState, summary, tokenTotals } from "./ledger.ts";
 import type { LedgerState } from "./ledger.ts";
 import { buildRule, KINDS, MODELS, EFFORTS, ruleSentence } from "./rules.ts";
+import { recallTool } from "./recall-tool.ts";
+import type { ToolReply } from "./recall-tool.ts";
+import { homeOf } from "./select.ts";
 
 type Api = Record<string, any>;
 type Answer = { ok: true; change: string; settings: Settings } | { ok: false; reason: string };
@@ -93,7 +96,7 @@ export const AGENT_TOOLS = [
   },
   {
     name: "board",
-    description: "The crew board. action: query (live claims, decisions and notes on absolute paths: paths; end a directory with "/"), decide (log one " +
+    description: "The crew board. action: query (live claims, decisions and notes on absolute paths: paths; end a directory with a slash), decide (log one " +
       "line of text for paths, as a decision), status (your own crew row), summary (one screen: agents in scope, conflicts, " +
       "decisions and unattributed changes since your last summary; scope is an agent id, default your own subtree).",
     inputSchema: {
@@ -108,14 +111,27 @@ export const AGENT_TOOLS = [
       required: ["action"],
     },
   },
+  {
+    name: "recall",
+    description: "Search the person's past conversations by meaning: their messages, your text and subagent hand-back reports. " +
+      "Returns up to 8 hits, each as date role session:line and about 300 characters of text. Needs recall on in settings.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        question: { type: "string", description: "What to look for, in plain words." },
+        project: { type: "string", description: "A project folder name under ~/.claude/projects; default every indexed project." },
+      },
+      required: ["question"],
+    },
+  },
 ];
 
 const CHANGES = new Set(["set_setting", "add_rule", "remove_rule", "record_verdict"]);
 
 /** Whether `tool` may run under the person's agent-control setting, or why not. */
 export function allowed(settings: Settings, tool: string): string | null {
-  // The board reads the crew and logs decisions; it changes no setting, rule or verdict, so agent control does not gate it.
-  if (tool === "board") return null;
+  // The board and recall only read, or log a decision; neither changes a setting, rule or verdict, so agent control does not gate them.
+  if (tool === "board" || tool === "recall") return null;
   const mode = String(settings.agents?.control ?? "off");
   if (mode === "off") return "Agent control is off. The person can allow it in /haikrew: Settings › General › Agent control.";
   if (mode === "read" && CHANGES.has(tool)) return "Agent control is read-only. The person can allow changes in /haikrew: Settings › General › Agent control.";
@@ -289,7 +305,7 @@ async function boardSummary($: Api, root: string, e: Api, callerId: string, sett
   const files = new Map(rows.map((r) => [r.id, touched(r.id).paths] as const));
   const recent = summary(readState(await $.store.get("ledger"))).recent;
   const runs = recent.filter((r) => scopeIds === null || scopeIds.has(r.agent_id))
-    .map((r) => ({ name: names.get(r.agent_id) ?? r.agent_id, unattributed: r.unattributed }));
+    .map((r) => ({ name: names.get(r.agent_id) ?? r.name ?? untrackedName(r.agent_id, undefined), unattributed: r.unattributed }));
   const decisionsOn = settings.board?.decisions !== false;
   const text = summaryText({ rows: scoped, files, scopeIds, conflicts: await readConflicts(boardStore($)),
     decisions: decisionsOn ? (await readRepo(boardStore($), root)).decisions : [], decisionsOn, runs, since: lastSummary.get(key) ?? 0 });
@@ -348,6 +364,32 @@ async function boardTool(e: Api, $: Api, settings: Settings): Promise<{ deny: st
   return boardDecide($, e, paths, callerId, settings, now);
 }
 
+/**
+ * The recall tool, on the store under the session folder's home: $.fs reads the manifest and shards, $.http.fetch
+ * posts the embedding call. Works on the desktop app too, which has no process runner.
+ */
+async function recallCall($: Api, e: Api, settings: Settings): Promise<ToolReply> {
+  try {
+    const home = homeOf(String(await $.session.cwd().catch(() => "")));
+    if (!home) return { deny: "Recall needs the session folder under a home directory." };
+    return await recallTool(e, settings, {
+      root: `${home}/.claude/plugins/store/haikrew-recall`,
+      fs: {
+        read: (path: string) => $.fs.read(path),
+        list: async (dir: string) => (await $.fs.list(dir)).filter((x: { kind: string }) => x.kind === "dir").map((x: { name: string }) => x.name),
+      },
+      http: {
+        post: async (url: string, body: string) => {
+          const res = await $.http.fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body });
+          return { ok: res.ok, status: res.status, text: res.text };
+        },
+      },
+    });
+  } catch {
+    return { deny: "Recall could not read the index on this surface." };
+  }
+}
+
 /** Serve the tools as `mcp__<plugin>__<name>`. pane.ts registers them at session start (one hook per event). */
 export function registerAgentTools(on: (...args: unknown[]) => void, plugin: string): void {
   for (const spec of AGENT_TOOLS) {
@@ -362,6 +404,7 @@ export function registerAgentTools(on: (...args: unknown[]) => void, plugin: str
       }
       if (spec.name === "review_packet" || spec.name === "record_verdict") return reviewTool(spec.name, e, $);
       if (spec.name === "board") return boardTool(e, $, settings);
+      if (spec.name === "recall") return recallCall($, e, settings);
       const reply = answer(spec.name, e, settings);
       if (!reply.ok) return { deny: reply.reason };
       await $.store.set("settings", reply.settings);

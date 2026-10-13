@@ -3,6 +3,9 @@
  * and the CLI can import it. settings.ts adds file storage on top.
  */
 export type Value = boolean | number | string | string[];
+
+/** A base URL whose host is loopback only (127.0.0.1, ::1 or localhost). Recall sends transcript text to it. */
+export const LOOPBACK_PATTERN = "^https?://(127\\.0\\.0\\.1|localhost|\\[::1\\])(:[0-9]{1,5})?(/\\S*)?$";
 /** `label` and `short` are for the pane only: a readable name and a one-line summary of `help`. */
 export type Field = { label?: string; short?: string } & (
   | { type: "bool"; default: boolean; help: string }
@@ -197,6 +200,20 @@ export const SCHEMA: Record<string, Section> = {
         help: "Monthly averages older than this fold into yearly ones." },
       late_fail_days: { label: "Late failure window (days)", type: "int", default: 5, min: 1, max: 60,
         help: "A passed run counts as a late failure when a commit within this many days touches its files and reads as a fix or revert." },
+    },
+  },
+  recall: {
+    title: "Recall",
+    help: "Search your old conversations by meaning. Embeds through a local Ollama server, so nothing leaves the machine.",
+    fields: {
+      enabled: { label: "Recall on", type: "bool", default: false,
+        help: "Index your transcripts at session start and let agents search them with the recall tool. Off until measured." },
+      model: { label: "Embedding model", type: "str", default: "embeddinggemma", pattern: "^[^\\s]+$",
+        help: "The Ollama model that turns text into vectors." },
+      url: { label: "Ollama address", type: "str", default: "http://127.0.0.1:11434", pattern: LOOPBACK_PATTERN,
+        help: "Base URL of the Ollama server. Only a loopback address (127.0.0.1, ::1 or localhost): text is never sent off this machine." },
+      max_mb: { label: "Index size (MB)", type: "int", default: 200, min: 10, max: 10000,
+        help: "Largest index kept across all projects. Past this, the oldest sessions are dropped first." },
     },
   },
   agents: {

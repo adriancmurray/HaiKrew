@@ -12,7 +12,8 @@ import { defaults, validate } from "./schema.ts";
 import { listMarkdown, splitLines } from "./squeeze.ts";
 
 const USAGE = "usage: haikrew squeeze [--max-lines N] [--wrap PREFIX] -- <cmd...> | verify | " +
-  "patterns check [--dir PATH] [--max-files N] [--max-lines N] | analyze [--store PATH] | late-failures [--days N]";
+  "patterns check [--dir PATH] [--max-files N] [--max-lines N] | analyze [--store PATH] | late-failures [--days N] | " +
+  "recall index|search|prune|reset";
 /** How long one git call may run before late-failures gives up on it. */
 const GIT_TIMEOUT_MS = 15000;
 /** The `patterns check` caps when no flag overrides them. */
@@ -44,6 +45,10 @@ export async function main(argv: string[]): Promise<number> {
     const flags = parseFlags(rest, { days: 5 });
     if (!flags) return badArgs("late-failures");
     return lateFailuresCmd(flags.days as number, lateIo());
+  }
+  if (cmd === "recall") {
+    const { recallMain } = await import("./recallcli.ts");
+    return recallMain(rest);
   }
   return usage();
 }

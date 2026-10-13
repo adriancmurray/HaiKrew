@@ -8,6 +8,11 @@
             "type": "command",
             "command": "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/bin/haikrew.mjs\" late-failures >/dev/null 2>&1 &'",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/bin/haikrew.mjs\" recall index --if-enabled >/dev/null 2>&1 &'",
+            "timeout": 5
           }
         ]
       }
