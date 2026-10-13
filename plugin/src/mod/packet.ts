@@ -1,4 +1,5 @@
 /** The review packet for a finished subagent and the one-line note that points the main conversation at it. Pure. */
+import { CHECKER_AGENT } from "./review.ts";
 import type { ReviewPlan } from "./review.ts";
 
 export type PacketInput = {
@@ -58,6 +59,16 @@ export function testsClaim(report: string): boolean | null {
   return claim;
 }
 
+/**
+ * The instruction for a light change checked by a checker agent. The checker reads the packet itself when tools are on;
+ * when they are off, the packet travels in the note.
+ */
+function checkerAction(name: string, toolsOn: boolean, packet: string): string {
+  const start = `Launch a checker with subagent_type \`${CHECKER_AGENT}\` and prompt starting \`HAIKREW job=check name=<a name>\``;
+  const naming = toolsOn ? `, naming agent "${name}" to check` : `, naming agent "${name}" to check, and put this review packet in its prompt:\n\n${packet}`;
+  return `${start}${naming}. On its VERDICT, a FAIL means fix the work or re-run it on the next model up before building on it.`;
+}
+
 /** The instruction after a note's head: what the main conversation does for the tier. Tools off: no tool names; the packet travels in the note. */
 function action(name: string, plan: ReviewPlan, toolsOn: boolean, packet: string): string {
   if (plan.reviewer === "inline") {
@@ -66,6 +77,7 @@ function action(name: string, plan: ReviewPlan, toolsOn: boolean, packet: string
       ? `${risky}, then call mcp__haikrew__record_verdict. No subagent review for this one.`
       : `${risky} and say in your reply whether the change passes. No subagent review for this one.`;
   }
+  if (plan.tier === "light" && plan.reviewer?.agent) return checkerAction(name, toolsOn, packet);
   if (plan.tier === "light") {
     return toolsOn
       ? "Glance at the diff and call mcp__haikrew__record_verdict."

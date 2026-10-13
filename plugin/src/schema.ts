@@ -132,6 +132,10 @@ export const SCHEMA: Record<string, Section> = {
         help: "Path globs. Changes only to these can get a light review." },
       light_lines: { label: "Light below (lines)", type: "int", default: 60, min: 0, max: 100000,
         help: "Changes of fewer lines than this can get a light review, when they touch only light paths." },
+      light_reviewer: { label: "Light reviewer", type: "enum", default: "checker", choices: ["checker", "inline"],
+        short: "Who checks a light change: a Haiku checker agent, or the main model's glance.",
+        help: "checker: a Haiku agent checks each spec item, runs verify and tries to break the change; its VERDICT line sets the run's verdict. " +
+          "inline: the main model glances at the diff and records the verdict itself." },
       deep_lines: { label: "Deep from (lines)", type: "int", default: 400, min: 1, max: 1000000,
         help: "Changes of at least this many lines always get a deep review." },
       standard_reviewer: { label: "Standard reviewer", type: "enum", default: "sonnet@medium",

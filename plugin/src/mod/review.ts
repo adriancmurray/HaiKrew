@@ -24,22 +24,27 @@ export type ReviewSettings = {
   sensitive_paths: string[];
   light_paths: string[];
   light_lines: number;
+  /** "checker" (a Haiku checker agent) or "inline" (the main agent glances at the diff). */
+  light_reviewer: string;
   deep_lines: number;
   standard_reviewer: string;
   deep_reviewer: string;
   deep_jobs: string[];
 };
 
-/** How deep the check goes: none, light (the main agent glances at it), standard or deep. */
+/** How deep the check goes: none, light (a checker agent, or the main agent's glance), standard or deep. */
 export type Tier = "none" | "light" | "standard" | "deep";
+
+/** The agent type that checks a light change when `light_reviewer` is "checker". */
+export const CHECKER_AGENT = "haikrew:haiku-checker";
 
 /**
  * The chosen tier, the reviewer's model and effort, "inline" when the main model reviews the risky hunks itself,
- * null when nothing reviews, and the reasons for the choice.
+ * null when nothing reviews, and the reasons for the choice. `agent` names the agent type that reviews, when one does.
  */
 export type ReviewPlan = {
   tier: Tier;
-  reviewer: { model: string; effort: string } | "inline" | null;
+  reviewer: { model: string; effort: string; agent?: string } | "inline" | null;
   reasons: string[];
 };
 
@@ -143,7 +148,9 @@ export function reviewPlan(input: ReviewInput, cfg: ReviewSettings, allowOpus: b
   const allLight = input.paths.every((p) => cfg.light_paths.some((g) => pathGlob(g, p)));
   // An explored run is checked properly: a light glance would not tell whether the cheaper model did well.
   if (allLight && input.lines < cfg.light_lines && input.testsPassed !== false && !input.explored) {
-    return { tier: "light", reviewer: null, reasons: [`only light paths changed, ${input.lines} lines`] };
+    const reasons = [`only light paths changed, ${input.lines} lines`];
+    const reviewer = cfg.light_reviewer === "checker" ? { model: "haiku", effort: "medium", agent: CHECKER_AGENT } : null;
+    return { tier: "light", reviewer, reasons };
   }
   const reasons: string[] = [];
   if (!allLight) reasons.push("changes outside the light paths");

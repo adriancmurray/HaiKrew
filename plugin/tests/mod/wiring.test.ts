@@ -192,3 +192,59 @@ test("a stop after an edit under hooks/ tells the main conversation to review at
   expect(text).toContain("Tier deep");
   expect(stored.review_packets["Isaac Newline"]).toContain("hooks/register.ts");
 });
+
+/** A subagent transcript: its prompt as the first user line, then one final assistant text. */
+function transcriptOf(prompt: string, text: string): string {
+  return [
+    { type: "user", timestamp: "2026-10-08T09:00:00.000Z", message: { content: prompt } },
+    { type: "assistant", timestamp: "2026-10-08T09:00:09.000Z", message: { id: "m1", model: "claude-haiku-5-5", usage: { input_tokens: 1, output_tokens: 1 },
+      content: [{ type: "text", text }] } },
+  ].map((l) => JSON.stringify(l)).join("\n");
+}
+
+test("a checker's VERDICT line settles the run it names, and a job=check run gets no review of its own", async (ctx: any, on: any) => {
+  resetCrew();
+  resetEffort();
+  resetSeams();
+  on("session.cwd", async () => ({ value: "/Users/someone/projects/app" }));
+  const ids = ["c1", "k1", "k2"];
+  on("agent.spawn", async (_$: any, e: any) => ({ model: e.model ?? "haiku", agentId: ids.shift() }));
+  on("classic.SubagentStop", async () => ({ value: null }));
+  on("tool.call", async () => ({ result: "ok" }));
+  const stored: Record<string, any> = { settings: SETTINGS };
+  const transcripts: Record<string, string> = {
+    "/coder.jsonl": transcriptOf("HAIKREW job=implement lang=ts name=Isaac_Newline\nedit it", "Done."),
+    "/checker.jsonl": transcriptOf("HAIKREW job=check name=Karl_Checker\ncheck it",
+      "SPEC   1/1 met — missing: none\nTESTS  verify: PASS (5 passed)\nBROKE  none\nRISK   none\nVERDICT: PASS for Isaac Newline"),
+    "/checker2.jsonl": transcriptOf("HAIKREW job=check name=Karl_Checker\ncheck again", "Stopped early: no verdict."),
+  };
+  const appended: any[] = [];
+  on("store.get", async (_$: any, e: any) => ({ value: stored[e.key] }));
+  on("store.set", async (_$: any, e: any) => { stored[e.key] = e.value; return { value: undefined }; });
+  on("fs.read", async (_$: any, e: any) => ({ value: transcripts[e.path] }));
+  on("ui.invalidate", async () => ({ value: undefined }));
+  on("session.append", async (_$: any, e: any, next: any) => { appended.push(e); return next(e); });
+  const coder = await ctx.agent.spawn({
+    prompt: "HAIKREW job=implement lang=ts name=Isaac_Newline\nedit it", description: "edit", subagentType: "haiku-coder",
+    parentModel: "opus", background: false, fork: false,
+  });
+  await ctx.tool.call({ tool: "Edit", agentId: coder.agentId, file_path: "/repo/src/mod/a.ts", new_string: "a\nb" });
+  await ctx.classic.SubagentStop({ agent_id: coder.agentId, agent_type: "haiku-coder", agent_transcript_path: "/coder.jsonl" });
+  expect(appended.length).toBe(1);
+  const checker = await ctx.agent.spawn({
+    prompt: "HAIKREW job=check name=Karl_Checker\ncheck it", description: "check", subagentType: "haikrew:haiku-checker",
+    parentModel: "opus", background: false, fork: false,
+  });
+  await ctx.tool.call({ tool: "Edit", agentId: checker.agentId, file_path: "/repo/plugin/hooks/register.ts", new_string: "a\nb" });
+  await ctx.classic.SubagentStop({ agent_id: checker.agentId, agent_type: "haikrew:haiku-checker", agent_transcript_path: "/checker.jsonl" });
+  expect(appended.length).toBe(1);
+  const again = await ctx.agent.spawn({
+    prompt: "HAIKREW job=check name=Karl_Checker\ncheck again", description: "check", subagentType: "haikrew:haiku-checker",
+    parentModel: "opus", background: false, fork: false,
+  });
+  await ctx.tool.call({ tool: "Edit", agentId: again.agentId, file_path: "/repo/plugin/hooks/register.ts", new_string: "a\nb" });
+  await ctx.classic.SubagentStop({ agent_id: again.agentId, agent_type: "haikrew:haiku-checker", agent_transcript_path: "/checker2.jsonl" });
+  expect(appended.length).toBe(1);
+  const run = stored.ledger.runs.find((r: any) => r.name === "Isaac Newline");
+  expect([run.verdict, run.checked_by]).toEqual(["pass", "Karl Checker"]);
+});

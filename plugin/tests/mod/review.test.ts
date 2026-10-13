@@ -10,6 +10,7 @@ const CFG: ReviewSettings = {
     "**/*.lock", "**/.github/**", "**/Package.swift", "**/Cargo.toml", "**/package.json"],
   light_paths: ["**/*.md", "**/docs/**", "**/tests/**", "**/*.test.*", "**/*.spec.*", "**/test_*"],
   light_lines: 60,
+  light_reviewer: "checker",
   deep_lines: 400,
   standard_reviewer: "sonnet@medium",
   deep_reviewer: "opus@high",
@@ -24,10 +25,22 @@ function input(over: Partial<ReviewInput> = {}): ReviewInput {
 /** A change that is deep by its path, so the deep reviewer decides how it is checked. */
 const SENSITIVE = { paths: ["plugin/hooks/register.ts"], lines: 10 };
 
-test("a docs-only small change gets a light review, with no reviewer", () => {
+test("a docs-only small change gets a light review, checked by the Haiku checker agent", () => {
   const plan = reviewPlan(input({ paths: ["docs/guide.md", "README.md"], lines: 20 }), CFG, false);
   expect(plan.tier).toBe("light");
+  expect(plan.reviewer).toEqual({ model: "haiku", effort: "medium", agent: "haikrew:haiku-checker" });
+});
+
+test("a light review with light_reviewer inline has no reviewer: the main model glances", () => {
+  const plan = reviewPlan(input({ paths: ["docs/guide.md"], lines: 20 }), { ...CFG, light_reviewer: "inline" }, false);
+  expect(plan.tier).toBe("light");
   expect(plan.reviewer).toBe(null);
+});
+
+test("a light review with the checker names the checker agent and keeps the light reason", () => {
+  const plan = reviewPlan(input({ paths: ["tests/mod/a.test.ts"], lines: 12 }), CFG, false);
+  expect(plan.reasons).toEqual(["only light paths changed, 12 lines"]);
+  expect(plan.reviewer).toEqual({ model: "haiku", effort: "medium", agent: "haikrew:haiku-checker" });
 });
 
 test("a change to plugin/hooks/register.ts is deep, and the reason names the path", () => {
@@ -149,9 +162,12 @@ test("a job that only shares a prefix with a deep job is not deep", () => {
 test("every review schema default validates", () => {
   const d = defaults().review ?? {};
   const fields = SCHEMA.review?.fields ?? {};
-  expect(Object.keys(fields)).toEqual(["enabled", "sensitive_paths", "light_paths", "light_lines", "deep_lines",
+  expect(Object.keys(fields)).toEqual(["enabled", "sensitive_paths", "light_paths", "light_lines", "light_reviewer", "deep_lines",
     "standard_reviewer", "deep_reviewer", "deep_jobs"]);
   for (const key of Object.keys(fields)) expect(validate("review", key, d[key])).toBe(null);
+  expect(d.light_reviewer).toBe("checker");
+  expect(validate("review", "light_reviewer", "inline")).toBe(null);
+  expect(validate("review", "light_reviewer", "sonnet")).not.toBe(null);
   expect(d.deep_reviewer).toBe("opus@high");
   expect(d.standard_reviewer).toBe("sonnet@medium");
 });

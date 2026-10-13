@@ -250,7 +250,7 @@ async function recordStop($: Api, e: Record<string, unknown>): Promise<StopRun |
 
 /**
  * After the run is recorded: a checker's verdict line settles the run it names; any other finished agent (except a review
- * job) gets a review plan, and a tier above none stores a packet and tells the main conversation.
+ * or check job) gets a review plan, and a tier above none stores a packet and tells the main conversation.
  */
 async function planReview($, e: Record<string, unknown>, run: StopRun | null): Promise<void> {
   if (!run) return;
@@ -263,7 +263,7 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
     });
     return;
   }
-  if (run.job === "review") return;
+  if (run.job === "review" || run.job === "check") return;
   const cfg = await loadSettings($);
   const stats = summary(readState(await $.store.get("ledger"))).by_key
     .find((k) => k.model === run.model && k.job === run.job && k.lang === run.lang);

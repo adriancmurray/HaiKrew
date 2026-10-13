@@ -5,6 +5,7 @@ import { noteSpawn, noteToolCall, resetCrew, specOf, touched } from "../../src/m
 
 const deep = { tier: "deep" as const, reviewer: { model: "opus", effort: "high" }, reasons: ["touches hooks/register.ts"] };
 const light = { tier: "light" as const, reviewer: null, reasons: ["small change"] };
+const checked = { tier: "light" as const, reviewer: { model: "haiku", effort: "medium", agent: "haikrew:haiku-checker" }, reasons: ["only light paths changed, 3 lines"] };
 const inline = { tier: "deep" as const, reviewer: "inline" as const, reasons: ["touches hooks/register.ts", "reviewed inline: Opus is at least as strong as Opus"] };
 
 test("buildPacket carries who, tier, spec, report, files, test claim and the verdict instruction", () => {
@@ -81,6 +82,28 @@ test("with the tools off, a light note names no tool and asks for the result in 
   expect(l).not.toContain("record_verdict");
   expect(l).not.toContain("review_packet");
   expect(l).not.toContain("mcp__haikrew__");
+});
+
+test("a light change with the checker launches haikrew:haiku-checker with job=check, and never asks for record_verdict", () => {
+  const on = reviewNote("Isaac Newline", checked, ["a"], 3);
+  expect(on).toContain("Tier light: only light paths changed, 3 lines.");
+  expect(on).toContain("subagent_type `haikrew:haiku-checker`");
+  expect(on).toContain("HAIKREW job=check name=<a name>");
+  expect(on).toContain('naming agent "Isaac Newline" to check');
+  expect(on).toContain("a FAIL means fix the work");
+  expect(on).not.toContain("record_verdict");
+  expect(on).not.toContain("Glance at the diff");
+  expect(on).not.toContain("put this review packet");
+  expect(reviewNote("Isaac Newline", checked, ["a"], 3, { toolsOn: true })).toBe(on);
+});
+
+test("with the tools off, the checker note carries the packet and names no tool", () => {
+  const packet = "# Review packet: Isaac Newline\n\nVERDICT: PASS for Isaac Newline";
+  const off = reviewNote("Isaac Newline", checked, ["a"], 3, { toolsOn: false, packet });
+  expect(off).toContain("subagent_type `haikrew:haiku-checker`");
+  expect(off).toContain(`put this review packet in its prompt:\n\n${packet}`);
+  expect(off).not.toContain("mcp__haikrew__");
+  expect(off).not.toContain("record_verdict");
 });
 
 test("with the tools off, a standard or deep note carries the packet and names no tool", () => {

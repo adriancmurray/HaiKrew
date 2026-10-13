@@ -29,7 +29,7 @@ test("the note tells the main model how to follow a review note, once", () => {
   const bullets = lines.filter((l) => l.includes("review note"));
   expect(bullets.length).toBe(1);
   expect(bullets[0].startsWith("- When HaiKrew posts a review note after an agent finishes")).toBe(true);
-  expect(bullets[0]).toContain("light → glance at the diff and call `record_verdict`");
+  expect(bullets[0]).toContain("light → launch the `haikrew:haiku-checker` agent with `HAIKREW job=check name=...`");
   expect(bullets[0]).toContain("`HAIKREW job=review name=...`");
   expect(bullets[0]).toContain("call `review_packet` first");
   expect(bullets[0]).toContain("`VERDICT: PASS|FAIL for <name>`");
@@ -47,7 +47,7 @@ test("with the tools off, the note names neither review tool and still tells the
   expect(note).not.toContain("mcp__haikrew__");
   const bullets = note.split("\n").filter((l) => l.includes("review note"));
   expect(bullets.length).toBe(1);
-  expect(bullets[0]).toContain("light → glance at the diff;");
+  expect(bullets[0]).toContain("light → launch the `haikrew:haiku-checker` agent with `HAIKREW job=check name=...` and the packet from the note");
   expect(bullets[0]).toContain("`HAIKREW job=review name=...`");
   expect(bullets[0]).toContain("the packet from the note in its prompt");
   expect(bullets[0]).toContain("`VERDICT: PASS|FAIL for <name>`");

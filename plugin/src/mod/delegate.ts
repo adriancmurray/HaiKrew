@@ -19,9 +19,11 @@ export function delegationNote(g: DelegateSettings, toolsOn = true): string {
   if (!g.enabled || !g.delegate) return "";
   const rules = g.rules.length ? g.rules.map((r) => `\`${r}\``).join(", ") : "none";
   const review = toolsOn
-    ? "light → glance at the diff and call `record_verdict`; standard/deep → launch the named reviewer model and effort " +
+    ? "light → launch the `haikrew:haiku-checker` agent with `HAIKREW job=check name=...` as the note says, or glance at the " +
+      "diff and call `record_verdict` when the note asks you to; standard/deep → launch the named reviewer model and effort " +
       "with `HAIKREW job=review name=...`, telling it to call `review_packet` first and to end with `VERDICT: PASS|FAIL for <name>`"
-    : "light → glance at the diff; standard/deep → launch the named reviewer model and effort with `HAIKREW job=review name=...`, " +
+    : "light → launch the `haikrew:haiku-checker` agent with `HAIKREW job=check name=...` and the packet from the note, or " +
+      "glance at the diff when the note asks you to; standard/deep → launch the named reviewer model and effort with `HAIKREW job=review name=...`, " +
       "with the packet from the note in its prompt, and let it end with `VERDICT: PASS|FAIL for <name>`";
   return [
     "# HaiKrew: delegate to the crew (standing request from the user)",
