@@ -4,11 +4,12 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { CHUNK_MAX, DOC_PREFIX, cosine, decodeVector, encodeVector, entriesOf, exactBonus, isLoopbackUrl, linesOf, parseStored, queryWords, splitText } from "../plugin/src/recall.ts";
+import { CHUNK_MAX, cosine, decodeVector, encodeVector, entriesOf, exactBonus, isLoopbackUrl, linesOf, parseStored, queryWords, splitText } from "../plugin/src/recall.ts";
 import { BATCH, evict, indexProjects, prune, reset } from "../plugin/src/recall-index.ts";
 import type { Offset, RecallIo } from "../plugin/src/recall-index.ts";
-import { formatHits, manifestOf, searchStore } from "../plugin/src/recall-search.ts";
-import type { RecallFs, RecallHttp } from "../plugin/src/recall-search.ts";
+import { embedTexts, formatHits, manifestOf, searchStore, stampOfManifest } from "../plugin/src/recall-search.ts";
+import type { RecallFs, RecallHttp, SearchEnv } from "../plugin/src/recall-search.ts";
+import type { Stamp } from "../plugin/src/recall.ts";
 import { nodeFs, storeIo, takeLock } from "../plugin/src/recall-store.ts";
 import { folderOf } from "../plugin/src/recallcli.ts";
 import { recallTool } from "../plugin/src/mod/recall-tool.ts";
@@ -25,20 +26,31 @@ const asst = (session: string, time: string, text: string): string => line("assi
 
 type Embed = (texts: string[]) => Promise<number[][]>;
 
-/** An embedder that returns a fixed vector for each stored text, and [1,0,0] for every query. */
-const fixedVectors = (vectors: Record<string, number[]>): Embed => async (texts) =>
-  texts.map((t) => (t.startsWith("task:") ? [1, 0, 0] : vectors[t.slice(DOC_PREFIX.length)] ?? [0, 0, 1]));
+/** An embedder that returns a fixed vector for each text it is given; any other text gets [0, 0, 1]. */
+const fixedVectors = (vectors: Record<string, number[]>): Embed => async (texts) => texts.map((t) => vectors[t] ?? [0, 0, 1]);
 
 /** Any embedder: a small vector per text, enough for counting and resuming. */
 const anyVector: Embed = async (texts) => texts.map((t) => [1, t.length % 5 + 1, 0, 0]);
+
+/** The model the fake server names. */
+const MODEL = "embeddinggemma-2-text";
+
+/** An embedder as the index sees it: the vectors, with the model the fake server reports at call time. */
+function serving(embed: Embed, model: { id: string }): RecallIo["embed"] {
+  return async (texts) => {
+    const vectors = await embed(texts);
+    return { model: model.id, dims: vectors[0].length, vectors };
+  };
+}
 
 /**
  * An in-memory RecallIo over transcripts (project -> file name -> text). `index` and `offsets` show what was stored.
  * The text of a file may be changed between runs to model a session that keeps going.
  */
-function memoryIo(transcripts: Record<string, Record<string, string>>, embed: Embed = anyVector) {
+function memoryIo(transcripts: Record<string, Record<string, string>>, embed: Embed = anyVector, model = { id: MODEL }) {
   const index = new Map<string, string>();
   const offsets = new Map<string, Record<string, Offset>>();
+  const stamps = new Map<string, Stamp>();
   const sent: string[] = [];
   const io: RecallIo = {
     projects: () => Object.keys(transcripts),
@@ -57,14 +69,20 @@ function memoryIo(transcripts: Record<string, Record<string, string>>, embed: Em
     removeIndex: (p) => {
       index.delete(p);
       offsets.delete(p);
+      stamps.delete(p);
     },
-    embed: async (texts) => {
+    stampOf: (p) => stamps.get(p) ?? null,
+    writeStamp: (p, s) => {
+      stamps.set(p, { model: s.model, dims: s.dims });
+      if (!index.has(p)) index.set(p, "");
+    },
+    embed: (texts) => {
       sent.push(...texts);
-      return embed(texts);
+      return serving(embed, model)(texts);
     },
     now: () => Date.parse(T),
   };
-  return { io, index, offsets, sent };
+  return { io, index, offsets, sent, model };
 }
 
 /** A stored line as the index writes it, for the tool and shard tests. */
@@ -147,17 +165,17 @@ test("search ranks by cosine and lets the exact word lift a close second", async
   const m = memoryIo({ p: { "s.jsonl": user("s", T, x) + user("s", T, y) } },
     fixedVectors({ [x]: [0.6, 0.8, 0], [y]: [0.68, Math.sqrt(1 - 0.68 * 0.68), 0] }));
   await indexProjects(m.io, ["p"], 1e9);
-  const env = storeEnv(m.index, "p");
+  const env = storeEnv(m.index, "p", m.io.stampOf("p"));
   const res = await searchStore(env, "outcome()", { n: 2 });
   assert.deepEqual(res.hits.map((h) => h.text), [x, y]);
   assert.match(formatHits(res.hits), /^2026-10-13 person s:1\n {2}outcome\(\) returns verdicts\n/);
 });
 
 /** A search environment over the memory index: the index text is served as one shard of `project`. */
-function storeEnv(index: Map<string, string>, project: string): { root: string; url: string; model: string; fs: RecallFs; http: RecallHttp } {
-  const files: Record<string, string> = { [`/r/${project}/manifest.json`]: JSON.stringify({ shards: ["0001.jsonl"] }),
+function storeEnv(index: Map<string, string>, project: string, stamp: Stamp | null): SearchEnv {
+  const files: Record<string, string> = { [`/r/${project}/manifest.json`]: JSON.stringify({ shards: ["0001.jsonl"], ...stamp }),
     [`/r/${project}/0001.jsonl`]: index.get(project) ?? "" };
-  return { root: "/r", url: "http://127.0.0.1:11434", model: "embeddinggemma", fs: fakeFs(files), http: queryHttp([1, 0, 0]) };
+  return { root: "/r", url: "http://127.0.0.1:18770", model: "", dims: 3, fs: fakeFs(files), http: queryHttp([1, 0, 0]) };
 }
 
 /** Files by absolute path. A missing path rejects, as $.fs.read does. */
@@ -176,16 +194,16 @@ function fakeFs(files: Record<string, string>): RecallFs {
   };
 }
 
-/** An HTTP fake that answers every embed call with one vector. */
-function queryHttp(vector: number[], ok = true): RecallHttp {
-  return { post: async () => ({ ok, status: ok ? 200 : 500, text: JSON.stringify({ embeddings: [vector] }) }) };
+/** An HTTP fake that answers every embed call with one vector, as Embedkit replies: the model, the width, the vectors. */
+function queryHttp(vector: number[], ok = true, model = MODEL): RecallHttp {
+  return { post: async () => ({ ok, status: ok ? 200 : 500, text: JSON.stringify({ model, dims: vector.length, embeddings: [vector] }) }) };
 }
 
-const SETTINGS = { recall: { enabled: true, model: "embeddinggemma", url: "http://127.0.0.1:11434", max_mb: 200 } } as unknown as Settings;
+const SETTINGS = { recall: { enabled: true, model: "", url: "http://127.0.0.1:18770", dims: "768", max_mb: 200 } } as unknown as Settings;
 
 test("the recall tool searches the shards through the adapters and counts a truncated line", async () => {
   const files = {
-    "/r/p1/manifest.json": JSON.stringify({ shards: ["0001.jsonl"] }),
+    "/r/p1/manifest.json": JSON.stringify({ shards: ["0001.jsonl"], model: MODEL, dims: 3 }),
     "/r/p1/0001.jsonl": row("p1", "s1", 4, T, "person", "we held the contracts", [1, 0, 0]) +
       row("p1", "s1", 5, T, "assistant", "unrelated", [0, 1, 0]) + '{"project":"p1","sess',
   };
@@ -212,14 +230,48 @@ test("the recall tool says so when the store is empty and when the embedding cal
   assert.deepEqual(failed, { deny: "Recall failed: embed: HTTP 500" });
 });
 
-test("the settings schema and the runtime both refuse a non-loopback Ollama address", () => {
-  assert.equal(validate("recall", "url", "http://127.0.0.1:11434"), null);
-  assert.equal(validate("recall", "url", "http://localhost:11434"), null);
-  assert.equal(validate("recall", "url", "http://[::1]:11434"), null);
-  assert.notEqual(validate("recall", "url", "http://192.168.1.5:11434"), null);
-  assert.notEqual(validate("recall", "url", "https://ollama.example.com"), null);
+test("the embed client posts kind, width and model to /v1/embed, and sends at most 64 inputs in a request", async () => {
+  const sent: { url: string; body: { kind: string; input: string[]; dims: number; model?: string } }[] = [];
+  const http: RecallHttp = {
+    post: async (url, body) => {
+      const b = JSON.parse(body);
+      sent.push({ url, body: b });
+      return { ok: true, status: 200, text: JSON.stringify({ model: MODEL, dims: 2, embeddings: b.input.map(() => [1, 0]) }) };
+    },
+  };
+  const got = await embedTexts(http, { url: "http://127.0.0.1:18770", model: "", dims: 2 }, "query",
+    Array.from({ length: 150 }, (_, i) => `t${i}`));
+  assert.deepEqual(sent.map((s) => s.url), Array(3).fill("http://127.0.0.1:18770/v1/embed"));
+  assert.deepEqual(sent.map((s) => s.body.input.length), [64, 64, 22]);
+  assert.deepEqual(sent[0].body, { kind: "query", input: sent[0].body.input, dims: 2 }, "no model named: the server's default");
+  assert.deepEqual([got.model, got.dims, got.vectors.length], [MODEL, 2, 150]);
+});
+
+test("a model or width change rebuilds the index from the start", async () => {
+  const m = memoryIo({ p: { "s.jsonl": user("s", T, "first") + asst("s", T, "answer") } });
+  await indexProjects(m.io, ["p"], 1e9);
+  m.model.id = "other-model";
+  assert.equal((await indexProjects(m.io, ["p"], 1e9)).chunks, 2);
+  assert.deepEqual(m.io.stampOf("p"), { model: "other-model", dims: 4 });
+  assert.deepEqual(linesOf(m.index.get("p") ?? "").map((l) => JSON.parse(l).line), [1, 2]);
+});
+
+test("search refuses an index built with another model or width, and names it", async () => {
+  const m = memoryIo({ p: { "s.jsonl": user("s", T, "why did we hold contracts") } });
+  await indexProjects(m.io, ["p"], 1e9);
+  const env = { ...storeEnv(m.index, "p", m.io.stampOf("p")), http: queryHttp([1, 0, 0], true, "other-model") };
+  await assert.rejects(searchStore(env, "contracts"),
+    { message: "index built with embeddinggemma-2-text@4; run recall index to rebuild" });
+});
+
+test("the settings schema and the runtime both refuse a non-loopback Embedkit address", () => {
+  assert.equal(validate("recall", "url", "http://127.0.0.1:18770"), null);
+  assert.equal(validate("recall", "url", "http://localhost:18770"), null);
+  assert.equal(validate("recall", "url", "http://[::1]:18770"), null);
+  assert.notEqual(validate("recall", "url", "http://192.168.1.5:18770"), null);
+  assert.notEqual(validate("recall", "url", "https://embed.example.com"), null);
   assert.equal(isLoopbackUrl("http://127.0.0.1.evil.example:11434"), false);
-  assert.equal(isLoopbackUrl("http://127.0.0.1:11434"), true);
+  assert.equal(isLoopbackUrl("http://127.0.0.1:18770"), true);
 });
 
 test("a second run reads only the new lines and numbers them on from the last", async () => {
@@ -229,7 +281,7 @@ test("a second run reads only the new lines and numbers them on from the last", 
   files.p["s1.jsonl"] += user("s1", T, "second question") + '{"type":"user"';
   const before = m.sent.length;
   assert.equal((await indexProjects(m.io, ["p"], 1e9)).chunks, 1);
-  assert.deepEqual(m.sent.slice(before).map((t) => t.slice(DOC_PREFIX.length)), ["second question"]);
+  assert.deepEqual(m.sent.slice(before), ["recall", "second question"], "the probe, then the new line");
   assert.deepEqual(linesOf(m.index.get("p") ?? "").map((l) => [JSON.parse(l).line, JSON.parse(l).text]),
     [[1, "first question"], [2, "first answer"], [3, "second question"]]);
 });
@@ -262,7 +314,7 @@ test("an embed failure stores nothing for its batch, does not throw, and the nex
   let calls = 0;
   const flaky: Embed = async (texts) => {
     calls++;
-    if (calls === 2) throw new Error("timeout");
+    if (calls === 3) throw new Error("timeout"); // call 1 is the probe, call 2 the first batch
     return texts.map(() => [1, 0, 0, 0]);
   };
   const m = memoryIo({ p: { "s.jsonl": text } }, flaky);
@@ -279,12 +331,14 @@ test("the index splits into shards under the size cap, and the search reads them
     const text = Array.from({ length: 12 }, (_, i) => user("s", T, `message number ${i} ${"w".repeat(120)}`)).join("");
     writeFileSync(join(projects, "p", "s.jsonl"), text);
     const root = join(dir, "store");
-    const io = storeIo({ root, projectsDir: projects, embed: anyVector, shardMax: 700 });
+    const io = storeIo({ root, projectsDir: projects, embed: serving(anyVector, { id: MODEL }), shardMax: 700 });
     assert.equal((await indexProjects(io, ["p"], 1e9)).chunks, 12);
-    const shards = manifestOf(readFileSync(join(root, "p", "manifest.json"), "utf8"));
+    const manifest = readFileSync(join(root, "p", "manifest.json"), "utf8");
+    assert.deepEqual(stampOfManifest(manifest), { model: MODEL, dims: 4 });
+    const shards = manifestOf(manifest);
     assert.ok(shards.length > 1, "more than one shard");
     for (const s of shards) assert.ok(readFileSync(join(root, "p", s), "utf8").length <= 700 + 200, `${s} stays near the cap`);
-    const res = await searchStore({ root, url: "http://127.0.0.1:11434", model: "m", fs: nodeFs(), http: queryHttp([1, 0, 0]) },
+    const res = await searchStore({ root, url: "http://127.0.0.1:18770", model: "", dims: 4, fs: nodeFs(), http: queryHttp([1, 0, 0, 0]) },
       "message", { n: 12 });
     assert.equal(res.hits.length, 12);
     assert.equal(res.skipped, 0);

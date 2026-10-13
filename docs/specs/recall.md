@@ -10,13 +10,15 @@ Long sessions get compacted. Afterwards the main model sees only a summary. To r
 
 - Transcripts: `~/.claude/projects/*/*.jsonl`, 614 files, 1.1 GB.
 - This session's transcript is 33 MB. Its user messages total about 503k characters (this includes injected notices), and the assistant's text about 342k characters. That is about 2.5% of the file; the rest is tool calls and tool output.
-- Ollama runs at 127.0.0.1:11434. `embeddinggemma` returns 768-dimension vectors through `/api/embed`. Nothing needs installing, and nothing leaves the machine.
+- Embeddings come from Embedkit, a local service at 127.0.0.1:18770 (repo `Embedkit`). Its `/v1/embed` applies each model's query and document templates, so recall sends plain text. Nothing leaves the machine.
 
 ## Design
 
 1. **What is indexed:** user messages typed by the person, assistant text blocks and subagent hand-back reports. Not tool calls, tool output, system reminders or task notifications. Tool output is most of the bulk, and it is what bloats disk.
 2. **Chunks:** one message per chunk, split at paragraph breaks above about 1,500 characters. Each chunk keeps its session id, project folder, timestamp, role and line number in the JSONL, so a hit can be opened in place.
-3. **Store:** one index per project folder, in `~/.claude/plugins/store/haikrew-recall/<project>.jsonl`. One line per chunk: metadata, the text, and the vector as float32 in base64. No new dependencies; cosine similarity in TypeScript. A file records the indexed byte offset per transcript, so updates only read what is new.
+3. **Store:** one index per project folder, under `~/.claude/plugins/store/haikrew-recall/<project>/`: `manifest.json` (shard names, and the model and width the vectors were made with), `NNNN.jsonl` shards holding one line per chunk (metadata, the text, and the vector as float32 in base64), and `offsets.json`. No new dependencies; cosine similarity in TypeScript. The offsets record the indexed byte offset per transcript, so updates only read what is new.
+   - **Model and width:** the server reports the model id and width it used. `recall index` checks them against the manifest. A mismatch empties that project's index and indexes it from the start. A search over an index built with another pair refuses with `index built with <model>@<dims>; run recall index to rebuild`, rather than mixing vectors.
+   - **Choosing a model:** `GET /v1/models` on the Embedkit server lists the model ids and their widths. `recall.model` takes one of those ids; empty uses the server's default. `recall.dims` is one of 768, 512, 256, 128.
 4. **Indexing:** `haikrew recall index [--project <folder>|--all]` from the CLI, plus a SessionStart hook that indexes the current project's new lines in the background. A failed embed call skips the chunk and is retried next time. Indexing never blocks a session.
 5. **Search:**
    - `haikrew recall search "<question>" [--project] [--session] [-n 8]` from the CLI;
@@ -27,7 +29,7 @@ Long sessions get compacted. Afterwards the main model sees only a summary. To r
    - `haikrew recall reset [--project]`;
    - a setting `recall.max_mb` (default 200), with the oldest sessions dropped first when it is exceeded;
    - deleting a project folder's index file removes it completely.
-7. **Settings:** `recall.enabled` (default off until measured), `recall.model` (default `embeddinggemma`), `recall.url`, `recall.max_mb`.
+7. **Settings:** `recall.enabled` (default off until measured), `recall.model` (default empty: the server's default), `recall.url` (default `http://127.0.0.1:18770`, loopback only), `recall.dims` (default 768), `recall.max_mb`.
 8. **The hand-search app:** later. The CLI covers hand search until then.
 
 ## Measure before keeping

@@ -1,7 +1,7 @@
 /**
  * Recall's pure core, shared by the CLI and the mod (so no Node APIs here): which transcript lines are worth indexing,
  * how long text is cut into chunks, how vectors are stored (float32 in base64), how a stored line is read back, and
- * the loopback check on the Ollama address.
+ * the loopback check on the Embedkit address.
  */
 import { handbackText } from "./mod/ledger.ts";
 import { LOOPBACK_PATTERN } from "./schema.ts";
@@ -12,9 +12,10 @@ export const CHUNK_MAX = 1500;
 export const EXACT_WEIGHT = 0.1;
 /** Largest shard file, in bytes. The mod reads a shard with $.fs.read, which caps a read at 4 MiB. */
 export const SHARD_MAX = 3 * 1024 * 1024;
-/** EmbeddingGemma's documented task prefixes: retrieval quality depends on them. */
-export const DOC_PREFIX = "title: none | text: ";
-export const QUERY_PREFIX = "task: search result | query: ";
+/** The model and width a vector was made with, as the embedding server reported them. */
+export type Stamp = { model: string; dims: number };
+/** One embed reply: the stamp it was made with and one vector per input, in order. */
+export type Embedded = Stamp & { vectors: number[][] };
 
 /** Who said the text: the person, the assistant, or a subagent's hand-back report. */
 export type Role = "person" | "assistant" | "handback";
@@ -202,6 +203,11 @@ export function parseStored(line: string): StoredChunk | null {
 /** The non-empty lines of a text. */
 export function linesOf(text: string): string[] {
   return text.split("\n").filter((l) => l.length > 0);
+}
+
+/** True when two stamps name the same model and width. A missing stamp matches nothing. */
+export function sameStamp(a: Stamp | null, b: Stamp | null): boolean {
+  return a !== null && b !== null && a.model === b.model && a.dims === b.dims;
 }
 
 /** True when `url` is an http(s) address on loopback only. Anything else is refused: recall sends transcript text to it. */

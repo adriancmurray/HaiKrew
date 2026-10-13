@@ -8,8 +8,8 @@ import { join } from "node:path";
 import { newestStore } from "./analyze.ts";
 import { settingsFrom } from "./mod/config.ts";
 import { indexProjects, prune, reset } from "./recall-index.ts";
-import { DEFAULT_HITS, formatHits, manifestOf, searchStore } from "./recall-search.ts";
-import { nodeFs, nodeHttp, ollamaEmbed, storeIo, storeRoot, takeLock } from "./recall-store.ts";
+import { DEFAULT_HITS, embedTexts, formatHits, manifestOf, searchStore } from "./recall-search.ts";
+import { nodeFs, nodeHttp, storeIo, storeRoot, takeLock } from "./recall-store.ts";
 import { SHARD_MAX, isLoopbackUrl } from "./recall.ts";
 
 /** How long one embed call may take before the batch is skipped and retried next run. */
@@ -21,8 +21,8 @@ const MB = 1024 * 1024;
 const USAGE = "usage: haikrew recall index [--project FOLDER | --all] [--if-enabled] | search QUESTION [--project FOLDER] " +
   "[--session ID] [-n N] | prune --older-than DAYS | reset [--project FOLDER]";
 
-/** The `recall` section of the settings, as the index needs it. */
-export type RecallSettings = { enabled: boolean; model: string; url: string; maxMb: number };
+/** The `recall` section of the settings, as the index and search need it. */
+export type RecallSettings = { enabled: boolean; model: string; url: string; dims: number; maxMb: number };
 type Flags = Record<string, string | true>;
 
 /** The project folder Claude Code keeps a working directory's transcripts in: every character but a letter, digit or dash becomes a dash. */
@@ -52,7 +52,7 @@ function parseArgs(argv: string[]): { flags: Flags; words: string[] } | null {
 }
 
 /**
- * The `recall` settings from the newest HaiKrew store file; defaults when there is none. Throws when the Ollama address
+ * The `recall` settings from the newest HaiKrew store file; defaults when there is none. Throws when the Embedkit address
  * is not loopback: transcript text must not leave the machine, whatever the settings file says.
  */
 export function recallSettings(storeDir: string): RecallSettings {
@@ -62,7 +62,7 @@ export function recallSettings(storeDir: string): RecallSettings {
   const r = settingsFrom(isObj(stored) ? stored.settings : undefined).recall;
   const url = String(r.url).replace(/\/+$/, "");
   if (!isLoopbackUrl(url)) throw new Error("recall.url must be a loopback address (127.0.0.1, ::1 or localhost)");
-  return { enabled: r.enabled === true, model: String(r.model), url, maxMb: Number(r.max_mb) };
+  return { enabled: r.enabled === true, model: String(r.model), url, dims: Number(r.dims), maxMb: Number(r.max_mb) };
 }
 
 /** Entry point for `haikrew recall`. Resolves to the exit code. */
@@ -110,7 +110,8 @@ async function indexCmd(flags: Flags, home: string): Promise<number> {
   const named = projectFlag(flags);
   if (named === null) return usage();
   const root = storeRoot(home);
-  const io = storeIo({ root, projectsDir: join(home, ".claude", "projects"), embed: ollamaEmbed(s, nodeHttp(EMBED_TIMEOUT_MS)) });
+  const http = nodeHttp(EMBED_TIMEOUT_MS);
+  const io = storeIo({ root, projectsDir: join(home, ".claude", "projects"), embed: (texts) => embedTexts(http, s, "document", texts) });
   return withLock(home, async () => {
     const projects = flags.all ? io.projects() : [named ?? folderOf(process.cwd())];
     const started = Date.now();
@@ -131,7 +132,7 @@ async function searchCmd(flags: Flags, words: string[], home: string): Promise<n
   if (!question || project === null || !Number.isInteger(n) || n < 1) return usage();
   const s = recallSettings(join(home, ".claude", "plugins", "store"));
   const session = typeof flags.session === "string" ? flags.session : undefined;
-  const env = { root: storeRoot(home), url: s.url, model: s.model, fs: nodeFs(), http: nodeHttp(SEARCH_TIMEOUT_MS) };
+  const env = { root: storeRoot(home), url: s.url, model: s.model, dims: s.dims, fs: nodeFs(), http: nodeHttp(SEARCH_TIMEOUT_MS) };
   const res = await searchStore(env, question, { project, session, n });
   if (res.skipped > 0) process.stderr.write(`recall: skipped ${res.skipped} unreadable line(s) or shard(s)\n`);
   process.stdout.write(res.hits.length > 0 ? `${formatHits(res.hits)}\n` : "recall: no hits\n");

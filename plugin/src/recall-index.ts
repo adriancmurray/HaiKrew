@@ -4,10 +4,10 @@
  * stored chunks, so a failed embed call is retried by the next run. Prune, reset and the size cap also live here.
  * Every file access goes through RecallIo, so the tests run the same code over memory.
  */
-import { DOC_PREFIX, encodeVector, entriesOf, linesOf, parseStored, splitText } from "./recall.ts";
-import type { Chunk } from "./recall.ts";
+import { encodeVector, entriesOf, linesOf, parseStored, sameStamp, splitText } from "./recall.ts";
+import type { Chunk, Embedded, Stamp } from "./recall.ts";
 
-/** How many chunks one embed call carries, at most (Ollama takes a list of inputs per call). */
+/** How many chunks one embed request carries, at most. */
 export const BATCH = 32;
 const LF = 10;
 
@@ -28,6 +28,10 @@ export type RecallIo = {
   readIndex(project: string): string;
   /** The index's size in bytes, 0 when there is none. */
   size(project: string): number;
+  /** The model and width a project's index was built with, null when it has no index or none was recorded. */
+  stampOf(project: string): Stamp | null;
+  /** Records the model and width a project's index is built with, keeping its shards. */
+  writeStamp(project: string, stamp: Stamp): void;
   /** Adds lines (each ending in a newline) to a project's index. */
   appendIndex(project: string, text: string): void;
   /** Replaces a project's index text. */
@@ -37,8 +41,8 @@ export type RecallIo = {
   writeOffsets(project: string, offsets: Record<string, Offset>): void;
   /** Deletes a project's index and offsets. */
   removeIndex(project: string): void;
-  /** One embedding per input, in order. Throws when the call fails. */
-  embed(texts: string[]): Promise<number[][]>;
+  /** The vectors for the texts, as documents, with the stamp the server used. Throws when the call fails. */
+  embed(texts: string[]): Promise<Embedded>;
   now(): number;
 };
 
@@ -53,15 +57,16 @@ function chunksOfLine(text: string, project: string, line: number): Chunk[] {
 
 /**
  * Embed `chunks` and append them, then move the transcript's offset to `end`. Returns false, and stores nothing,
- * when any embed call fails or answers with the wrong count.
+ * when any embed call fails, answers with the wrong count, or answers with another model or width than `stamp`.
  */
-async function commit(io: RecallIo, project: string, name: string, chunks: Chunk[], end: Offset, offsets: Record<string, Offset>): Promise<boolean> {
+async function commit(io: RecallIo, project: string, name: string, chunks: Chunk[], end: Offset, offsets: Record<string, Offset>,
+  stamp: Stamp): Promise<boolean> {
   const vectors: number[][] = [];
   try {
     for (let i = 0; i < chunks.length; i += BATCH) {
-      const got = await io.embed(chunks.slice(i, i + BATCH).map((c) => DOC_PREFIX + c.text));
-      if (got.length !== Math.min(BATCH, chunks.length - i)) return false;
-      vectors.push(...got);
+      const got = await io.embed(chunks.slice(i, i + BATCH).map((c) => c.text));
+      if (got.vectors.length !== Math.min(BATCH, chunks.length - i) || !sameStamp(got, stamp)) return false;
+      vectors.push(...got.vectors);
     }
   } catch {
     return false;
@@ -78,7 +83,8 @@ async function commit(io: RecallIo, project: string, name: string, chunks: Chunk
  * Index the new complete lines of one transcript. Chunks are committed every BATCH of them, and at the end of the
  * file. The first failed commit ends this transcript for the run.
  */
-async function indexTranscript(io: RecallIo, project: string, name: string, offsets: Record<string, Offset>, res: IndexResult): Promise<void> {
+async function indexTranscript(io: RecallIo, project: string, name: string, offsets: Record<string, Offset>, res: IndexResult,
+  stamp: Stamp): Promise<void> {
   const from = offsets[name] ?? { bytes: 0, lines: 0 };
   const buf = io.readFrom(project, name, from.bytes);
   let at = 0;
@@ -91,7 +97,7 @@ async function indexTranscript(io: RecallIo, project: string, name: string, offs
     pending.push(...chunksOfLine(buf.toString("utf8", at, nl), project, lines));
     at = nl + 1;
     if (pending.length >= BATCH) {
-      if (!(await commit(io, project, name, pending, { bytes: from.bytes + at, lines }, offsets))) {
+      if (!(await commit(io, project, name, pending, { bytes: from.bytes + at, lines }, offsets, stamp))) {
         res.failures++;
         return;
       }
@@ -100,7 +106,7 @@ async function indexTranscript(io: RecallIo, project: string, name: string, offs
     }
   }
   if (at === 0) return;
-  if (!(await commit(io, project, name, pending, { bytes: from.bytes + at, lines }, offsets))) {
+  if (!(await commit(io, project, name, pending, { bytes: from.bytes + at, lines }, offsets, stamp))) {
     res.failures++;
     return;
   }
@@ -109,13 +115,23 @@ async function indexTranscript(io: RecallIo, project: string, name: string, offs
 
 /**
  * Index the new lines of every transcript in `projects`, then drop the oldest sessions while the stores exceed
- * `maxBytes`. Offsets stay, so a dropped session is not indexed again.
+ * `maxBytes`. Offsets stay, so a dropped session is not indexed again. The server's model and width are learnt from
+ * one probe embed; a project whose index was built with another pair is emptied and indexed from the start.
  */
 export async function indexProjects(io: RecallIo, projects: string[], maxBytes: number): Promise<IndexResult> {
   const res: IndexResult = { chunks: 0, failures: 0 };
+  let stamp: Stamp;
+  try {
+    stamp = await io.embed(["recall"]);
+  } catch {
+    return { chunks: 0, failures: 1 };
+  }
+  const indexed = new Set(io.indexed());
   for (const project of projects) {
+    if (indexed.has(project) && !sameStamp(io.stampOf(project), stamp)) io.removeIndex(project);
+    if (!sameStamp(io.stampOf(project), stamp)) io.writeStamp(project, stamp);
     const offsets = io.readOffsets(project);
-    for (const name of io.transcripts(project)) await indexTranscript(io, project, name, offsets, res);
+    for (const name of io.transcripts(project)) await indexTranscript(io, project, name, offsets, res, stamp);
   }
   evict(io, maxBytes);
   return res;

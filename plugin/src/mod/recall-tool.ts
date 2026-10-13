@@ -1,6 +1,6 @@
 /**
  * The `recall` tool. Pure: the store and the HTTP call come in through adapters, and agents.ts passes $.fs and
- * $.http.fetch, so the same search runs in the desktop app and in the CLI. Refused unless recall is on and the Ollama
+ * $.http.fetch, so the same search runs in the desktop app and in the CLI. Refused unless recall is on and the Embedkit
  * address is loopback; transcript text never leaves the machine.
  */
 import type { Settings } from "../schema.ts";
@@ -29,7 +29,7 @@ export async function recallTool(e: Record<string, unknown>, settings: Settings,
     return { deny: "project is a folder name under ~/.claude/projects." };
   }
   try {
-    const res = await searchStore({ root: env.root, url, model: String(r.model), fs: env.fs, http: env.http }, question,
+    const res = await searchStore({ root: env.root, url, model: String(r.model), dims: Number(r.dims), fs: env.fs, http: env.http }, question,
       { project, n: DEFAULT_HITS });
     const text = res.hits.length > 0 ? formatHits(res.hits) : "recall: no hits";
     return { result: res.skipped > 0 ? `${text}\n(${res.skipped} unreadable line(s) or shard(s) skipped)` : text };

@@ -1,15 +1,17 @@
 /**
  * Recall's files, for the CLI: a project's index is a folder under the store root holding `manifest.json` (the shard
- * names in order), `NNNN.jsonl` shards of at most SHARD_MAX bytes, and `offsets.json`. Also the store-wide lock and the
+ * names in order, and the model and width the vectors were made with), `NNNN.jsonl` shards of at most SHARD_MAX bytes,
+ * and `offsets.json`. Also the store-wide lock and the
  * node adapters that the pure search module reads the store through.
  */
 import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, renameSync,
   rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RecallFs, RecallHttp } from "./recall-search.ts";
-import { manifestOf } from "./recall-search.ts";
+import { manifestOf, stampOfManifest } from "./recall-search.ts";
 import type { Offset, RecallIo } from "./recall-index.ts";
 import { SHARD_MAX, linesOf } from "./recall.ts";
+import type { Stamp } from "./recall.ts";
 
 /** An index lock older than this belongs to a run that died, and is taken over. */
 const LOCK_STALE_MS = 30 * 60_000;
@@ -45,6 +47,11 @@ export function storeIo(opts: { root: string; projectsDir: string; embed: Recall
     readIndex: (p) => {
       const lines = names(p).flatMap((n) => linesOf(readText(join(dir(p), n)) ?? ""));
       return lines.length ? `${lines.join("\n")}\n` : "";
+    },
+    stampOf: (p) => stampOfManifest(readText(manifestPath(p))),
+    writeStamp: (p, stamp: Stamp) => {
+      mkdirSync(dir(p), { recursive: true });
+      writeAtomic(manifestPath(p), JSON.stringify({ shards: names(p), model: stamp.model, dims: stamp.dims }));
     },
     size: (p) => names(p).reduce((sum, n) => sum + sizeOf(join(dir(p), n)), 0),
     appendIndex: (p, text) => appendShards(dir(p), text, shardMax),
@@ -142,9 +149,11 @@ function nextShard(last: string | undefined): string {
   return `${String(n).padStart(4, "0")}.jsonl`;
 }
 
+/** Writes the shard list, keeping the stamp the manifest already records. */
 function writeManifest(d: string, shards: string[]): void {
   mkdirSync(d, { recursive: true });
-  writeAtomic(join(d, "manifest.json"), JSON.stringify({ shards }));
+  const stamp = stampOfManifest(readText(join(d, "manifest.json")));
+  writeAtomic(join(d, "manifest.json"), JSON.stringify({ shards, ...stamp }));
 }
 
 /**
@@ -191,18 +200,6 @@ export function nodeHttp(timeoutMs: number): RecallHttp {
       const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body, signal: AbortSignal.timeout(timeoutMs) });
       return { ok: res.ok, status: res.status, text: await res.text() };
     },
-  };
-}
-
-/** The embed call for indexing: one POST to /api/embed, checked for the right number of vectors. */
-export function ollamaEmbed(s: { url: string; model: string }, http: RecallHttp): RecallIo["embed"] {
-  return async (texts) => {
-    const res = await http.post(`${s.url}/api/embed`, JSON.stringify({ model: s.model, input: texts }));
-    if (!res.ok) throw new Error(`embed: HTTP ${res.status}`);
-    const vectors = parseJson(res.text);
-    const embeddings = isObj(vectors) ? vectors.embeddings : undefined;
-    if (!Array.isArray(embeddings) || embeddings.length !== texts.length) throw new Error("embed: unexpected reply");
-    return embeddings as number[][];
   };
 }
 
