@@ -51,6 +51,34 @@ export function delegationNote(g: DelegateSettings, toolsOn = true): string {
   ].join("\n");
 }
 
+/**
+ * The note for a Sonnet or Opus subagent that may start its own crew: it hands the bulk work to Haiku agents. "" when the
+ * gate, the switch or nesting is off.
+ */
+export function leadNote(g: DelegateSettings): string {
+  if (!g.enabled || !g.delegate || !g.allow_nested) return "";
+  return [
+    "# HaiKrew: you lead a Haiku crew",
+    "You are a Sonnet or Opus subagent. Hand the bulk work to Haiku agents and keep the judgment:",
+    "- Implementation to a clear spec: launch `haikrew:haiku-coder`. Broad read-only search: `Explore` (model haiku). " +
+      "Checking finished work: `haikrew:haiku-checker` with `HAIKREW job=check`.",
+    "- Start each prompt with `HAIKREW job=... name=<punny name>`, write a tight spec, ask for a short report, and verify by reading the report.",
+    "- Delegate a piece of work when it needs more than about 10 tool calls or reading more than about 20k tokens. Each new agent " +
+      "costs about 10k tokens to start, so do small steps yourself, batched into one call.",
+    "- Run independent pieces in parallel.",
+  ].join("\n");
+}
+
+/**
+ * The note for one subagent, from its model family (sonnet, opus, haiku, unknown) and its job tag: the lead note only for
+ * a Sonnet or Opus agent whose job is neither review nor check. "" for every other agent.
+ */
+export function subagentNote(g: DelegateSettings, family: string, job: string): string {
+  if (family !== "sonnet" && family !== "opus") return "";
+  if (job === "review" || job === "check") return "";
+  return leadNote(g);
+}
+
 /** Context blocks with `note` appended to the CLAUDE.md block (added as one when there is none). Unchanged for "". */
 export function withNote(blocks: unknown, note: string): unknown {
   if (!note || !Array.isArray(blocks)) return blocks;

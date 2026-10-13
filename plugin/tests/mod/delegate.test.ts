@@ -1,6 +1,6 @@
 /** The delegation note: off with the gate or the switch, built from the gate settings, appended once. */
 import { expect, test } from "claude-code/testing";
-import { delegationNote, withNote } from "../../src/mod/delegate.ts";
+import { delegationNote, leadNote, subagentNote, withNote } from "../../src/mod/delegate.ts";
 import type { DelegateSettings } from "../../src/mod/delegate.ts";
 
 const GATE: DelegateSettings = {
@@ -74,4 +74,26 @@ test("withNote appends to the CLAUDE.md block once, adds one when missing, and l
   expect(withNote(once, "N")).toBe(once);
   expect(withNote([{ name: "other", text: "x" }], "N")).toEqual([{ name: "other", text: "x" }, { name: "claudeMd", text: "N" }]);
   expect(withNote(blocks, "")).toBe(blocks);
+});
+
+test("the lead note is empty when nesting, the gate or the switch is off", () => {
+  expect(leadNote({ ...GATE, allow_nested: false })).toBe("");
+  expect(leadNote({ ...GATE, enabled: false })).toBe("");
+  expect(leadNote({ ...GATE, delegate: false })).toBe("");
+  expect(leadNote(GATE)).toContain("# HaiKrew: you lead a Haiku crew");
+});
+
+test("a Sonnet implement agent gets the lead note; Haiku, review and check agents do not", () => {
+  expect(subagentNote(GATE, "sonnet", "implement")).toBe(leadNote(GATE));
+  expect(subagentNote(GATE, "opus", "")).toBe(leadNote(GATE));
+  expect(subagentNote(GATE, "haiku", "implement")).toBe("");
+  expect(subagentNote(GATE, "sonnet", "review")).toBe("");
+  expect(subagentNote(GATE, "sonnet", "check")).toBe("");
+  expect(subagentNote(GATE, "unknown", "implement")).toBe("");
+  expect(subagentNote({ ...GATE, allow_nested: false }, "sonnet", "implement")).toBe("");
+});
+
+test("the main thread still gets the delegation note, not the lead note", () => {
+  expect(delegationNote(GATE)).toContain("# HaiKrew: delegate to the crew");
+  expect(delegationNote(GATE)).not.toContain("you lead a Haiku crew");
 });

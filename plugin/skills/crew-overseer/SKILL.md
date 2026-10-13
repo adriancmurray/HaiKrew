@@ -16,7 +16,7 @@ description: Overseer workflow for getting code written by cheap haiku-coder sub
 | A task Haiku blocked on twice, or one needing judgment across many files | `Agent` with `model: "sonnet"`, same spec |
 | Broad read-only search | `Explore` with `model: "haiku"` |
 
-Never launch an agent without `subagent_type: "haiku-coder"` or an explicit `model`.
+Never launch an agent without `subagent_type: "haiku-coder"` or an explicit `model`. Sonnet and Opus subagents receive a lead note and run their own Haiku crew.
 
 ## Writing the spec (the overseer's real job)
 A good spec makes Haiku's job mechanical. Each one fits on one screen and contains:

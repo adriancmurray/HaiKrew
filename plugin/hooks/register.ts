@@ -18,13 +18,13 @@ import { hookGuard, readGuard, squeeze, tokenLimit } from "../src/mod/guards.ts"
 import type { ChecksSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
-import { activityOf, agentModel, liveUsage, noteMainChunk, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteToolChange, noteTurnEnd, rowFor, specOf, touched } from "../src/mod/crew.ts";
+import { activityOf, agentModel, liveUsage, modelFamily, noteMainChunk, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteToolChange, noteTurnEnd, rowFor, specOf, touched } from "../src/mod/crew.ts";
 import { addRun, applyChecked, combineUsage, finalReport, parseCheckerVerdict, readState, runFromStop, summary } from "../src/mod/ledger.ts";
 import { buildPacket, reviewNote, testsClaim } from "../src/mod/packet.ts";
 import { reviewPlan } from "../src/mod/review.ts";
 import type { ReviewSettings } from "../src/mod/review.ts";
 import { registerPane } from "../src/mod/pane.ts";
-import { delegationNote, withNote } from "../src/mod/delegate.ts";
+import { delegationNote, subagentNote, withNote } from "../src/mod/delegate.ts";
 import type { DelegateSettings } from "../src/mod/delegate.ts";
 import { ledgerLock } from "../src/mod/serial.ts";
 import { checkHealth, healthLine } from "../src/mod/health.ts";
@@ -75,11 +75,15 @@ export function register(on) {
   });
 
   // The main conversation's context: while the gate is on, the user's standing request to delegate (see delegate.ts).
-  // Subagents are left alone, so a haiku-coder is not told to hand its work on again.
+  // A subagent gets only the lead note, and only when it is Sonnet or Opus on a job that is not a review or check, so a
+  // haiku-coder is not told to hand its work on again.
   on("prompt.context", async ($, e, next) => {
-    if (e.agentId) return next(e);
     const cfg = await loadSettings($);
-    const note = delegationNote(cfg.gate as unknown as DelegateSettings, toolsOn(cfg));
+    const gate = cfg.gate as unknown as DelegateSettings;
+    const id = typeof e.agentId === "string" ? e.agentId : "";
+    const note = id
+      ? subagentNote(gate, modelFamily(agentModel(id)), promptTag(specOf(id), "job"))
+      : delegationNote(gate, toolsOn(cfg));
     return next(note ? { ...e, blocks: withNote(e.blocks, note) } : e);
   });
 

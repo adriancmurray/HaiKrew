@@ -2,12 +2,14 @@ HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gat
 
 ## Unreleased
 
+- Marketplace: a second entry, `clefkit` (typed decisions from Clef models, from `adriancmurray/Clefkit`, path `plugin`), and a README section on using it as the decider backend.
 - Late failures: a run that passed is flagged `late_fail` (with `late_fail_commit`) when, within `ledger.late_fail_days` days (default 5), a later commit in the same repo touches a file it changed and its message says fix, revert, bug, broke or regress. When a run is recorded it keeps its repo root and repo-relative paths; at the first agent launch of a session the mod runs one `git log --since` per repo for runs from the last window. Older runs without those fields are skipped.
 - Decider health: with `decider.mode` on, the first agent launch (then at most every 10 minutes) checks `<url>/health` with a 1.5 s timeout. A failure shows one toast and a warning line on the Decider settings card, with the command to start the server; the line clears when the check passes.
 - The delegation note tells the main model to batch when it must act itself, and states a break-even rule: delegate when a step needs more than about 5 tool calls at a 200k-token context (about 10 at 100k) or would read more than about 20k tokens; prefer dedicated agent types (about 10k tokens at start against about 50k for a general-purpose agent).
 - Decider features and data policy: the decider receives task features (size level and others), and `policy.ts` chooses the model from the ledger's per-bucket record (job, language, size), counting late failures against a model and exploring a cheaper pick at `explore_rate`.
 - Routing analysis: `outcomes.ts` and `insights.ts` compute checked pass rates, late failures, escalations and paid tokens per accepted result; the pane has an Insights card and `haikrew analyze` prints the same as a table, with the Clef calibration (over- and under-escalated).
 - New agent `haikrew:sonnet-reviewer` (Sonnet, read-only): reviews the risky hunks from the review packet, runs the tests and ends with a `VERDICT` line. Standard and deep review notes now name it as the `subagent_type`, with the model and effort the plan sets.
+- A Sonnet or Opus subagent (not on a review or check job) gets a lead note while nested agents are allowed: it hands the bulk work to Haiku agents and keeps the judgment. Haiku agents, reviewers and checkers get no note.
 
 ## 0.6.6 — 2026-10-12
 
