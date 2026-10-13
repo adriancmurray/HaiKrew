@@ -1,14 +1,21 @@
 /**
- * The decider slot: asks a SystemOne-compatible endpoint (the local Clefkit server, Jev or a proxy) which model, effort
- * and review an agent launch should get. Pure: the request body, the reading of the answer and the choice (including
- * exploration of cheaper models) take their I/O as injected functions, so the hooks module only passes `$.http.fetch`.
+ * The decider slot: asks a SystemOne-compatible endpoint (the local Clefkit server, Jev or a proxy) which model, effort,
+ * review and task features an agent launch should get. Pure: the request body, the reading of the answer and the model
+ * choice (policy.ts) take their I/O as injected functions, so the hooks module only passes `$.http.fetch`.
  */
 import { isObject } from "./api.ts";
 import type { Input } from "./api.ts";
+import { inferJob } from "./infer.ts";
 import type { Choice, GateSettings } from "./gate.ts";
+import { bucketStats, chooseModel } from "./policy.ts";
+import type { PickSource, PolicyPick, PolicyRun } from "./policy.ts";
 
 /** The `decider` section of settings. */
-export type DeciderSettings = { mode: "off" | "shadow" | "decide"; url: string; timeout_ms: number; min_confidence: number; explore_rate: number };
+export type DeciderSettings = { mode: "off" | "shadow" | "decide"; url: string; timeout_ms: number; min_confidence: number;
+  explore_rate: number; target_pass: number; min_runs: number };
+
+/** What the questions say about the task. Each field is set only when its answer is usable. */
+export type Features = { size_level?: string; terminal_heavy?: boolean; has_tests?: boolean; spec_clarity_level?: string };
 
 /** One ledger row the endpoint sees: how a model has done on a (job, lang). */
 export type HistoryRow = { model: string; job: string; lang: string; runs: number; judged: number; pass_rate: number; median_tokens: number };
@@ -25,18 +32,25 @@ export type Decision = {
   confident: boolean;
   /** The model question's probabilities, by model. */
   probs: Record<string, number>;
+  features?: Features;
 };
 
 const MODELS = ["haiku", "sonnet", "opus"];
 const EFFORTS = ["low", "medium", "high", "max"];
+const SIZES = ["tiny", "small", "medium", "large"];
+const CLARITY = ["vague", "partial", "clear", "exact"];
 const PROMPT_MAX = 4000;
 const HISTORY_MAX = 30;
 
-/** The questions asked for every launch. */
+/** The questions asked for every launch. The first three are the decider's original ones; the rest describe the task. */
 const QUESTIONS = {
   model: { type: "choice", instructions: "Which is the cheapest model that will do this task well?", criteria: {"haiku": "The default. Writing or changing code toward a clear spec or goal, even across several files: implementing, refactoring, tests, fixes with a known cause, search and lookups. Haiku writes code about as well as Sonnet. Cheapest.", "sonnet": "Long terminal-driven work (environment setup, builds, CI, shell debugging with many commands), debugging with an unknown cause, an unclear spec, trade-offs between approaches, or a task Haiku already failed.", "opus": "Rare. Open-ended design with no spec at all, or a task Sonnet already failed. Hard or sensitive topics alone (concurrency, security, unsafe code) do not need Opus when the goal is clear. Most expensive."} },
   effort: { type: "score", instructions: "How much reasoning effort the task needs.", criteria: ["low: mechanical, nothing to weigh.", "medium: the normal level, enough for nearly every task, hard ones included.", "high: many interacting constraints that must all be held at once, where medium has already struggled.", "max: almost never; only when explicitly asked for."] },
   needs_review: { type: "noul", instructions: "Should another agent review the result?", criteria: {"true": "The change touches security, concurrency, data loss or a public contract, or is large.", "false": "A mistake would be cheap to see in the diff and to undo."} },
+  size: { type: "score", instructions: "How large is the change the task asks for?", criteria: ["tiny: under 20 lines changed.", "small: under 100 lines.", "medium: under 400 lines.", "large: 400 lines or more."] },
+  terminal_heavy: { type: "noul", instructions: "Does the task need many shell commands, builds or environment work?", criteria: {"true": "Many shell commands: builds, installs, servers, CI or other environment work.", "false": "Little shell work: mostly reading and writing files."} },
+  has_tests: { type: "noul", instructions: "Does the spec name tests, or a verify command that checks the result?", criteria: {"true": "The spec names tests to write or run, or a command that checks the result.", "false": "Nothing in the spec checks the result beyond reading the diff."} },
+  spec_clarity: { type: "score", instructions: "How exact is the spec?", criteria: ["vague: a goal with no detail on what to change.", "partial: a goal and some detail, with gaps left to guess.", "clear: what to change and where, with few gaps.", "exact: every file, name and expected result given."] },
 };
 
 /** The last folder name of a path: never the full path, which may hold a user name. */
@@ -78,12 +92,12 @@ function readChoice(a: unknown): { choice?: string; confidence: number; probs: R
   return { choice, confidence: num(a.confidence) ?? 0, probs };
 }
 
-/** A score answer: the level (Clefkit's `level`, else the raw `score`) as an effort name, and its confidence. */
-function readScore(a: unknown): { effort?: string; confidence: number } | null {
+/** A score answer: the level (Clefkit's `level`, else the raw `score`) as its name in `names`, and its confidence. */
+function readScore(a: unknown, names: string[]): { name?: string; confidence: number } | null {
   if (!isObject(a)) return null;
   const level = num(a.level) ?? num(a.score);
-  const effort = level !== undefined ? EFFORTS[Math.round(level)] : undefined;
-  return { effort, confidence: num(a.confidence) ?? 0 };
+  const name = level !== undefined ? names[Math.round(level)] : undefined;
+  return { name, confidence: num(a.confidence) ?? 0 };
 }
 
 /** A noul answer in any shape: a bare probability, {probability}, or {value, probability}. True when it leans true. */
@@ -96,6 +110,20 @@ function readNoul(a: unknown): boolean | undefined {
   return typeof a.value === "boolean" ? a.value : undefined;
 }
 
+/** The task features in a response, or undefined when none of their answers is usable. No confidence floor applies. */
+function featuresOf(response: Record<string, unknown>): Features | undefined {
+  const f: Features = {};
+  const size = readScore(answerOf(response, "size"), SIZES)?.name;
+  const clarity = readScore(answerOf(response, "spec_clarity"), CLARITY)?.name;
+  const terminal = readNoul(answerOf(response, "terminal_heavy"));
+  const tests = readNoul(answerOf(response, "has_tests"));
+  if (size) f.size_level = size;
+  if (clarity) f.spec_clarity_level = clarity;
+  if (terminal !== undefined) f.terminal_heavy = terminal;
+  if (tests !== undefined) f.has_tests = tests;
+  return Object.keys(f).length ? f : undefined;
+}
+
 /**
  * The decision in a response, or null when nothing in it is usable. Accepts the normalised response ({answers}) and the
  * raw SystemOne answer map. Model and effort are set only when their own answer's confidence is at least minConfidence.
@@ -103,14 +131,16 @@ function readNoul(a: unknown): boolean | undefined {
 export function readDecision(response: unknown, minConfidence: number): Decision | null {
   if (!isObject(response)) return null;
   const m = readChoice(answerOf(response, "model"));
-  const s = readScore(answerOf(response, "effort"));
+  const s = readScore(answerOf(response, "effort"), EFFORTS);
   const review = readNoul(answerOf(response, "needs_review"));
-  if (!m?.choice && !s?.effort && review === undefined) return null;
+  const features = featuresOf(response);
+  if (!m?.choice && !s?.name && review === undefined && !features) return null;
   const confident = Boolean(m?.choice) && m!.confidence >= minConfidence;
   const out: Decision = { confident, probs: m?.probs ?? {} };
   if (confident) out.model = m!.choice;
-  if (s?.effort && s.confidence >= minConfidence) out.effort = s.effort;
+  if (s?.name && s.confidence >= minConfidence) out.effort = s.name;
   if (review !== undefined) out.review = review;
+  if (features) out.features = features;
   return out;
 }
 
@@ -123,19 +153,11 @@ export type DeciderDeps = {
   now: () => number;
 };
 
-/** What a decider call produced: the decision, the cheaper model to try instead (when exploring) and how long it took. */
-export type Outcome = { decision: Decision; explore: string | null; latency_ms: number };
-
-/** The next cheaper model, or null for haiku. */
-function cheaper(model: string): string | null {
-  const i = MODELS.indexOf(model);
-  return i > 0 ? MODELS[i - 1] : null;
-}
+/** What a decider call produced: the decision and how long the call took. */
+export type Outcome = { decision: Decision; latency_ms: number };
 
 /**
  * Asks the endpoint. Null on an error, a timeout or an unusable answer (the caller keeps its normal behaviour).
- * Exploration: the confident model is above haiku, random() is below explore_rate, and the next cheaper model has
- * probability at least 0.25.
  */
 export async function runDecider(deps: DeciderDeps, cfg: DeciderSettings, input: DeciderInput): Promise<Outcome | null> {
   const start = deps.now();
@@ -145,9 +167,7 @@ export async function runDecider(deps: DeciderDeps, cfg: DeciderSettings, input:
     if (answer === "timeout") return null;
     const decision = readDecision(answer, cfg.min_confidence);
     if (!decision) return null;
-    const lower = decision.model ? cheaper(decision.model) : null;
-    const explore = lower && deps.random() < cfg.explore_rate && (decision.probs[lower] ?? 0) >= 0.25 ? lower : null;
-    return { decision, explore, latency_ms: Math.max(0, deps.now() - start) };
+    return { decision, latency_ms: Math.max(0, deps.now() - start) };
   } catch {
     return null;
   }
@@ -157,20 +177,26 @@ export async function runDecider(deps: DeciderDeps, cfg: DeciderSettings, input:
 export type DecisionRecord = {
   mode: string; model: string; effort: string; review: boolean | null; confident: boolean; explored: boolean;
   latency_ms: number; p_model: Record<string, number>;
+  /** What the questions said about the task, which picked the bucket the ledger was read from. */
+  features: Features;
+  /** Whether the model came from the ledger's bucket record, the decider's confident pick, or the gate's default. */
+  source: PickSource;
+  reason: string;
 };
 
 /**
- * Applies a decider outcome to a spawn the gate would give its default model (no named model, no rule). Shadow changes
- * nothing; decide sets the confident model (the cheaper one when exploring) and effort, an Opus pick becoming Sonnet
- * unless allowed. Returns the choice to use and the record to keep.
+ * Applies a decider outcome and the policy's pick to a spawn the gate would give its default model (no named model, no
+ * rule). Shadow changes nothing; decide sets the picked model and the effort, an Opus pick becoming Sonnet unless
+ * allowed. Returns the choice to use and the record to keep.
  */
-export function applyOutcome(cfg: DeciderSettings, gateCfg: GateSettings, choice: Choice, o: Outcome): { choice: Choice; record: DecisionRecord } {
+export function applyOutcome(cfg: DeciderSettings, gateCfg: GateSettings, choice: Choice, o: Outcome, pick: PolicyPick): { choice: Choice; record: DecisionRecord } {
   const d = o.decision;
-  let model = o.explore ?? d.model ?? "";
+  let model = pick.model ?? "";
   if (model === "opus" && !gateCfg.allow_opus) model = "sonnet";
   const record: DecisionRecord = {
     mode: cfg.mode, model, effort: d.effort ?? "", review: d.review ?? null, confident: d.confident,
-    explored: o.explore !== null, latency_ms: o.latency_ms, p_model: d.probs,
+    explored: pick.explored, latency_ms: o.latency_ms, p_model: d.probs,
+    features: d.features ?? {}, source: pick.source, reason: pick.reason,
   };
   if (cfg.mode !== "decide") return { choice, record };
   const next: Choice = { ...choice };
@@ -184,13 +210,25 @@ export function undecided(choice: Choice, e: Input): boolean {
   return Boolean(choice.model) && !choice.rule && !choice.deny && !e.model;
 }
 
-/** Asks the endpoint for a spawn that the gate left to its default, and applies the answer. Null when nothing applies. */
+/**
+ * Asks the endpoint for a spawn that the gate left to its default, picks the model (policy.ts, from the answer and the
+ * ledger's runs in the answer's bucket) and applies it. Null when nothing applies. The bucket's job and lang are the
+ * launch's tags, else the job the ledger would infer for it.
+ */
 export async function decideSpawn(
-  deps: DeciderDeps, cfg: DeciderSettings, gateCfg: GateSettings, e: Input, choice: Choice, cwd: string, history: HistoryRow[], tag: Record<string, string>,
+  deps: DeciderDeps, cfg: DeciderSettings, gateCfg: GateSettings, e: Input, choice: Choice, cwd: string, history: HistoryRow[],
+  tag: Record<string, string>, runs: PolicyRun[],
 ): Promise<{ choice: Choice; record: DecisionRecord } | null> {
   if (cfg.mode === "off" || !gateCfg.enabled || !undecided(choice, e)) return null;
-  const outcome = await runDecider(deps, cfg, { prompt: String(e.prompt ?? ""), tag, agentType: String(e.subagentType ?? ""), cwd, history });
-  return outcome ? applyOutcome(cfg, gateCfg, choice, outcome) : null;
+  const prompt = String(e.prompt ?? "");
+  const agentType = String(e.subagentType ?? "");
+  const outcome = await runDecider(deps, cfg, { prompt, tag, agentType, cwd, history });
+  if (!outcome) return null;
+  const bucket = {
+    job: tag.job || inferJob(prompt, agentType), lang: tag.lang || "unknown", size: outcome.decision.features?.size_level ?? "?",
+  };
+  const pick = chooseModel({ clef: outcome.decision, bucketStats: bucketStats(runs, bucket), explore: deps.random(), cfg });
+  return applyOutcome(cfg, gateCfg, choice, outcome, pick);
 }
 
 const decided = new Map<string, DecisionRecord>();

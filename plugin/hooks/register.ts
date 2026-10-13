@@ -175,7 +175,8 @@ export function register(on) {
 /** Asks the decider endpoint about a spawn the gate left to its default; null on any failure or when it does not apply. */
 async function decide($: Api, dcfg: DeciderSettings, gateCfg: GateSettings, e: Record<string, unknown>, choice: Choice, cwd: string) {
   try {
-    const history = historyFrom(summary(readState(await $.store.get("ledger"))).by_key);
+    const state = readState(await $.store.get("ledger"));
+    const history = historyFrom(summary(state).by_key);
     const deps = {
       ask: async (body: Record<string, unknown>) => {
         const r = await $.http.fetch(`${dcfg.url.replace(/\/+$/, "")}/v1/systemone`, {
@@ -188,7 +189,7 @@ async function decide($: Api, dcfg: DeciderSettings, gateCfg: GateSettings, e: R
       now: Date.now,
     };
     const tags = Object.fromEntries(["job", "lang", "name"].map((k) => [k, promptTag(e.prompt, k)]).filter(([, v]) => v));
-    return await decideSpawn(deps, dcfg, gateCfg, e, choice, cwd, history, tags);
+    return await decideSpawn(deps, dcfg, gateCfg, e, choice, cwd, history, tags, state.runs);
   } catch {
     return null;
   }

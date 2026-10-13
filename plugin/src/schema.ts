@@ -71,7 +71,11 @@ export const SCHEMA: Record<string, Section> = {
       min_confidence: { label: "Minimum confidence", type: "num", default: 0.6, min: 0, max: 1,
         help: "A model or effort answer below this confidence is ignored." },
       explore_rate: { label: "Explore rate", type: "num", default: 0.1, min: 0, max: 1,
-        help: "Chance that a pick above Haiku runs on the next cheaper model instead, when that model is plausible, so the ledger learns what it can do. Such runs get at least a standard review." },
+        help: "Chance that a pick above Haiku runs on the next cheaper model instead, so the ledger learns what it can do. Such runs get at least a standard review." },
+      target_pass: { label: "Target pass rate", type: "num", default: 0.8, min: 0, max: 1,
+        help: "Once a model has enough judged runs in a bucket (job, language and size), the cheapest model whose smoothed pass rate reaches this is used instead of the decider's pick." },
+      min_runs: { label: "Minimum runs", type: "int", default: 8, min: 1, max: 1000,
+        help: "Judged runs a model needs in a bucket before the ledger's record decides its model." },
     },
   },
   squeeze: {
