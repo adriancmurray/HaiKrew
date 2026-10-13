@@ -357,9 +357,11 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
     await $.store.set("review_packets", Object.fromEntries(keep.map((k) => [k, packets[k]])));
     await $.store.set("review_packet_ids", Object.fromEntries(Object.entries(ids).filter(([, n]) => keep.includes(n))));
   });
-  // A resumed agent that stops again is noted once more only when its touched lines grew; the packet above still updates.
+  // A resumed agent that stops again is noted once more only when its touched lines or paths grew (a deletion-only new
+  // file adds a path and no lines); the packet above still updates.
   const noted = notedLines(await $.store.get("review_noted"));
-  if (typeof noted[id] === "number" && lines <= noted[id]) return;
+  const seen = noted[id];
+  if (seen && lines <= seen.lines && paths.length <= seen.paths) return;
   // Without agent tools the reviewer cannot fetch the packet, so the note carries it.
   const text = reviewNote(name, plan, paths, lines, { toolsOn: toolsOn(cfg), packet: String(packet) });
   if (!text) return;
@@ -369,7 +371,7 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
     await ledgerLock(async () => {
       const kept = notedLines(await $.store.get("review_noted"));
       delete kept[id];
-      kept[id] = lines;
+      kept[id] = { lines, paths: paths.length };
       await $.store.set("review_noted", Object.fromEntries(Object.entries(kept).slice(-200)));
     });
   } catch {
@@ -388,7 +390,7 @@ function asRecord(v: unknown): Record<string, string> {
   return typeof v === "object" && v !== null && !Array.isArray(v) ? { ...(v as Record<string, string>) } : {};
 }
 
-/** The review_noted store value: agent id -> touched lines when that agent was last noted. */
-function notedLines(v: unknown): Record<string, number> {
-  return typeof v === "object" && v !== null && !Array.isArray(v) ? { ...(v as Record<string, number>) } : {};
+/** The review_noted store value: agent id -> touched lines and paths when that agent was last noted. */
+function notedLines(v: unknown): Record<string, { lines: number; paths: number }> {
+  return typeof v === "object" && v !== null && !Array.isArray(v) ? { ...(v as Record<string, { lines: number; paths: number }>) } : {};
 }
