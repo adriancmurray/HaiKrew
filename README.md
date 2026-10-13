@@ -45,7 +45,7 @@ Then restart Claude Code. From a terminal, `claude plugin update haikrew@haikrew
 What you see:
 
 - **The pane** has cards for Controls, Your crew, Token use, Track record, Insights and Settings; each folds to one line. The terminal shows a plain three-tab version: Home, Ledger, Settings.
-- **The band** (desktop app, above the prompt) shows the crew as small Claude bots. The main agent stands larger, in its model's colour (Haiku purple, Sonnet teal, Opus orange), wearing a crown, wizard hat or cap. Hover a bot for its name and latest line; its Transcript button opens the agent's messages in a HaiKrew pane.
+- **The band** (desktop app, above the prompt) shows the crew as small Claude bots. The main agent stands larger, in its model's colour (Haiku purple, Sonnet teal, Opus orange), wearing a crown, wizard hat or cap. Hover a bot for its name and latest line; its ≡ (transcript) button opens the agent's messages in a HaiKrew pane.
 - Hide the band with `band.show` set to off.
 
 ## How it works
@@ -88,7 +88,8 @@ When a finished agent changes files, it gets a tier and the main conversation ge
 - One row per finished subagent: model, job, language, time, tokens and verdict. Tokens are new work (input, cache writes and output); cache reads are kept apart.
 - A run is judged by the last `VERDICT:` or `STATUS: done|blocked` line of its final message. Runs with neither are unjudged and left out of pass rates.
 - The newest `ledger.raw_limit` (200) rows are kept in full. Older rows fold into monthly averages, and those older than `ledger.yearly_after_months` (12) into yearly ones.
-- Track record suggests a stronger model for a tagged job under 60% over 4 or more judged runs, and a cheaper one for a job at 90% or more over 8 or more. Untagged runs get an inferred job, marked "(inferred)", which gets no rule suggestions.
+- Track record suggests a stronger model for a tagged job when Haiku or Sonnet passes under 60% over 4 or more judged runs. It suggests a cheaper model when Sonnet or Opus passes 90% or more over 8 or more, unless the model below has 4 or more judged runs of that job that pass poorly. Untagged runs get an inferred job, marked "(inferred)", which gets no rule suggestions.
+- Insights picks the cheapest model that passes 80% or more over 8 or more judged runs for a job and language (Opus only when allowed). That bar is separate from the Track record thresholds above.
 - A suggested rule is added to `gate.rules` only after its button is pressed twice.
 - The Insights card and `haikrew analyze` show checked pass rates, late failures, escalations, tokens per accepted result and the checker catch rate.
 - The ledger and review packets live in the mod's store. The mod reads no credentials and writes no other files.
@@ -96,7 +97,7 @@ When a finished agent changes files, it gets a tier and the main conversation ge
 ### Decider (shadow mode)
 
 - `decider.mode` is `off` by default. In `shadow`, the decider asks the endpoint at `decider.url` which model, effort and review a launch needs, and records the answer without acting on it. `decide` applies a confident answer; Opus still needs `gate.allow_opus`.
-- It is asked only about launches that name no model and match no rule.
+- It runs only while the model gate is on (`gate.enabled`), and only for spawns the gate left undecided: no model named by the caller, no pinned type and no matching rule.
 - It sends the first 4000 characters of the task, the `HAIKREW` tag, the session folder's name and a table of past results to `<url>/v1/systemone`. Errors and timeouts leave the launch as the gate set it.
 - While the mode is on, `<url>/health` is checked. A failed check shows a warning on the Decider settings card.
 
@@ -158,6 +159,8 @@ Settings are stored in the mod's store and apply to every session. Edit them in 
 | `band.headwear` | `crown` | The main agent's headwear: `crown`, `wizard`, `cap` or `none`. |
 | `band.haiku_color`, `band.sonnet_color`, `band.opus_color` | `#9b7fc7`, `#4f9c98`, `#d97757` | Each model's colour in the band. |
 
+The table lists the main settings. The full set is in the `settings` field of the `status` agent tool's answer (agent tools on) and on the Settings card in `/haikrew`; `gate.nested_model`, `decider.min_runs`, `squeeze.patterns` and `review.deep_jobs` are among the rest.
+
 Example: `"job:implement+lang:rust=sonnet@high"` runs Rust implementation specs on Sonnet at high effort. `"cwd:~/projects/*=haiku"` matches any session under `~/projects`. A rule that picks Opus is refused unless `gate.allow_opus` is on.
 
 ## CLI
@@ -178,7 +181,7 @@ The CLI runs anywhere Node 22.18 or later runs. The examples use `haikrew`, the 
 
 1. Install it: `/plugin install clefkit@haikrew`.
 2. Start a backend as its README describes: Cloudflare Workers AI through a local wrangler proxy, a SystemOne or Jev URL, or a local server.
-3. Set `decider.url` to the backend's base URL, and `decider.mode` to `shadow`.
+3. Set `decider.url` to the backend's base URL, and `decider.mode` to `shadow`. The decider only asks while the model gate is on, and only for launches the gate left undecided.
 
 The `clefkit` entry uses a `git-subdir` source with path `plugin`. That install path has not been tried against the published repository.
 
