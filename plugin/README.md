@@ -43,6 +43,7 @@ A subagent launched without a `model` inherits the main model, so every default 
 - **Session folder**: `agent.spawn` reads the session's folder (`$.session.cwd()`) for `cwd:` selectors and the seam check. `~` in a selector is the `/Users/<name>` or `/home/<name>` part of that folder.
 - **Ledger suggestions**: the Ledger tab suggests a rule when a job and language on one model pass less than 60% of at least 4 runs. A suggestion is added to `gate.rules` only when you press its button twice.
 - **Storage**: the mod uses `$.store` only, for settings, the ledger and review packets (the spec and report of each reviewed agent; the newest 20 are kept). The mod writes no files.
+- **Update check**: once per 6 hours (at session start, the sky timer or the first pane render, never on an agent launch) the pane reads the latest `version` from `plugin.json` on GitHub (one request, nothing sent) and, when it is newer than the installed one, shows a strip at the top of the pane and a speech bubble from the main agent in the band; the Update button runs `claude plugin update haikrew@haikrew`, only when pressed. Turn it off with `pane.update_check`.
 - **Network**: none.
 - **Programs started by the mod**: none. The squeeze command is only suggested to Claude, which runs it through its normal permission checks. When Claude runs `haikrew squeeze`, the CLI writes the full log under `haikrew/logs` in the system temp folder.
 - **Session usage**: the Tokens tab shows this session's context size, rate-limit use and cost from Claude Code's `$.session.usage()`, on screen only. Nothing is stored or sent.
@@ -120,6 +121,7 @@ Settings are kept in the mod store (`$.store`, key `settings`), not in a file, a
 | `ledger.yearly_after_months` | `12` | Monthly averages older than this fold into yearly ones. |
 | `pane.open_on_start` | `false` | Open the `/haikrew` pane by itself whenever a session starts. |
 | `pane.time_style` | `"relative"` | How limit resets and past runs are shown: `relative` (in 2 h 14 min, 3 h ago), `clock` (at 6:00 PM, your time zone) or `both`. |
+| `pane.update_check` | `true` | Show when a newer HaiKrew is available. One GitHub request every 6 hours reads the latest version number; nothing is sent. |
 | `band.show` | `true` | In the desktop app, show the animated crew in the band above the prompt. |
 | `band.sky` | `"live"` | The sky behind the crew: `live` (your clock), `dawn`, `day`, `dusk` or `night`. |
 | `band.scenery` | `"mountains"` | The landscape behind the crew: `mountains`, `city`, `forest` or `hills`. |

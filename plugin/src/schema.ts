@@ -191,6 +191,8 @@ export const SCHEMA: Record<string, Section> = {
         help: "Open this pane by itself whenever a session starts. Off: open it with /haikrew." },
       time_style: { label: "Times", type: "enum", choices: ["relative", "clock", "both"], default: "relative",
         help: "How limit resets and past runs are shown: relative (in 2 h 14 min, 3 h ago), clock (at 6:00 PM, your time zone) or both." },
+      update_check: { label: "Check for updates", type: "bool", default: true,
+        help: "Show when a newer HaiKrew is available. Makes one GitHub request every 6 hours to read the latest version number, and sends nothing." },
     },
   },
   band: {

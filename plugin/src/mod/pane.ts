@@ -15,10 +15,11 @@ import { AGENT_TOOLS, allowed } from "./agents.ts";
 import { SCENE_KEY } from "./pane-crew.ts";
 import { agentTranscript } from "./pane-agent.ts";
 import type { AgentMessage } from "./pane-agent.ts";
-import { crewBand, desktopView, latestLine, terminalHome } from "./pane-home.ts";
+import { crewBand, desktopView, latestLine, terminalHome, updateStrip } from "./pane-home.ts";
 import { ledgerTab } from "./pane-ledger.ts";
 import { settingsTab } from "./pane-settings.ts";
 import { packCells, scene, SCENE_ROWS } from "./sprites.ts";
+import { availableUpdate, checkUpdate, recordOf, runUpdate, versionOf } from "./update.ts";
 import { C, hrow, onOff, TABS, txt, vcol, view } from "./ui.ts";
 import type { Actions, Ui } from "./ui.ts";
 
@@ -49,8 +50,14 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
     void repairLedger($);
     // The band has no redraw timer; this slow one lets an idle sky move on (dusk to night) and the moon change. The
     // band's SVG is cached by what it shows, so a tick that changes nothing hands the app the same picture.
-    if (!skyTimer) skyTimer = $.clock.every(SKY_TICK_MS, () => $.ui.invalidate("ui.render"));
+    if (!skyTimer) {
+      skyTimer = $.clock.every(SKY_TICK_MS, () => {
+        $.ui.invalidate("ui.render");
+        void loadSettings($).then((s) => startUpdateCheck($, s));
+      });
+    }
     const settings = await loadSettings($);
+    startUpdateCheck($, settings);
     if (allowed(settings, "status") === null) await registerTools($);
     if (settings.pane.open_on_start) await $.ui.open({ id: PANE, title: "HaiKrew" });
     return reply;
@@ -73,12 +80,15 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
     const settings = await loadSettings($);
     if (!settings.band.show) return next(e);
     const ui = $.ui.resolve(e) as Ui;
+    startUpdateCheck($, settings, true);
+    const latest = await updateOf($, settings);
     const crew = snapshot(await liveAgents($), Date.now());
     crew.lead = { state: leadState(crew.working), model: String(await $.session.model().catch(() => "")), activity: leadActivity() };
     // No timer here: the band's loops run inside its SVG, and it redraws only when what it shows changes.
     return crewBand(ui, crew, Math.max(24, Number(e.props?.bodyColumns) || 80), await themeIsDark($), {
       band: settings.band, messages: await latestMessages($, crew), now: Date.now(),
       open: () => $.ui.open({ id: PANE, title: "HaiKrew", focus: true, closeOnEscape: true }),
+      update: latest ? { latest: latest.latest, run: () => actions($).update() } : undefined,
       openAgent: (row) => {
         agentInView = row.id;
         $.ui.invalidate("ui.render");
@@ -97,13 +107,16 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
     const act = actions($);
     const settings = await loadSettings($);
     const ledger = readState(await $.store.get("ledger"));
+    startUpdateCheck($, settings, true);
+    const update = await updateOf($, settings);
     const crew = snapshot(await liveAgents($), Date.now());
     if (crew.working > 0 && (surface !== "terminal" || view.tab === "home")) startTimer($, surface !== "terminal");
     if (surface !== "terminal") {
-      const data = { crew, settings, ledger, usage: await sessionUsage($), messages: await latestMessages($, crew), dark: await themeIsDark($) };
+      const data = { crew, settings, ledger, usage: await sessionUsage($), messages: await latestMessages($, crew), dark: await themeIsDark($), update };
       return desktopView(ui, act, data, gateLine(ui, act, Boolean(settings.gate.enabled), crew.working, ledger, true), cols);
     }
     const nav = vcol(ui, { rowGap: 1 }, [
+      update ? updateStrip(ui, act, update) : null,
       gateLine(ui, act, Boolean(settings.gate.enabled), crew.working, ledger, false),
       hrow(ui, { columnGap: 1, flexWrap: "wrap" }, TABS.map(([id, label], i) => ui.Button({
         key: `tab-${id}`, label: `${i + 1} ${label}`, hotkey: String(i + 1),
@@ -164,7 +177,63 @@ function actions($: Api): Actions {
         `Run the same task again as a subagent with model ${model}, then check its result.` });
       $.ui.toast(`HaiKrew: asked Claude to retry on ${model}`);
     },
+    update: async () => {
+      if (view.updating) return;
+      const latest = recordOf(await $.store.get("update"))?.latest ?? "";
+      view.updating = true;
+      view.updateNote = "";
+      $.ui.invalidate("ui.render");
+      // Only on the press: the one place HaiKrew runs a command of its own.
+      view.updateNote = await runUpdate((argv) => $.process.run(argv, { timeoutMs: 120_000 }), latest);
+      view.updating = false;
+      $.ui.invalidate("ui.render");
+    },
   };
+}
+
+/** The installed version, read once from this plugin's own plugin.json; "" when it cannot be read. */
+let installedVersion: string | null = null;
+async function installedOf($: Api): Promise<string> {
+  if (installedVersion === null) installedVersion = versionOf(await $.fs.read(`${$.plugin.root}/.claude-plugin/plugin.json`).catch(() => ""));
+  return installedVersion;
+}
+
+/** A newer release than the installed one, when the check is on and has found one. */
+async function updateOf($: Api, settings: Settings): Promise<{ latest: string; installed: string } | undefined> {
+  if (!settings.pane.update_check) return undefined;
+  try {
+    const installed = await installedOf($);
+    const latest = availableUpdate(installed, recordOf(await $.store.get("update")));
+    return latest ? { latest, installed } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+let updateTried = false;
+/**
+ * Look for a newer release, without waiting: from session start, the slow sky timer and the first render, never from
+ * an agent launch. checkUpdate throttles itself to one request per 6 hours; the pane redraws only when it asked.
+ */
+function startUpdateCheck($: Api, settings: Settings, once = false): void {
+  if (!settings.pane.update_check || (once && updateTried)) return;
+  updateTried = true;
+  void (async () => {
+    try {
+      const before = recordOf(await $.store.get("update"))?.checkedAt;
+      const get = async (url: string, ms: number): Promise<string> => {
+        const r = await Promise.race([
+          $.http.fetch(url),
+          new Promise<never>((_, reject) => { $.clock.after(ms, () => reject(new Error("timeout"))); }),
+        ]);
+        return r.ok ? String(r.text) : "";
+      };
+      const record = await checkUpdate({ now: Date.now(), load: () => $.store.get("update"), save: (r) => $.store.set("update", r), get });
+      if (record && record.checkedAt !== before) $.ui.invalidate("ui.render");
+    } catch {
+      // Silent: the strip simply does not show.
+    }
+  })();
 }
 
 /**

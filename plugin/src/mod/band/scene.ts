@@ -9,7 +9,8 @@ import { H, moonPhase } from "./common.ts";
 import type { TimeOfDay } from "./common.ts";
 import { act } from "./acts.ts";
 import type { ActName, ActResult, Headwear } from "./acts.ts";
-import { f } from "./props.ts";
+import { el, f } from "./props.ts";
+import type { Box } from "./props.ts";
 import { scenery } from "./scenery.ts";
 import type { Season, SceneryKind, SceneryResult } from "./scenery.ts";
 
@@ -21,10 +22,13 @@ export type BandSeason = "winter" | "spring" | "summer" | "autumn" | "none";
 export interface Spot { id: string; x: number; w: number; top: number }
 /** The time of day and season the scenery shows, and the moon's phase, from the band's settings and the clock. */
 export interface BandLook { time: TimeOfDay; season: BandSeason; phase: number }
-/** Options for bandScene(): the drawing's width in scene pixels, the band's settings, and the clock. */
-export interface BandSceneOptions { width: number; band: BandSettings; now: number }
-/** A band drawing: its SVG, the bots' hover spots, the sun or moon, and how many rows did not fit. */
-export interface BandScene { svg: string; spots: Spot[]; orb: SceneryResult["orb"]; overflow: number }
+/** Options for bandScene(): the drawing's width in scene pixels, the band's settings, the clock, and whether to draw the update bubble. */
+export interface BandSceneOptions { width: number; band: BandSettings; now: number; bubble?: boolean }
+/**
+ * A band drawing: its SVG, the bots' hover spots, the sun or moon, and how many rows did not fit. `bubble` is the update
+ * bubble's box in scene pixels, present only when it was requested and fits, so a caller can place a hover box.
+ */
+export interface BandScene { svg: string; spots: Spot[]; orb: SceneryResult["orb"]; overflow: number; bubble?: Box }
 
 /** The ground the bots stand on: 8 scene pixels above the bottom edge. */
 const FEET = H - 8;
@@ -34,6 +38,11 @@ const LEAD_H = 46;
 const GAP = 14;
 /** Scene pixels kept free at the right for the sun or moon, which opens the pane. */
 const ORB_ROOM = 70;
+/** Characters budgeted for the update bubble's SVG, so it counts against the drawing's size cap at least this much. */
+const BUBBLE_CHARS = 700;
+/** The update bubble: a speech bubble above the main agent, in the accent colour, its box in scene pixels. */
+const BUBBLE: Box = { x: LEAD_X + 8, y: 3, w: 124, h: 16 };
+const BUBBLE_TEXT = "A HaiKrew update is available!";
 /** The most characters the drawing may run to before anchoring, under the host's 131,072-character SVG source limit. */
 const MAX_CHARS = 125_000;
 /** Characters anchorAnimations adds: 1,797 for 16 agents at 1500 px, plus 10% headroom. */
@@ -116,6 +125,19 @@ function placed(id: string, bot: ActResult, cx: number, h: number): { svg: strin
   };
 }
 
+/** The update bubble: a speech bubble up and to the right of the main agent's head, its tail pointing down at it. */
+function bubbleOf(): string {
+  const { x, y, w, h } = BUBBLE;
+  const style = { fill: "#fffdf5", stroke: "#d97757", "stroke-width": 1 };
+  return el("g", {}, [
+    el("polygon", { points: `${x + 5},${y + h - 1} ${x + 13},${y + h - 1} ${x + 1},${y + h + 7}`, ...style }),
+    el("rect", { x, y, width: w, height: h, rx: 4, ...style }),
+    el("rect", { x: x + 6, y: y + h - 2, width: 6, height: 3, fill: "#fffdf5" }),
+    el("text", { x: x + w / 2, y: y + 11, "text-anchor": "middle", "font-family": "sans-serif", "font-weight": 700, "font-size": 8,
+      textLength: w - 12, lengthAdjust: "spacingAndGlyphs", fill: "#4a2f22" }, BUBBLE_TEXT),
+  ].join(""));
+}
+
 /**
  * The scenery for the band. When it alone would not fit with the anchoring allowance, its optional extras go in turn:
  * season particles, then clouds. The city's window blinks stay, since scenery() has no switch for them (at most ten).
@@ -133,13 +155,17 @@ function sceneryFor(band: BandSettings, look: BandLook, width: number): SceneryR
 
 /**
  * The band `width` scene pixels wide: the scenery, the main agent at LEAD_X, then each subagent in turn, GAP past the
- * one before, stopping before the room kept for the sun or moon. A subagent is added only while the drawing, with its
- * anchoring allowance, stays within MAX_CHARS. Rows that do not fit count as overflow.
+ * one before, stopping before the room kept for the sun or moon; when `bubble` is set, the main agent also
+ * says that an update is available, in a speech bubble above the crew. A subagent is added only while the drawing, with its anchoring allowance, stays within MAX_CHARS. Rows that do
+ * not fit count as overflow.
  */
 export function bandScene(crew: Crew, o: BandSceneOptions): BandScene {
   const { width, band, now } = o;
   const look = bandLook(band, now);
   const background = sceneryFor(band, look, width);
+  const limit = width - ORB_ROOM;
+  // Only when it fits clear of the sun or moon's room.
+  const bubble = o.bubble && BUBBLE.x + BUBBLE.w <= limit ? bubbleOf() : "";
   const lead = leadOf(crew);
   const leadFamily = modelFamily(lead.model);
   const headwear = String(band.headwear) as Headwear;
@@ -148,13 +174,13 @@ export function bandScene(crew: Crew, o: BandSceneOptions): BandScene {
   const parts = [first.svg];
   const spots = [first.spot];
   let right = first.right;
-  let length = open.length + "</svg>".length + background.svg.length + first.svg.length;
+  let length = open.length + "</svg>".length + background.svg.length + first.svg.length + (bubble ? Math.max(BUBBLE_CHARS, bubble.length) : 0);
   let drawn = 0;
   for (const row of crew.rows) {
     const family = modelFamily(row.model);
     const bot = act(rowAct(row), { x: 0, ground: FEET, h: HEIGHT[family], color: colourOf(band, family), idPrefix: `a${drawn + 1}` });
     const left = right + GAP;
-    if (left + bot.width > width - ORB_ROOM) break;
+    if (left + bot.width > limit) break;
     const at = placed(row.id, bot, left - bot.left, HEIGHT[family]);
     if (length + at.svg.length + ANCHOR_ALLOWANCE > MAX_CHARS) break;
     length += at.svg.length;
@@ -163,6 +189,8 @@ export function bandScene(crew: Crew, o: BandSceneOptions): BandScene {
     right = at.right;
     drawn++;
   }
-  const svg = `${open}${background.svg}${parts.join("")}</svg>`;
-  return { svg, spots, orb: background.orb, overflow: crew.rows.length - drawn };
+  const svg = `${open}${background.svg}${bubble}${parts.join("")}</svg>`;
+  const scene: BandScene = { svg, spots, orb: background.orb, overflow: crew.rows.length - drawn };
+  if (bubble) scene.bubble = BUBBLE;
+  return scene;
 }

@@ -18,6 +18,8 @@ export type Actions = {
   addRule(rule: string, replaces?: string): Promise<void>;
   /** Ask the main conversation to run a finished subagent's task again on `model`. */
   retry(agent: { type: string; task: string; model: string }, model: string): Promise<void>;
+  /** Run `claude plugin update haikrew@haikrew`; the outcome lands in `view.updateNote`. */
+  update(): Promise<void>;
 };
 
 export const TABS = [["home", "Home"], ["ledger", "Ledger"], ["settings", "Settings"]] as const;
@@ -37,7 +39,10 @@ export const view: {
   forms: Record<string, Record<string, string>>;
   /** The one two-press action waiting for its second press, e.g. a rule to add or an item to remove. */
   armed: string;
-} = { tab: "home", section: "routing", drafts: {}, errors: {}, open: {}, frame: 0, cols: 80, forms: {}, armed: "" };
+  /** What the update strip says after Update was pressed (its outcome), and whether the command runs now. */
+  updateNote: string;
+  updating: boolean;
+} = { tab: "home", section: "routing", drafts: {}, errors: {}, open: {}, frame: 0, cols: 80, forms: {}, armed: "", updateNote: "", updating: false };
 
 /** Theme keys the pane paints with. */
 export const C = {

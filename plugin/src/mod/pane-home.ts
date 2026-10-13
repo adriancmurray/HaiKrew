@@ -22,7 +22,7 @@ import { title } from "./rules.ts";
 import { bannerSvg } from "./sprites.ts";
 import { anchorAnimations, gauges, inkFor, table } from "./svg.ts";
 import type { Ink } from "./svg.ts";
-import { C, CARD_INSET, compact, fillColor, foldCard, hexOf, hrow, labelled, modelColor, modelName, onOff, pxOf, thousands, txt, vcol, view, when } from "./ui.ts";
+import { C, CARD_INSET, compact, fillColor, foldCard, hexOf, hrow, labelled, modelColor, modelName, onOff, pxOf, textAndControls, thousands, txt, vcol, view, when } from "./ui.ts";
 import type { ModelColours, TimeStyle } from "./ui.ts";
 import type { Actions, CardFrame, Ui } from "./ui.ts";
 
@@ -32,7 +32,23 @@ export type HomeData = {
   messages: Record<string, string>;
   /** Whether the app's theme is dark, as far as its theme setting says. */
   dark: boolean;
+  /** A newer release than the installed one, when there is one and the check is on. */
+  update?: { latest: string; installed: string };
 };
+
+const NOTES_URL = "https://github.com/adriancmurray/HaiKrew/blob/main/CHANGELOG.md";
+
+/** The strip at the top of the home page: a newer release, its notes link, and the Update button (gone once updated). */
+export function updateStrip(ui: Ui, act: Actions, u: { latest: string; installed: string }): unknown {
+  const done = view.updateNote.startsWith("Updated.");
+  return vcol(ui, { key: "update-strip", borderStyle: "round", borderColor: C.accent, paddingX: 2 }, [
+    textAndControls(ui, [
+      txt(ui, { bold: true, wrap: "wrap" }, view.updateNote || `HaiKrew ${u.latest} is available (you have ${u.installed})`),
+      view.updateNote ? null : ui.Link({ href: NOTES_URL, label: "Release notes" }),
+    ], [done ? null : ui.Button({ key: "update-now", label: view.updating ? "Updating…" : "Update", variant: "primary",
+      onPress: () => (view.updating ? undefined : act.update()) })]),
+  ]);
+}
 
 /** The terminal's Home: the Crew scene and roster with token lines under them. */
 export function terminalHome(ui: Ui, data: HomeData, cols: number): unknown[] {
@@ -48,6 +64,7 @@ export function desktopView(ui: Ui, act: Actions, data: HomeData, gate: unknown,
   const frame: CardFrame = { cols: cols - CARD_INSET };
   const colours = familyColours(data.settings.band);
   return vcol(ui, { width: cols }, [
+    data.update ? vcol(ui, { paddingX: 2, paddingTop: 1 }, [updateStrip(ui, act, data.update)]) : null,
     ui.Svg({ source: bannerSvg(full, ink), alt: "HaiKrew", width: full, height: Math.round((full * 22) / bannerCols) }),
     vcol(ui, { paddingX: 2, paddingBottom: 1, rowGap: 2 }, [
       gate,
@@ -67,6 +84,8 @@ export type BandOpts = {
   open: () => unknown;
   /** Opens a subagent's transcript in HaiKrew's agent pane. */
   openAgent: (row: Row) => unknown;
+  /** A newer release: the main agent says so in a speech bubble; hovering the bubble or the main agent offers the update. */
+  update?: { latest: string; run: () => unknown };
 };
 
 // ponytail: desktop rows measured at about 27 px; a different font size shifts where the hover targets sit.
@@ -121,6 +140,7 @@ export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: 
           // The transcript button comes first, as a small icon, so a long first line can never push it out of the card.
           hrow(ui, { columnGap: 1, alignItems: "center" }, [
             row ? ui.Button({ key: `band-transcript-${spot.id}`, label: "≡", variant: "secondary", onPress: () => opts.openAgent(row) }) : null,
+            spot.id === "lead" && opts.update ? updateButton(ui, opts.update) : null,
             hrow(ui, { flexShrink: 1 }, [txt(ui, { bold: true, wrap: "truncate-end" }, lines[0])]),
           ].filter((x) => x !== null)),
           txt(ui, { dimColor: true, wrap: "truncate-end" }, lines[1]),
@@ -137,8 +157,31 @@ export function crewBand(ui: Ui, crew: Crew, cols: number, dark: boolean, opts: 
   ] });
   const last = scene.spots[scene.spots.length - 1];
   const more = scene.overflow > 0 && last ? moreMark(ui, dark, scene.overflow, { from: toCol(last.x + last.w) + 1, limit: orbLeft, rows, cardWidth }) : null;
+  const alert = opts.update && scene.bubble ? updateBubble(ui, dark, opts.update, scene.bubble, toCol) : null;
   // An explicit height, with the hover layers clipped to it, so nothing they place can make the band taller.
-  return ui.Box({ key: "crew-band", flexDirection: "column", height: rows, overflow: "hidden", children: [svg, ...targets, opener, ...(more ? [more] : [])] });
+  return ui.Box({ key: "crew-band", flexDirection: "column", height: rows, overflow: "hidden", children: [svg, ...targets, opener, ...(more ? [more] : []), ...(alert ? [alert] : [])] });
+}
+
+/** The Update button of the band's cards: gone once the update has run. */
+function updateButton(ui: Ui, u: { latest: string; run: () => unknown }): unknown {
+  if (view.updateNote.startsWith("Updated.")) return null;
+  return ui.Button({ key: "band-update-now", label: view.updating ? "Updating…" : "Update", variant: "primary",
+    onPress: () => (view.updating ? undefined : u.run()) });
+}
+
+/**
+ * The hover target over the update bubble (scene pixels `b`, on the band's top rows, clear of every bot's target).
+ * Its card covers the bubble and says which release is out, with the Update button until it has run (then the outcome).
+ */
+function updateBubble(ui: Ui, dark: boolean, u: { latest: string; run: () => unknown }, b: { x: number; w: number }, toCol: (x: number) => number): unknown {
+  const left = toCol(b.x), width = Math.max(2, toCol(b.x + b.w) - left + 1);
+  return ui.Box({ key: "band-update", position: "absolute", left, top: 0, width, height: 1, children: [
+    ui.Box({ position: "absolute", top: 0, left: 0, display: "none", hover: { display: "flex" }, flexDirection: "row", columnGap: 1,
+      alignItems: "center", paddingX: 1, backgroundColor: dark ? "#2b2a27" : "#f1efe8", children: [
+        txt(ui, { bold: true }, view.updateNote || `Update to ${u.latest}`),
+        updateButton(ui, u),
+      ].filter((x) => x !== null) }),
+  ] });
 }
 
 /**
@@ -170,10 +213,10 @@ function bandDrawing(crew: Crew, width: number, opts: BandOpts): BandScene {
   const look = bandLook(opts.band, opts.now);
   const lead = leadOf(crew);
   const key = JSON.stringify({
-    width, time: look.time, season: look.season, phase: Math.round(look.phase * 100) / 100, band: opts.band,
+    width, bubble: Boolean(opts.update), time: look.time, season: look.season, phase: Math.round(look.phase * 100) / 100, band: opts.band,
     lead: [leadAct(lead), modelFamily(lead.model)], rows: crew.rows.map((r) => [r.id, rowAct(r), modelFamily(r.model)]),
   });
-  if (!bandCache || bandCache.key !== key) bandCache = { key, scene: bandScene(crew, { width, band: opts.band, now: opts.now }) };
+  if (!bandCache || bandCache.key !== key) bandCache = { key, scene: bandScene(crew, { width, band: opts.band, now: opts.now, bubble: Boolean(opts.update) }) };
   return { ...bandCache.scene, svg: anchorAnimations(bandCache.scene.svg, opts.now) };
 }
 
