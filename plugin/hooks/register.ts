@@ -14,11 +14,12 @@ import type { DecisionRecord, DeciderSettings } from "../src/mod/decider.ts";
 import { tag as promptTag } from "../src/mod/select.ts";
 import { effortFor, gate, resolveModel } from "../src/mod/gate.ts";
 import type { Choice, GateSettings } from "../src/mod/gate.ts";
-import { hookGuard, readGuard, squeeze, tokenLimit } from "../src/mod/guards.ts";
-import type { ChecksSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
+import { callerType, hookGuard, isReadOnlyType, readGuard, readOnlyGuard, squeeze, tokenLimit } from "../src/mod/guards.ts";
+import type { ChecksSettings, GuardsSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
-import { activityOf, agentModel, liveUsage, modelFamily, noteMainChunk, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteToolChange, noteTurnEnd, rowFor, specOf, touched } from "../src/mod/crew.ts";
+import { activityOf, agentModel, liveUsage, modelFamily, noteMainChunk, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteToolChange, noteTurnEnd, noteSnapshot, attributedPaths, porcelainPaths, rowFor, specOf, takeSnapshot, touched, touchedBy, unattributedChanges } from "../src/mod/crew.ts";
+import type { RepoSnapshot } from "../src/mod/crew.ts";
 import { addRun, applyOrHold, combineUsage, finalReport, parseCheckerVerdict, readState, runFromStop, summary } from "../src/mod/ledger.ts";
 import { buildPacket, reviewNote, testsClaim } from "../src/mod/packet.ts";
 import { applyDefects, countDefects } from "../src/mod/checker.ts";
@@ -31,13 +32,18 @@ import type { DelegateSettings } from "../src/mod/delegate.ts";
 import { ledgerLock } from "../src/mod/serial.ts";
 import { checkHealth, healthLine } from "../src/mod/health.ts";
 import { flagLate, mergeLate, repoOf } from "../src/mod/late.ts";
-import type { RunGit } from "../src/mod/late.ts";
+import type { LateFields, RunGit } from "../src/mod/late.ts";
 import { applyLateFile, parseLateFile, setLateOff } from "../src/mod/late-file.ts";
 import { registerAgentTools } from "../src/mod/agents.ts";
+import { bashPaths, checkWrite, claimSpawn, editPaths, logConflicts, newBook, stopAgent } from "../src/mod/claims.ts";
+import type { BoardSettings } from "../src/mod/claims.ts";
 import type { Settings } from "../src/schema.ts";
 
 /** Set at the first agent launch: the late-failure check runs once per load (the pane owns the one session.start hook). */
 let startChecked = false;
+
+/** The file claims of this session's subagents, per repo root (see src/mod/claims.ts). */
+const claimBook = newBook(Date.now);
 
 /** Claude Code calls this once when the mod loads, with the `on` that attaches hooks. */
 export function register(on) {
@@ -67,11 +73,20 @@ export function register(on) {
       // the spawn. Forks inherit the parent's model, so they get none.
       const lead = passed.fork ? passed : { ...passed, prompt: withLeadNote(gateCfg as unknown as DelegateSettings,
         String(passed.prompt ?? ""), modelFamily(String(passed.model ?? "")), promptTag(passed.prompt, "job")) };
+      // Started before the spawn, so the agent's own first writes cannot land in the snapshot.
+      const snapping = repoSnapshot($, cwd);
       const reply = await next(lead);
+      const snap = await snapping;
       noteSpawn(passed, reply, Date.now(), choice.rule);
       $.ui.invalidate("ui.render"); // crew changed: the band and pane redraw
       const id = typeof reply?.agentId === "string" ? reply.agentId : "";
+      if (id && snap) noteSnapshot(id, snap);
       if (id) {
+        claimSpawn(claimBook, cfg.board as unknown as BoardSettings, {
+          id, name: rowFor(id, Date.now())?.name ?? id, task: String(passed.description ?? ""),
+          parentId: passed.parentAgentId ? String(passed.parentAgentId) : null,
+          root: snap?.root ?? cwd, base: cwd, owns: promptTag(passed.prompt, "owns"),
+        });
         const effort = effortFor(gateCfg, choice, String(reply.model ?? passed.model ?? ""));
         if (effort) noteEffort(id, effort);
         if (record) noteDecision(id, record);
@@ -141,6 +156,9 @@ export function register(on) {
     noteToolCall(e, now, false);
     const after = id ? rowFor(id, now) : undefined;
     if (after && (!before || activityOf(before) !== activityOf(after))) $.ui.invalidate("ui.render");
+    const paths = editPaths(e);
+    const refused = id && paths.length > 0 ? await claimWrite($, e, await callerType(() => $.agent.list(), id), paths) : null;
+    if (refused) return refused;
     const reply = await next(e);
     // Changes count only once the call ran and succeeded: a refused call (`deny`) or a failed one (`isError`, e.g. an
     // Edit whose old text was not found) wrote nothing.
@@ -153,8 +171,18 @@ export function register(on) {
 
   on("tool.call", { tool: "Bash" }, async ($, e, next) => {
     const cfg = await loadSettings($);
-    return hookGuard(cfg.checks as unknown as ChecksSettings, e,
-      (passed) => squeeze(cfg.squeeze as unknown as SqueezeSettings, passed, $.plugin.root, next));
+    // The calling subagent's type; "" on the main loop, which the read-only guard never denies.
+    const id = typeof e.agentId === "string" ? e.agentId : "";
+    const type = id ? await callerType(() => $.agent.list(), id) : "";
+    const cwd = type ? await sessionCwd($) : "";
+    // The guards decide first (each with a next that passes), so a command they refuse claims nothing.
+    const guarded = hookGuard(cfg.checks as unknown as ChecksSettings, e, () => null)
+      ?? readOnlyGuard(cfg.guards as unknown as GuardsSettings, type, e, cwd, () => null)
+      ?? squeeze(cfg.squeeze as unknown as SqueezeSettings, e, $.plugin.root, () => null);
+    if (guarded) return guarded;
+    const refused = await claimWrite($, e, type, bashPaths(String(e.command || "")));
+    if (refused) return refused;
+    return next(e);
   });
 
   on("tool.call", { tool: "Read" }, async ($, e, next) => {
@@ -166,8 +194,14 @@ export function register(on) {
 
   on("classic.SubagentStop", async ($, e, next) => {
     let run: StopRun | null = null;
+    let unattributed: string[] = [];
     try {
-      run = await recordStop($, e);
+      unattributed = await unattributedAtStop($, String(e.agent_id ?? ""));
+    } catch {
+      // The check never blocks a subagent from finishing.
+    }
+    try {
+      run = await recordStop($, e, unattributed);
     } catch {
       // The ledger never blocks a subagent from finishing.
     }
@@ -176,6 +210,7 @@ export function register(on) {
     } catch {
       // A review note never blocks a subagent from finishing either.
     }
+    await releaseClaims($, String(e.agent_id ?? ""));
     noteStop(String(e.agent_id ?? ""), String(e.agent_type ?? ""), run?.self_verdict ?? null, Date.now(), run?.model ?? "");
     $.ui.invalidate("ui.render"); // crew changed: the band and pane redraw
     const seam = noteSeamStop(String(e.agent_id ?? ""));
@@ -226,6 +261,43 @@ function gitOf($: Api, unavailable?: { value: boolean }): RunGit {
       return "";
     }
   };
+}
+
+// -z: paths come unquoted and NUL-separated, so spaces and non-ASCII names match the edit tool's paths.
+const STATUS_ARGV = ["git", "status", "--porcelain", "-z", "-uall"];
+
+/** `work`, or `fallback` when it has not settled in two seconds, so a git call never holds a hook up. */
+function bounded<T>($: Api, work: Promise<T>, fallback: T): Promise<T> {
+  return Promise.race([work, new Promise<T>((r) => { $.clock.after(2000, () => r(fallback)); })]);
+}
+
+/** The repo root and its `git status` paths at `cwd`; null outside a repo, or when git is unavailable or slow. */
+async function repoSnapshot($: Api, cwd: string): Promise<RepoSnapshot | null> {
+  const git = gitOf($);
+  const work = (async () => {
+    const root = (await git(["git", "rev-parse", "--show-toplevel"], cwd)).trim();
+    return root ? { root, paths: porcelainPaths(await git(STATUS_ARGV, root)) } : null;
+  })();
+  return bounded($, work, null);
+}
+
+/** The changes since agent `id` spawned that no agent explains, read now; [] without a snapshot or when git is slow. */
+async function unattributedAtStop($: Api, id: string): Promise<string[]> {
+  const snap = takeSnapshot(id);
+  if (!snap) return [];
+  const now = await bounded<Set<string> | null>($, gitOf($)(STATUS_ARGV, snap.root).then(porcelainPaths), null);
+  return now ? unattributedChanges(snap.root, snap.paths, now, attributedPaths(Date.now())) : [];
+}
+
+/**
+ * A run's repo and repo-relative files, and those files split by the edit tool and the shell. One repoOf call finds the
+ * root; each absolute path under that root is made relative to it, so a path under a symlinked root is left out of files_by.
+ */
+async function locateFiles($: Api, by: { edit: string[]; shell: string[] }): Promise<LateFields & { files_by: { edit: string[]; shell: string[] } }> {
+  const all: LateFields = (await bounded<LateFields | null>($, repoOf([...by.edit, ...by.shell], gitOf($)), null)) ?? {};
+  const root = all.repo ? `${all.repo}/` : "";
+  const relative = (paths: string[]): string[] => paths.filter((p) => root && p.startsWith(root)).map((p) => p.slice(root.length));
+  return { ...all, files_by: { edit: relative(by.edit), shell: relative(by.shell) } };
 }
 
 /**
@@ -311,7 +383,7 @@ async function readFile($: Api, path: string): Promise<string | null> {
  * Append the finished subagent's run to the ledger and return its verdict and model. Skips (returns null) when ledger.enabled
  * is off or the transcript is unreadable.
  */
-async function recordStop($: Api, e: Record<string, unknown>): Promise<StopRun | null> {
+async function recordStop($: Api, e: Record<string, unknown>, unattributed: string[]): Promise<StopRun | null> {
   const cfg = await loadSettings($);
   const path = typeof e.agent_transcript_path === "string" ? e.agent_transcript_path : "";
   const transcript = cfg.ledger.enabled && path ? await readFile($, path) : null;
@@ -322,11 +394,11 @@ async function recordStop($: Api, e: Record<string, unknown>): Promise<StopRun |
   const live = liveUsage(String(e.agent_id ?? ""));
   const run = live ? combineUsage(parsed, live) : parsed;
   const decision = decisionFor(run.agent_id);
-  const entry = { ...run, ...(await Promise.race([repoOf(touched(run.agent_id).paths, gitOf($)).catch(() => ({})), new Promise<object>((r) => { $.clock.after(2000, () => r({})); })])), name: rowFor(run.agent_id, Date.now())?.name, ...(decision ? { decision } : {}) };
+  const entry = { ...run, ...(await locateFiles($, touchedBy(run.agent_id))), ...(unattributed.length ? { unattributed } : {}), name: rowFor(run.agent_id, Date.now())?.name, ...(decision ? { decision } : {}) };
   await ledgerLock(async () => {
     await $.store.set("ledger", addRun(readState(await $.store.get("ledger")), entry, cfg));
   });
-  return { self_verdict: run.self_verdict ?? "none", model: run.model, job: run.job, lang: run.lang, report: finalReport(transcript) };
+  return { self_verdict: run.self_verdict ?? "none", model: run.model, job: run.job, lang: run.lang, report: finalReport(transcript), unattributed };
 }
 
 /**
@@ -366,7 +438,7 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
   }
   if (plan.tier === "none") return;
   const packet = buildPacket({ name, type: String(e.agent_type ?? "agent"), model: run.model, spec: specOf(id), report: run.report,
-    paths, lines, testsPassed: testsClaim(run.report), plan });
+    paths, lines, testsPassed: testsClaim(run.report), plan, unattributed: run.unattributed });
   // Packets are keyed by the (session-unique) name; review_packet_ids maps agent id -> name so a lookup by id finds it first.
   await ledgerLock(async () => {
     const packets = asRecord(await $.store.get("review_packets"));
@@ -401,12 +473,50 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
   }
 }
 
+/**
+ * A subagent's write to `paths`, checked before the call runs: null to let it run, or {deny} to refuse it. A clash with
+ * another live agent is logged. A warned clash that is retried goes through, and its note reaches the main conversation
+ * as a review note does (a built-in tool's result is not amended here). A read-only type claims nothing; the main
+ * thread never claims or clashes.
+ */
+async function claimWrite($, e: Record<string, unknown>, type: string, paths: string[]): Promise<{ deny: string } | null> {
+  const id = typeof e.agentId === "string" ? e.agentId : "";
+  if (!id || paths.length === 0) return null;
+  const row = rowFor(id, Date.now());
+  const writer = { id, name: row?.name ?? id, task: row?.task ?? "", readOnly: isReadOnlyType(type) };
+  // Paths are absolute here: edit tools carry absolute paths, and bashPaths drops the relative ones.
+  const out = checkWrite(claimBook, (await loadSettings($)).board as unknown as BoardSettings, writer, paths, "");
+  try {
+    await logConflicts(storeOf($), out.logged);
+    for (const note of out.notes) {
+      await $.session.append({ message: { type: "user", content: [{ type: "text", text: `${writer.name}: ${note}` }] } });
+    }
+  } catch {
+    // A failed log or note never blocks the write.
+  }
+  return out.deny ? { deny: out.deny } : null;
+}
+
+/** A subagent stopped: its claims start their grace window and its open conflicts settle in the store. Never throws. */
+async function releaseClaims($, id: string): Promise<void> {
+  try {
+    await logConflicts(storeOf($), stopAgent(claimBook, id));
+  } catch {
+    // The board never blocks a subagent from finishing.
+  }
+}
+
+/** The mod store in the shape the claims log takes: `$` itself is not passed across an import. */
+function storeOf($) {
+  return { get: (key: string) => $.store.get(key), set: (key: string, value: unknown) => $.store.set(key, value) };
+}
+
 /** Whether models can call record_verdict (agent control "change"); "read" refuses it and "off" registers no tools. */
 function toolsOn(cfg: unknown): boolean {
   return (cfg as { agents?: { control?: string } }).agents?.control === "change";
 }
 
-type StopRun = { self_verdict: string; model: string; job: string; lang: string; report: string };
+type StopRun = { self_verdict: string; model: string; job: string; lang: string; report: string; unattributed: string[] };
 
 function asRecord(v: unknown): Record<string, string> {
   return typeof v === "object" && v !== null && !Array.isArray(v) ? { ...(v as Record<string, string>) } : {};

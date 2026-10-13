@@ -244,7 +244,9 @@ test("a checker's VERDICT line settles the run it names, and a job=check run get
     prompt: "HAIKREW job=check name=Karl_Checker\ncheck again", description: "check", subagentType: "haikrew:haiku-checker",
     parentModel: "opus", background: false, fork: false,
   });
-  await ctx.tool.call({ tool: "Edit", agentId: again.agentId, file_path: "/repo/plugin/hooks/register.ts", new_string: "a\nb" });
+  // The first checker already claims register.ts, so this sibling writes another file: a clash would refuse the write
+  // (warn refuses a first write) and change what this fixture is about.
+  await ctx.tool.call({ tool: "Edit", agentId: again.agentId, file_path: "/repo/plugin/hooks/other.ts", new_string: "a\nb" });
   await ctx.classic.SubagentStop({ agent_id: again.agentId, agent_type: "haikrew:haiku-checker", agent_transcript_path: "/checker2.jsonl" });
   expect(appended.length).toBe(1);
   const run = stored.ledger.runs.find((r: any) => r.name === "Isaac Newline");
