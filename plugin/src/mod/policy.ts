@@ -8,6 +8,9 @@
 /** The models, cheapest first. */
 const MODELS = ["haiku", "sonnet", "opus"];
 
+// Clef's pick is explored one model down only when Clef gives that model at least this probability: less is not worth a run.
+const CLEF_EXPLORE_MIN_PROB = 0.25;
+
 /** Where the chosen model came from: the ledger's record of the bucket, the decider's confident pick, or the gate's default. */
 export type PickSource = "data" | "clef" | "default";
 
@@ -29,8 +32,8 @@ export type PolicyCfg = { target_pass?: number; min_runs?: number; explore_rate:
 /** What chooseModel picked. `model` is null when the gate's default stands. */
 export type PolicyPick = { model: string | null; source: PickSource; explored: boolean; reason: string };
 
-/** `clef` is the decider's answer: its model is set only when the answer was confident. */
-export type PolicyInput = { clef: { model?: string } | null; bucketStats: BucketStat[]; explore: number; cfg: PolicyCfg };
+/** `clef` is the decider's answer: its model is set only when the answer was confident, and `probs` are its model probabilities. */
+export type PolicyInput = { clef: { model?: string; probs?: Record<string, number> } | null; bucketStats: BucketStat[]; explore: number; cfg: PolicyCfg };
 
 /** The smoothed success rate of a model in a bucket: (passes - late_fails + 1) / (judged + 2). */
 export function successRate(s: BucketStat): number {
@@ -60,7 +63,8 @@ function fromData(stats: BucketStat[], target: number, minRuns: number): { model
 
 /**
  * The model to launch with: the ledger's pick, else Clef's confident pick, else null (the gate's default). When the
- * pick is above Haiku and `explore` is below explore_rate, the next cheaper model is picked and marked explored.
+ * pick is above Haiku and `explore` is below explore_rate, the next cheaper model is picked and marked explored. A
+ * Clef pick explores only when Clef gives the cheaper model at least CLEF_EXPLORE_MIN_PROB; a ledger pick always may.
  */
 export function chooseModel(input: PolicyInput): PolicyPick {
   const target = input.cfg.target_pass ?? 0.8;
@@ -72,7 +76,8 @@ export function chooseModel(input: PolicyInput): PolicyPick {
   else if (clef) picked = { model: clef, source: "clef", reason: `Clef's confident pick ${clef}` };
   else return { model: null, source: "default", explored: false, reason: "no ledger pick and no confident pick" };
   const lower = cheaper(picked.model);
-  if (lower && input.explore < input.cfg.explore_rate) {
+  const plausible = picked.source === "data" || (lower !== null && (input.clef?.probs?.[lower] ?? 0) >= CLEF_EXPLORE_MIN_PROB);
+  if (lower && plausible && input.explore < input.cfg.explore_rate) {
     return { model: lower, source: picked.source, explored: true, reason: `${picked.reason}; exploring ${lower}` };
   }
   return { model: picked.model, source: picked.source, explored: false, reason: picked.reason };

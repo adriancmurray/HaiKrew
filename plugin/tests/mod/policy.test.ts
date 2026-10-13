@@ -55,11 +55,30 @@ test("with no data and no confident pick the gate's default stands, and nothing 
 });
 
 test("a pick above haiku runs one model cheaper when explore is below explore_rate, marked explored", () => {
-  const p = chooseModel({ clef: clef("opus"), bucketStats: [], explore: 0.05, cfg: { explore_rate: 0.1 } });
+  const opus = { model: "opus", probs: { sonnet: 0.3, opus: 0.7 } };
+  const p = chooseModel({ clef: opus, bucketStats: [], explore: 0.05, cfg: { explore_rate: 0.1 } });
   expect(p).toMatchObject({ model: "sonnet", source: "clef", explored: true });
   expect(p.reason).toContain("exploring sonnet");
   const data = chooseModel({ clef: null, bucketStats: [stat("sonnet", 10, 10)], explore: 0, cfg: { explore_rate: 0.1 } });
   expect(data).toMatchObject({ model: "haiku", source: "data", explored: true });
+});
+
+test("a Clef pick explores the cheaper model only when Clef gives it at least 0.25", () => {
+  const cfg = { explore_rate: 0.1 };
+  const low = { model: "opus", probs: { sonnet: 0.24, opus: 0.76 } };
+  expect(chooseModel({ clef: low, bucketStats: [], explore: 0, cfg })).toMatchObject({ model: "opus", source: "clef", explored: false });
+  const at = { model: "opus", probs: { sonnet: 0.25, opus: 0.75 } };
+  expect(chooseModel({ clef: at, bucketStats: [], explore: 0, cfg })).toMatchObject({ model: "sonnet", source: "clef", explored: true });
+  const none = { model: "opus" };
+  expect(chooseModel({ clef: none, bucketStats: [], explore: 0, cfg })).toMatchObject({ model: "opus", explored: false });
+});
+
+test("a ledger pick explores at explore_rate whatever Clef's probability for the cheaper model", () => {
+  const cfg = { explore_rate: 0.1 };
+  const lowClef = { model: "sonnet", probs: { haiku: 0.01, sonnet: 0.99 } };
+  const p = chooseModel({ clef: lowClef, bucketStats: [stat("sonnet", 10, 10)], explore: 0, cfg });
+  expect(p).toMatchObject({ model: "haiku", source: "data", explored: true });
+  expect(chooseModel({ clef: lowClef, bucketStats: [stat("sonnet", 10, 10)], explore: 0.5, cfg })).toMatchObject({ model: "sonnet", explored: false });
 });
 
 test("exploration needs explore below explore_rate, so explore equal to the rate does not explore", () => {
