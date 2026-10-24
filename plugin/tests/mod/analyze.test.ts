@@ -92,3 +92,11 @@ test("newestStore picks the haikrew_inline file with the latest modification tim
   ])).toBe("/s/haikrew_inline-b.json");
   expect(newestStore([{ path: "/s/anuki_inline-c.json", mtime: 99 }])).toBeNull();
 });
+
+test("newestStore also reads a marketplace install's haikrew_haikrew store, and skips haikrew-late.json", () => {
+  expect(newestStore([
+    { path: "/s/haikrew_inline-a.json", mtime: 10 },
+    { path: "/s/haikrew_haikrew-b.json", mtime: 30 },
+    { path: "/s/haikrew-late.json", mtime: 99 },
+  ])).toBe("/s/haikrew_haikrew-b.json");
+});

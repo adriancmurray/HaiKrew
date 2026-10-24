@@ -2,6 +2,7 @@
  * How a finished subagent's work gets checked: a pure decision from what the agent changed and its record.
  * No I/O, so the mod and the tests can both import it.
  */
+import { outsideTree } from "./shell-writes.ts";
 
 /** What the decision sees about one finished agent: its tags, the files and lines it changed, its test result and record. */
 export type ReviewInput = {
@@ -184,6 +185,8 @@ function checkerSkip(input: ReviewInput, cfg: ReviewSettings): { skip: boolean; 
 export function reviewPlan(input: ReviewInput, cfg: ReviewSettings, allowOpus: boolean): ReviewPlan {
   if (!cfg.enabled) return { tier: "none", reviewer: null, reasons: ["review is off"] };
   if (input.paths.length === 0) return { tier: "none", reviewer: null, reasons: ["changed no files"] };
+  // Scratch files (system temp, the session scratchpad) are not the working tree: no review note for them.
+  if (input.paths.every(outsideTree)) return { tier: "none", reviewer: null, reasons: ["changed only scratch files"] };
   const docs = input.paths.every(isDoc);
   const deep = deepReasons(input, cfg, docs);
   if (deep.length > 0) return deepPlan(input, cfg, allowOpus, deep);

@@ -21,7 +21,8 @@ export type AnalyzeIo = {
   err(text: string): void;
 };
 
-const STORE_NAME = /^haikrew_inline-.*\.json$/;
+/** `haikrew_<source>-<hash>.json`: an inline dev install writes `haikrew_inline-…`, a marketplace install `haikrew_haikrew-…`. */
+const STORE_NAME = /^haikrew_[a-z0-9]+-.*\.json$/;
 
 /** The path of the newest HaiKrew store file among `files`, or null when there is none. */
 export function newestStore(files: StoreFile[]): string | null {

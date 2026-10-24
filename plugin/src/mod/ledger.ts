@@ -131,6 +131,12 @@ function count(usage: Record<string, unknown>, key: string): number {
   return typeof value === "number" && Number.isInteger(value) ? value : 0;
 }
 
+/** The report an agent handed back through a SubagentHandback call (input.message), or null for any other block. */
+export function handbackText(block: unknown): string | null {
+  if (!isObject(block) || block.type !== "tool_use" || block.name !== "SubagentHandback" || !isObject(block.input)) return null;
+  return typeof block.input.message === "string" && block.input.message.trim() ? block.input.message : null;
+}
+
 function scanAssistant(out: Scan, msg: Record<string, unknown>, idx: number): void {
   const mid = msg.id ? String(msg.id) : String(idx); // real ids are never bare digits
   if (isObject(msg.usage)) out.usage.set(mid, msg.usage);
@@ -139,9 +145,8 @@ function scanAssistant(out: Scan, msg: Record<string, unknown>, idx: number): vo
   if (Array.isArray(msg.content)) {
     msg.content.forEach((block, pos) => {
       if (isObject(block) && block.type === "tool_use") out.tools.add(block.id ? String(block.id) : mid + "#" + pos);
-      // Agents may hand their final report back through a SubagentHandback call instead of a text block.
-      if (isObject(block) && block.type === "tool_use" && block.name === "SubagentHandback" && isObject(block.input) &&
-        typeof block.input.message === "string" && block.input.message.trim()) text.push(block.input.message);
+      const handed = handbackText(block);
+      if (handed !== null) text.push(handed);
     });
   }
   if (text.length) out.finalText = text.join("\n");
