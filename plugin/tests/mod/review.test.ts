@@ -32,10 +32,10 @@ function input(over: Partial<ReviewInput> = {}): ReviewInput {
 const SENSITIVE = { paths: ["plugin/hooks/register.ts"], lines: 10 };
 
 test("a run that changed only scratch files gets no review", () => {
-  const scratch = reviewPlan(input({ paths: ["/private/tmp/x/a.ts", "/Users/me/.claude/scratchpad/b.ts"] }), CFG, false);
+  const scratch = reviewPlan(input({ paths: ["/var/folders/x/a.ts", "/Users/me/.claude/scratchpad/b.ts"] }), CFG, false);
   expect(scratch.tier).toBe("none");
   expect(scratch.reasons).toEqual(["changed only scratch files"]);
-  expect(reviewPlan(input({ paths: ["/private/tmp/x/a.ts", "src/mod/review.ts"] }), CFG, false).tier).not.toBe("none");
+  expect(reviewPlan(input({ paths: ["/var/folders/x/a.ts", "src/mod/review.ts"] }), CFG, false).tier).not.toBe("none");
 });
 
 test("a docs-only small change gets a light review, checked by the Haiku checker agent", () => {
