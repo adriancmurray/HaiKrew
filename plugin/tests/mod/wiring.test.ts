@@ -469,3 +469,52 @@ test("a resumed agent that empties a new file, adding no lines, is noted again",
   expect(appended.length).toBe(2);
   expect(stored.review_noted[coder.agentId]).toEqual(expect.objectContaining({ paths: 2 }));
 });
+
+/** A crew whose subagent steps each report `input` new tokens; the session's appended notes are collected. */
+function tokenHost(on: any, notes: string[], checks: Record<string, unknown>): void {
+  resetCrew();
+  resetEffort();
+  resetSeams();
+  const settings = { checks: { token_limits: ["haiku=1000"], token_effort_scale: false, ...checks } };
+  on("store.get", async (_$: any, e: any) => ({ value: e.key === "settings" ? settings : undefined }));
+  on("store.set", async () => ({ value: undefined }));
+  on("fs.read", async () => ({ deny: "no such file" }));
+  on("session.cwd", async () => ({ value: "/Users/someone/projects/app" }));
+  on("agent.spawn", async (_$: any, e: any) => ({ model: e.model ?? "haiku", agentId: "w1" }));
+  on("turn.step", async function* (_$: any, e: any) {
+    return { turnId: e.turnId, index: e.index, answer: "", toolUses: [], usage: { input_tokens: 600, output_tokens: 0 } };
+  });
+  on("ui.invalidate", async () => ({ value: undefined }));
+  on("ui.toast", async () => ({ value: undefined }));
+  on("session.append", async (_$: any, e: any, next: any) => { notes.push(e.message.content[0].text); return next(e); });
+}
+
+async function steps(ctx: any, n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    for await (const _ of ctx.turn.step({ turnId: "s", index: i, model: "claude-haiku-5-5", messageCount: 1, agentId: "w1" })) { /* drain */ }
+  }
+}
+
+test("a subagent past its token limit is named to the main conversation once, and again past 1.5x", async (ctx: any, on: any) => {
+  const notes: string[] = [];
+  tokenHost(on, notes, {});
+  await ctx.agent.spawn({ prompt: "HAIKREW job=implement lang=ts name=Ada_Loopelace\ngo", description: "go", subagentType: "haiku-coder",
+    parentModel: "opus", background: false, fork: false });
+  await steps(ctx, 1); // 600: under
+  expect(notes).toEqual([]);
+  await steps(ctx, 1); // 1200: over
+  expect(notes.length).toBe(1);
+  expect(notes[0]).toContain("(w1) is at 1k tokens, over its 1k limit. Retire it");
+  await steps(ctx, 1); // 1800: past 1.5x
+  await steps(ctx, 2); // 3000: nothing new
+  expect(notes.length).toBe(2);
+  expect(notes[1]).toContain("(w1) is at 2k tokens, past 1.5x its 1k limit");
+});
+
+test("token notes off: the main conversation gets no note", async (ctx: any, on: any) => {
+  const notes: string[] = [];
+  tokenHost(on, notes, { token_notes: false });
+  await ctx.agent.spawn({ prompt: "go", description: "go", subagentType: "haiku-coder", parentModel: "opus", background: false, fork: false });
+  await steps(ctx, 4);
+  expect(notes).toEqual([]);
+});

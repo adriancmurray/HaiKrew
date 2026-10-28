@@ -36,6 +36,8 @@ type Member = {
   usage: LiveUsage;
   /** Whether it has passed the per-agent token warning. */
   over: boolean;
+  /** Whether it has passed 1.5x that warning. */
+  overHigh: boolean;
   /** Files its calls changed: the edit tool's (editPaths) and the shell's (shellPaths), together. */
   paths: Set<string>;
   editPaths: Set<string>;
@@ -197,7 +199,7 @@ function member(id: string, now: number): Member {
     m = {
       id, display: claimName(id, droppedNames.get(id) ?? pickName(id, takenNames())), model: "", subagentType: "", description: "", parentId: null, startedAt: now,
       calls: 0, lastTool: "", lastTarget: "", endedAt: null, verdict: "", rule: "", tokens: 0,
-      usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, over: false, paths: new Set(), editPaths: new Set(), shellPaths: new Set(), lines: 0, shellLines: 0, spec: "",
+      usage: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, over: false, overHigh: false, paths: new Set(), editPaths: new Set(), shellPaths: new Set(), lines: 0, shellLines: 0, spec: "",
     };
     members.set(id, m);
   }
@@ -405,11 +407,11 @@ export function target(e: Input): string {
 
 /**
  * Add one step's usage to a subagent's running total. Returns the total and whether this step took it past `limit`
- * for the first time (never when `limit` is 0, the warning off). Steps of the main loop carry no agent id and count
+ * for the first time (never when `limit` is 0, the warning off), and `high` likewise for 1.5x `limit`. Steps of the main loop carry no agent id and count
  * for nobody.
  */
-export function noteTokens(agentId: unknown, usage: unknown, limit: number, now: number): { total: number; crossed: boolean } {
-  if (typeof agentId !== "string" || !agentId || !isObject(usage)) return { total: 0, crossed: false };
+export function noteTokens(agentId: unknown, usage: unknown, limit: number, now: number): { total: number; crossed: boolean; high: boolean } {
+  if (typeof agentId !== "string" || !agentId || !isObject(usage)) return { total: 0, crossed: false, high: false };
   const m = member(agentId, now);
   resume(m);
   const n = (key: string): number => (typeof usage[key] === "number" ? (usage[key] as number) : 0);
@@ -420,7 +422,10 @@ export function noteTokens(agentId: unknown, usage: unknown, limit: number, now:
   m.tokens = m.usage.input + m.usage.cacheWrite + m.usage.output;
   const crossed = limit > 0 && !m.over && m.tokens > limit;
   if (crossed) m.over = true;
-  return { total: m.tokens, crossed };
+  // A second, louder mark at 1.5x the limit, also once per agent.
+  const high = limit > 0 && !m.overHigh && m.tokens > limit * 1.5;
+  if (high) m.overHigh = true;
+  return { total: m.tokens, crossed, high };
 }
 
 /** The usage counted live for `id`, or null when none of its steps were seen (it started before this session did). */

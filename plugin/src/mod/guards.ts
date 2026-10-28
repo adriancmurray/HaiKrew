@@ -16,7 +16,7 @@ export type SqueezeSettings = { enabled: boolean; patterns: string[]; max_lines:
 /** The `read_guard` section of settings. */
 export type ReadGuardSettings = { enabled: boolean; max_lines: number };
 /** The `checks` section of settings. */
-export type ChecksSettings = { guard_hooks: boolean; seam_check: boolean; token_limits: string[]; token_effort_scale: boolean };
+export type ChecksSettings = { guard_hooks: boolean; seam_check: boolean; token_limits: string[]; token_effort_scale: boolean; token_notes: boolean };
 
 // Leading `cd X &&` or variable assignments such as `A=1 `, stripped repeatedly before pattern matching.
 const LEAD = /^\s*(?:cd\s+\S+\s*&&\s*|[A-Za-z_]\w*=\S*\s+)/;
@@ -152,6 +152,16 @@ export function tokenLimit(checks: Pick<ChecksSettings, "token_limits" | "token_
   }
   if (base <= 0 || !checks.token_effort_scale) return base;
   return Math.round(base * (EFFORT_SCALE.get(effort ?? "") ?? 1));
+}
+
+/**
+ * The note the main conversation gets when subagent `name` (`id`) passes its token limit, or 1.5x it when `high`.
+ * Carries the id so the lead can message the agent.
+ */
+export function tokenLimitNote(name: string, id: string, total: number, limit: number, high: boolean): string {
+  const k = (n: number) => `${Math.round(n / 1000).toLocaleString("en-US")}k`;
+  const over = high ? `past 1.5x its ${k(limit)} limit` : `over its ${k(limit)} limit`;
+  return `HaiKrew: ${name} (${id}) is at ${k(total)} tokens, ${over}. Retire it: ask it to commit, write a handoff and stop.`;
 }
 
 /**

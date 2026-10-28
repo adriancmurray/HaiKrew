@@ -3,10 +3,10 @@
  * the token limit depends on the model and effort; the schema takes model=limit entries only.
  */
 import { expect, test } from "claude-code/testing";
-import { hookGuard, tokenLimit } from "../../src/mod/guards.ts";
+import { hookGuard, tokenLimit, tokenLimitNote } from "../../src/mod/guards.ts";
 import type { ChecksSettings } from "../../src/mod/guards.ts";
 import { noteSeamStart, noteSeamStop, resetSeams } from "../../src/mod/seam.ts";
-import { validate } from "../../src/schema.ts";
+import { defaults, validate } from "../../src/schema.ts";
 import type { Input } from "../../src/mod/api.ts";
 
 const passThrough = (e: Input) => ({ next: e });
@@ -84,4 +84,15 @@ test("the schema takes model=limit entries for the token limits and rejects othe
   expect(validate("checks", "token_limits", ["haiku=900000"])).toBe(null);
   expect(typeof validate("checks", "token_limits", ["gpt=5"])).toBe("string");
   expect(typeof validate("checks", "token_limits", ["haiku"])).toBe("string");
+});
+
+test("the token-limit note names the agent and its id, once over and once past 1.5x", () => {
+  expect(tokenLimitNote("Marie_Curl", "a1b2", 412345, 400000, false)).toBe(
+    "HaiKrew: Marie_Curl (a1b2) is at 412k tokens, over its 400k limit. Retire it: ask it to commit, write a handoff and stop.");
+  expect(tokenLimitNote("Marie_Curl", "a1b2", 600001, 400000, true)).toContain("at 600k tokens, past 1.5x its 400k limit.");
+});
+
+test("token notes to the lead are on by default and can be turned off", () => {
+  expect((defaults().checks as Record<string, unknown>).token_notes).toBe(true);
+  expect(validate("checks", "token_notes", false)).toBe(null);
 });

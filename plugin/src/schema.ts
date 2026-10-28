@@ -124,6 +124,9 @@ export const SCHEMA: Record<string, Section> = {
           "An unknown model uses the lowest limit set." },
       token_effort_scale: { label: "Scale with effort", type: "bool", default: true,
         help: "Multiply each limit by the agent's effort: low ×0.5, medium ×1, high ×1.5, xhigh ×2, max ×3." },
+      token_notes: { label: "Tell the lead", type: "bool", default: true,
+        help: "When a subagent passes its token limit, and again at 1.5x, add a note to the main conversation with its name " +
+          "and id so the lead can retire it (commit, hand off, stop). Off: the toast and crew mark only." },
       seam_check: { label: "Seam check prompt", type: "bool", default: false,
         short: "Also prompt for a full verify when parallel agents in one folder finish.",
         help: "When the last of 2+ parallel agents in one folder finishes, also send the main conversation a prompt to run " +

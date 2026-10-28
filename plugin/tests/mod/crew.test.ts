@@ -92,13 +92,15 @@ test("more agents than the scene holds report the overflow", () => {
 test("a subagent's tokens add up step by step and cross the warning once", () => {
   resetCrew();
   noteSpawn({ subagentType: "haiku-coder" }, { model: "claude-haiku-5-5", agentId: "t1" }, 0);
-  expect(noteTokens("t1", { input_tokens: 500, output_tokens: 100 }, 1000, 1)).toEqual({ total: 600, crossed: false });
-  expect(noteTokens("t1", { input_tokens: 400, output_tokens: 100 }, 1000, 2)).toEqual({ total: 1100, crossed: true });
-  expect(noteTokens("t1", { input_tokens: 400, output_tokens: 0 }, 1000, 3)).toEqual({ total: 1500, crossed: false });
-  expect(noteTokens(undefined, { input_tokens: 5 }, 1000, 4)).toEqual({ total: 0, crossed: false });
-  expect(noteTokens("t2", { input_tokens: 5000 }, 0, 5).crossed).toBe(false);
+  expect(noteTokens("t1", { input_tokens: 500, output_tokens: 100 }, 1000, 1)).toEqual({ total: 600, crossed: false, high: false });
+  expect(noteTokens("t1", { input_tokens: 400, output_tokens: 100 }, 1000, 2)).toEqual({ total: 1100, crossed: true, high: false });
+  expect(noteTokens("t1", { input_tokens: 400, output_tokens: 0 }, 1000, 3)).toEqual({ total: 1500, crossed: false, high: false });
+  expect(noteTokens("t1", { input_tokens: 1, output_tokens: 0 }, 1000, 3)).toEqual({ total: 1501, crossed: false, high: true });
+  expect(noteTokens("t1", { input_tokens: 500, output_tokens: 0 }, 1000, 3)).toEqual({ total: 2001, crossed: false, high: false });
+  expect(noteTokens(undefined, { input_tokens: 5 }, 1000, 4)).toEqual({ total: 0, crossed: false, high: false });
+  expect(noteTokens("t2", { input_tokens: 5000 }, 0, 5)).toMatchObject({ crossed: false, high: false });
   const row = snapshot([], 10).rows.find((r) => r.id === "t1");
-  expect(row).toMatchObject({ tokens: 1500, over: true });
+  expect(row).toMatchObject({ tokens: 2001, over: true });
 });
 
 test("a finished subagent that shows activity again is working again, whether by a tool call or by tokens", () => {

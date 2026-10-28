@@ -14,7 +14,7 @@ import type { DecisionRecord, DeciderSettings } from "../src/mod/decider.ts";
 import { tag as promptTag } from "../src/mod/select.ts";
 import { effortFor, gate, resolveModel } from "../src/mod/gate.ts";
 import type { Choice, GateSettings } from "../src/mod/gate.ts";
-import { callerType, hookGuard, isReadOnlyType, readGuard, readOnlyGuard, squeeze, tokenLimit } from "../src/mod/guards.ts";
+import { callerType, hookGuard, isReadOnlyType, readGuard, readOnlyGuard, squeeze, tokenLimit, tokenLimitNote } from "../src/mod/guards.ts";
 import type { ChecksSettings, GuardsSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
@@ -136,10 +136,20 @@ export function register(on) {
       const checks = (await loadSettings($)).checks as unknown as ChecksSettings;
       const model = typeof e.model === "string" && e.model ? e.model : agentModel(String(e.agentId));
       const limit = tokenLimit(checks, model, String(stepped.effort ?? ""));
-      const { total, crossed } = noteTokens(e.agentId, result.usage, limit, Date.now());
+      const { total, crossed, high } = noteTokens(e.agentId, result.usage, limit, Date.now());
       if (crossed) {
         $.ui.toast(`HaiKrew: a subagent passed ${total.toLocaleString("en-US")} tokens (warning at ${limit.toLocaleString("en-US")})`);
         $.ui.invalidate("ui.render");
+      }
+      if ((crossed || high) && checks.token_notes !== false) {
+        // The lead never sees the toast: the note reaches the main conversation the way a review note does.
+        const id = String(e.agentId);
+        const text = tokenLimitNote(rowFor(id, Date.now())?.name ?? id, id, total, limit, high);
+        try {
+          await $.session.append({ message: { type: "user", content: [{ type: "text", text }] } });
+        } catch {
+          // A refused append only loses the note; the toast and crew mark still show.
+        }
       }
     }
     return result;
