@@ -20,7 +20,9 @@ import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
 import { activityOf, agentModel, liveUsage, modelFamily, noteMainChunk, noteMainChange, noteMainStep, noteSpawn, noteStop, noteTokens, noteToolCall, noteToolChange, noteTurnEnd, noteSnapshot, attributedPaths, porcelainPaths, rowFor, specOf, takeSnapshot, touched, touchedBy, unattributedChanges, untrackedName } from "../src/mod/crew.ts";
 import type { RepoSnapshot } from "../src/mod/crew.ts";
-import { addRun, applyOrHold, combineUsage, finalReport, parseCheckerVerdict, parseTranscriptText, readState, runFromStop, summary } from "../src/mod/ledger.ts";
+import { addRun, applyOrHold, combineUsage, parseCheckerVerdict, readState, runFromDigest, runFromStop, summary } from "../src/mod/ledger.ts";
+import { readTranscript } from "../src/mod/transcript.ts";
+import type { TranscriptIo } from "../src/mod/transcript.ts";
 import { buildPacket, reviewNote, testsClaim } from "../src/mod/packet.ts";
 import { applyDefects, countDefects } from "../src/mod/checker.ts";
 import { checkerBucket, sizeOf } from "../src/mod/outcomes.ts";
@@ -383,26 +385,50 @@ async function readFile($: Api, path: string): Promise<string | null> {
   }
 }
 
+/** How long `haikrew digest` may stream a transcript past the 4 MiB read limit. */
+const DIGEST_TIMEOUT_MS = 20_000;
+
+/** Transcript access for a stop: the mod's read, then the CLI, which has no read limit. $.process is CLI only, so on other
+ * surfaces the digest throws and readTranscript gives up. */
+function transcriptIo($: Api): TranscriptIo {
+  return {
+    read: (path) => $.fs.read(path),
+    digest: async (path) => {
+      const argv = ["node", `${$.plugin.root}/bin/haikrew.mjs`, "digest", path];
+      const r = await $.process.run(argv, { timeoutMs: DIGEST_TIMEOUT_MS });
+      if (r.exitCode !== 0) throw new Error(`haikrew digest exited ${r.exitCode}`);
+      return r.stdout;
+    },
+  };
+}
+
 /**
  * Append the finished subagent's run to the ledger and return its verdict and model. Skips (returns null) when ledger.enabled
- * is off or the transcript is unreadable.
+ * is off or the stop names no transcript. A transcript that cannot be read still gets a partial row, unless the agent has
+ * a row already (addRun keeps that one), so the run stays counted and its changes still get a review plan.
  */
 async function recordStop($: Api, e: Record<string, unknown>, unattributed: string[]): Promise<StopRun | null> {
   const cfg = await loadSettings($);
   const path = typeof e.agent_transcript_path === "string" ? e.agent_transcript_path : "";
-  const transcript = cfg.ledger.enabled && path ? await readFile($, path) : null;
-  if (transcript === null) return null;
+  if (!cfg.ledger.enabled || !path) return null;
+  const read = await readTranscript(transcriptIo($), path);
   // The transcript's usage lines hold stream-start counts, so the usage counted live from each step wins when seen,
   // unless the transcript saw more input than the live count did (combineUsage).
-  const parsed = runFromStop(e, transcript);
-  const live = liveUsage(String(e.agent_id ?? ""));
+  const id = String(e.agent_id ?? "");
+  const parsed = read ? runFromDigest(e, read) : { ...runFromStop(e, ""), model: agentModel(id) || "unknown", partial: true };
+  const live = liveUsage(id);
   const run = live ? combineUsage(parsed, live) : parsed;
   const decision = decisionFor(run.agent_id);
-  const entry = { ...run, ...(await locateFiles($, touchedBy(run.agent_id))), ...(unattributed.length ? { unattributed } : {}), name: rowFor(run.agent_id, Date.now())?.name ?? untrackedName(run.agent_id, parseTranscriptText(transcript).prompt), ...(decision ? { decision } : {}) };
+  const entry = { ...run, ...(await locateFiles($, touchedBy(run.agent_id))), ...(unattributed.length ? { unattributed } : {}), name: rowFor(run.agent_id, Date.now())?.name ?? untrackedName(run.agent_id, read?.prompt ?? ""), ...(decision ? { decision } : {}) };
   await ledgerLock(async () => {
     await $.store.set("ledger", addRun(readState(await $.store.get("ledger")), entry, cfg));
   });
-  return { self_verdict: run.self_verdict ?? "none", model: run.model, job: run.job, lang: run.lang, report: finalReport(transcript), unattributed };
+  try {
+    if (!read) $.ui.toast("HaiKrew: could not read a finished agent's transcript, so its ledger record is incomplete.");
+  } catch {
+    // A notice must not cost the run its review plan.
+  }
+  return { self_verdict: run.self_verdict ?? "none", model: run.model, job: run.job, lang: run.lang, report: read?.report ?? "", unattributed, partial: !read };
 }
 
 /**
@@ -429,6 +455,12 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
     .find((k) => k.model === run.model && k.job === run.job && k.lang === run.lang);
   const record = stats && Number(stats.judged) > 0 ? { judged: Number(stats.judged), passRate: Number(stats.pass_rate) } : null;
   const { paths, lines } = touched(id);
+  // A resumed agent that stops again is noted once more only when its touched lines or paths grew (a deletion-only new
+  // file adds a path and no lines). Its packet still updates, unless this stop could not read the transcript and has
+  // nothing new: the stored packet holds the report and the test claim this stop lost.
+  const seen = notedLines(await $.store.get("review_noted"))[id];
+  const grew = !seen || lines > seen.lines || paths.length > seen.paths;
+  if (run.partial && !grew) return;
   const own = state.runs.find((r) => r.agent_id === id);
   const bucket = checkerBucket(state.runs, run.job, run.lang, own ? sizeOf(own) : "");
   const plan = reviewPlan({ checkerBucket: bucket, mainModel: await sessionModel($), job: run.job, lang: run.lang, paths, lines, testsPassed: testsClaim(run.report), model: run.model, record, explored: wasExplored(id) },
@@ -455,11 +487,7 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
     await $.store.set("review_packets", Object.fromEntries(keep.map((k) => [k, packets[k]])));
     await $.store.set("review_packet_ids", Object.fromEntries(Object.entries(ids).filter(([, n]) => keep.includes(n))));
   });
-  // A resumed agent that stops again is noted once more only when its touched lines or paths grew (a deletion-only new
-  // file adds a path and no lines); the packet above still updates.
-  const noted = notedLines(await $.store.get("review_noted"));
-  const seen = noted[id];
-  if (seen && lines <= seen.lines && paths.length <= seen.paths) return;
+  if (!grew) return;
   // Without agent tools the reviewer cannot fetch the packet, so the note carries it.
   const text = reviewNote(name, plan, paths, lines, { toolsOn: toolsOn(cfg), packet: String(packet) });
   if (!text) return;
@@ -520,7 +548,7 @@ function toolsOn(cfg: unknown): boolean {
   return (cfg as { agents?: { control?: string } }).agents?.control === "change";
 }
 
-type StopRun = { self_verdict: string; model: string; job: string; lang: string; report: string; unattributed: string[] };
+type StopRun = { self_verdict: string; model: string; job: string; lang: string; report: string; unattributed: string[]; partial: boolean };
 
 function asRecord(v: unknown): Record<string, string> {
   return typeof v === "object" && v !== null && !Array.isArray(v) ? { ...(v as Record<string, string>) } : {};

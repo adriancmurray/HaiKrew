@@ -1,5 +1,12 @@
 HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gate), adds squeeze and read guards on tool calls, keeps a ledger of agent runs, and shows the crew in a `/haikrew` pane. Release 0.1.0 introduced the gate, guards, ledger, pane, the haiku-coder and haiku-scout agents and the crew-overseer skill. Releases 0.4.0 to 0.5.5 added per-task model rules, rule effort and selectors, checks, ledger suggestions and a packaging change. Releases 0.6.0 to 0.6.5 redesigned the `/haikrew` pane and the band above the prompt, made the crew the default route for spec-able work, gave subagents names, set token warnings per model and added review tiers. The newest release covered here is 0.6.13, dated 2026-10-24.
 
+## Unreleased
+
+- `package.json` with `"type": "module"` at the repo root and in `plugin/`, so a `package.json` with `"type": "commonjs"` in a parent folder no longer breaks the CLI.
+- Transcripts over 4 MiB are recorded. `$.fs.read` rejects them, which silently dropped the ledger row and the review plan. A failed read now falls back to the new `haikrew digest`, which streams the file. Where that cannot run, the run gets a `partial` row and still gets a review plan, with a toast. A partial stop does not replace a row the agent already has, or its stored review packet unless the agent changed more.
+- Squeeze's suggested command keeps a leading `cd x &&` or `A=1` in the shell. It used to put them after `--`, where squeeze spawned `cd` itself and the real command ran in the wrong folder, or spawned `A=1` and failed.
+- `record_verdict` writes under the ledger lock, so a run recorded at the same moment is no longer lost.
+
 ## 0.6.13 — 2026-10-24
 
 - The recall and late-failures CLIs read settings from a marketplace install's store (`haikrew_haikrew-*.json`) as well as an inline one. Before, a marketplace install fell back to default settings, such as the old Embedkit URL.
