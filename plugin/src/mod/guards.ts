@@ -42,8 +42,11 @@ export function squeeze(cfg: SqueezeSettings, e: Input, root: string, next: Next
     return next(e);
   }
   const wrap = cfg.wrap_prefix ? ` --wrap "${cfg.wrap_prefix}"` : "";
+  // A leading `cd x &&` or `A=1` stays in the shell: squeeze spawns its command directly, so neither would work after `--`.
+  const trimmed = command.trimEnd();
+  const lead = trimmed.slice(0, trimmed.length - core.length);
   return {
-    deny: `Run it through squeeze instead: node "${root}/bin/haikrew.mjs" squeeze --max-lines ${cfg.max_lines}${wrap} -- ${command}`,
+    deny: `Run it through squeeze instead: ${lead}node "${root}/bin/haikrew.mjs" squeeze --max-lines ${cfg.max_lines}${wrap} -- ${core}`,
   };
 }
 

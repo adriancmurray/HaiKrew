@@ -70,7 +70,9 @@ test("squeeze denies a squeeze-pattern command, bare or after cd", () => {
   const bare = squeeze(cfg, { command: "cargo test" }, ROOT, passThrough) as { deny: string };
   expect(bare.deny).toBe(`Run it through squeeze instead: node "${ROOT}/bin/haikrew.mjs" squeeze --max-lines 20 -- cargo test`);
   const after = squeeze(cfg, { command: "cd x && cargo test" }, ROOT, passThrough) as { deny: string };
-  expect(after.deny).toMatch(/squeeze --max-lines 20 -- cd x && cargo test$/);
+  expect(after.deny).toBe(`Run it through squeeze instead: cd x && node "${ROOT}/bin/haikrew.mjs" squeeze --max-lines 20 -- cargo test`);
+  const env = squeeze(cfg, { command: "cd x && CI=1 cargo test  " }, ROOT, passThrough) as { deny: string };
+  expect(env.deny).toBe(`Run it through squeeze instead: cd x && CI=1 node "${ROOT}/bin/haikrew.mjs" squeeze --max-lines 20 -- cargo test`);
   const wrapped = squeeze({ ...cfg, wrap_prefix: "lock" }, { command: "make" }, ROOT, passThrough) as { deny: string };
   expect(wrapped.deny).toMatch(/squeeze --max-lines 20 --wrap "lock" -- make$/);
 });
