@@ -58,6 +58,8 @@ export type Run = {
   first_checked?: { verdict: string; checked_by: string };
   /** What the decider said about this launch, when it was asked. Folded away with the run by condense(). */
   decision?: DecisionRecord;
+  /** The transcript could not be read at stop: tokens are live counts at best, and the rest of the row is defaults. */
+  partial?: boolean;
   /** The run's changed files split by the edit tool and by the shell, repo-relative like `files`. */
   files_by?: { edit: string[]; shell: string[] };
   /** Changes in the repo during the run that no agent's edits or shell writes explain. Parallel agents share the repo. */
@@ -92,12 +94,12 @@ export type Transcript = Omit<Run, "ts" | "session" | "agent_id" | "agent_type">
 export type KeyStats = Record<string, string | number>;
 
 const TS_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?Z$/;
-const LINE_SPLIT = /\r\n|\r|\n/;
+export const LINE_SPLIT = /\r\n|\r|\n/;
 // The text Claude Code writes for a turn the user interrupted; it is not a new attempt.
 const INTERRUPT_RE = /^\[Request interrupted by user/;
 const RECENT = 50;
 
-type Scan = {
+export type Scan = {
   turns: string[];
   usage: Map<string, Record<string, unknown>>;
   tools: Set<string>;
@@ -152,22 +154,30 @@ function scanAssistant(out: Scan, msg: Record<string, unknown>, idx: number): vo
   if (text.length) out.finalText = text.join("\n");
 }
 
-/** One pass over transcript objects: user turn texts, assistant usage, tool calls, model, timestamps, and the
- * text of the last assistant message that has text. */
+/** A scan with nothing in it yet, for scanEntry to fill. */
+export function emptyScan(): Scan {
+  return { turns: [], usage: new Map(), tools: new Set(), model: null, times: [], finalText: "" };
+}
+
+/** Adds one transcript object to the scan: user turn text, assistant usage, tool calls, model, timestamp. The text of the
+ * last assistant message that has text ends up in finalText. */
+export function scanEntry(out: Scan, entry: Record<string, unknown>, idx: number): void {
+  const when = parseTs(entry.timestamp);
+  if (when !== null) out.times.push(when);
+  const msg = isObject(entry.message) ? entry.message : {};
+  if (entry.type === "user" && !entry.isMeta) {
+    // Tool results have no text block, so they are not turns either.
+    const text = textBlocks(msg.content).filter((t) => !INTERRUPT_RE.test(t.trim()));
+    if (text.length) out.turns.push(text.join("\n"));
+  } else if (entry.type === "assistant") {
+    scanAssistant(out, msg, idx);
+  }
+}
+
+/** One pass over transcript objects. */
 function scan(entries: Record<string, unknown>[]): Scan {
-  const out: Scan = { turns: [], usage: new Map(), tools: new Set(), model: null, times: [], finalText: "" };
-  entries.forEach((entry, idx) => {
-    const when = parseTs(entry.timestamp);
-    if (when !== null) out.times.push(when);
-    const msg = isObject(entry.message) ? entry.message : {};
-    if (entry.type === "user" && !entry.isMeta) {
-      // Tool results have no text block, so they are not turns either.
-      const text = textBlocks(msg.content).filter((t) => !INTERRUPT_RE.test(t.trim()));
-      if (text.length) out.turns.push(text.join("\n"));
-    } else if (entry.type === "assistant") {
-      scanAssistant(out, msg, idx);
-    }
-  });
+  const out = emptyScan();
+  entries.forEach((entry, idx) => scanEntry(out, entry, idx));
   return out;
 }
 
@@ -210,7 +220,11 @@ function verdict(text: string): string {
  * `prompt` is the first user turn, for inferring a job the spec did not tag. Transcript output counts are the
  * stream-start snapshot, so the result is marked estimated. */
 export function parseTranscriptText(text: string): Transcript {
-  const s = scan(jsonLines(text));
+  return summarizeScan(scan(jsonLines(text)));
+}
+
+/** The fields parseTranscriptText reports, from a finished scan. */
+export function summarizeScan(s: Scan): Transcript {
   const usage = [...s.usage.values()];
   const sumOf = (key: string) => usage.reduce((n, u) => n + count(u, key), 0);
   const attempts = s.turns.length;
@@ -338,6 +352,7 @@ export function addRun(state: LedgerState, run: Run, settings: Settings): Ledger
   // Claude Code can fire SubagentStop more than once for one agent, and SendMessage resumes a finished one; the later
   // record replaces the earlier one.
   const old = run.agent_id ? state.runs.find((r) => r.agent_id === run.agent_id) : undefined;
+  if (old && run.partial) return state; // a stop whose transcript could not be read knows less than the row it would replace
   const runs = run.agent_id ? state.runs.filter((r) => r.agent_id !== run.agent_id) : state.runs;
   const pending = prunePending(state.pending ?? [], new Date());
   const next = old ? resumed(old, run) : run;
@@ -515,7 +530,12 @@ function storedRun(r: Run): Run {
 
 /** One run from a SubagentStop event and the subagent's transcript text. */
 export function runFromStop(e: Input, transcript: string): Run {
-  const { ended, prompt, ...info } = parseTranscriptText(transcript);
+  return runFromDigest(e, parseTranscriptText(transcript));
+}
+
+/** runFromStop for a transcript that is already parsed. A digest's report stays out of the row. */
+export function runFromDigest(e: Input, parsed: Transcript & { report?: string }): Run {
+  const { ended, prompt, report: _report, ...info } = parsed;
   const agentType = String(e.agent_type || "unknown");
   return {
     ...info,
@@ -586,6 +606,40 @@ export function mergeRescanned(current: LedgerState, rescanned: Run[]): LedgerSt
 /** The final assistant text of a subagent transcript (JSONL text): its report. */
 export function finalReport(transcript: string): string {
   return scan(jsonLines(transcript)).finalText;
+}
+
+/** A parsed transcript and its final report: all that recording a finished agent needs from the file. */
+export type TranscriptDigest = Transcript & { report: string };
+
+// What a digest keeps of its two free-text fields, so it stays well under the 4 MiB the mod can read back. The prompt only
+// feeds its first line and job inference. A report's verdict lines come last, so a long report keeps its end.
+const DIGEST_PROMPT_MAX = 16 * 1024;
+const DIGEST_REPORT_MAX = 256 * 1024;
+
+/** The digest of transcript text the mod could read whole. */
+export function digestText(text: string): TranscriptDigest {
+  const s = scan(jsonLines(text));
+  return { ...summarizeScan(s), report: s.finalText };
+}
+
+/** The digest of a finished scan, its text fields capped. `haikrew digest` prints this for a transcript the mod cannot read. */
+export function digestScan(s: Scan): TranscriptDigest {
+  const t = summarizeScan(s);
+  return { ...t, prompt: t.prompt.slice(0, DIGEST_PROMPT_MAX), report: s.finalText.slice(-DIGEST_REPORT_MAX) };
+}
+
+/** A digest from `haikrew digest` output, or null when the text is not one. */
+export function parseDigest(text: string): TranscriptDigest | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isObject(value)) return null;
+  const { model, prompt, report, tokens_in: tokensIn } = value;
+  if (typeof model !== "string" || typeof prompt !== "string" || typeof report !== "string" || typeof tokensIn !== "number") return null;
+  return value as unknown as TranscriptDigest;
 }
 
 const CHECKER_RE = /VERDICT:\s*(PASS|FAIL)\s+for\s+([^\r\n]+)/gi;
