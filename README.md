@@ -86,6 +86,7 @@ When a finished agent changes files, it gets a tier and the main conversation ge
 ### Ledger and insights
 
 - One row per finished subagent: model, job, language, time, tokens and verdict. Tokens are new work (input, cache writes and output); cache reads are kept apart.
+- Claude Code limits a mod's file read to 4 MiB. A longer transcript goes through `haikrew digest`, which streams it. Where that cannot run (the desktop app has no process runner), the run gets a partial row: live token counts when they exist, no verdict, and its changes still get a review tier.
 - A run is judged by the last `VERDICT:` or `STATUS: done|blocked` line of its final message. Runs with neither are unjudged and left out of pass rates.
 - The newest `ledger.raw_limit` (200) rows are kept in full. Older rows fold into monthly averages, and those older than `ledger.yearly_after_months` (12) into yearly ones.
 - Track record suggests a stronger model for a tagged job when Haiku or Sonnet passes under 60% over 4 or more judged runs. It suggests a cheaper model when Sonnet or Opus passes 90% or more over 8 or more, unless the model below has 4 or more judged runs of that job that pass poorly. Untagged runs get an inferred job, marked "(inferred)", which gets no rule suggestions.
@@ -174,6 +175,7 @@ The CLI runs anywhere Node 22.18 or later runs. The examples use `haikrew`, the 
 | `haikrew patterns check [--dir PATH] [--max-files N] [--max-lines N]` | Check a folder of `.md` pattern files against the caps (20 files, 40 lines). Exit 0 within caps, 1 on violations, 2 if the folder is missing. |
 | `haikrew analyze [--store PATH]` | Print the routing analysis shown in the Insights card, as a table. |
 | `haikrew late-failures [--days N]` | Flag late failures in the newest ledger store file (window 5 days by default) and write `haikrew-late.json`. |
+| `haikrew digest <transcript>` | Print one JSON line summing up a subagent transcript of any size. The mod calls this for a transcript over its 4 MiB read limit. |
 
 ## Clefkit (companion)
 
