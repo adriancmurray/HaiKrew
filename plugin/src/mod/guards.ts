@@ -20,17 +20,22 @@ export type ChecksSettings = { guard_hooks: boolean; seam_check: boolean; token_
 
 // Leading `cd X &&` or variable assignments such as `A=1 `, stripped repeatedly before pattern matching.
 const LEAD = /^\s*(?:cd\s+\S+\s*&&\s*|[A-Za-z_]\w*=\S*\s+)/;
-// A command already run through haikrew squeeze: the bare launcher, or node (or python3) on its scripts/ path. bin/ is
-// the path before the launcher moved, so an older install's command still counts. The path may be quoted and hold spaces.
-const ALREADY = /^(?:(?:python3?|node)\s+)?(?:(?:"[^"]*|'[^']*|[^\s"']*)\/(?:scripts|bin)\/)?haikrew(?:\.mjs)?["']?\s+squeeze\b/;
+// A command already run through haikrew squeeze: the bare launcher, or node (or python3) on its scripts/ path, single-quoted
+// as launcherCommand writes it (an inner quote as '\'') or double-quoted as older builds wrote it. bin/ is the path
+// before the launcher moved, so an older install's command still counts.
+const ALREADY = /^(?:(?:python3?|node)\s+)?(?:(?:"[^"]*|'(?:[^']|'\\'')*|[^\s"']*)\/(?:scripts|bin)\/)?haikrew(?:\.mjs)?["']?\s+squeeze\b/;
 // The launcher's command word, as typed inside Claude Code.
 const LAUNCHER = "haikrew";
 // One shell token: a separator, or a word whose quotes and backslash escapes keep spaces and separators inside it.
 // ponytail: a sketch, not a shell parser. `{ }` groups and `$'...'` quoting are not recognised; the upgrade path is a
 // real shell-words tokenizer.
-const SHELL_TOKEN = /[ \t\r]*(?:(&&|\|\||[;&|()\n`])|((?:'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S]?|[^\s;&|()`'"\\])+))/y;
+// An `&` right after `<` or `>` is part of a redirection (`>&fd`), so it is a word character, not a separator.
+const SHELL_TOKEN = /[ \t\r]*(?:(&&|\|\||(?<![<>])[;&|()\n`])|((?:'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S]?|(?<=[<>])&|[^\s;&|()`'"\\])+))/y;
 // A `VAR=value` word before the command word: the command word still follows it.
 const ASSIGN = /^[A-Za-z_]\w*=/;
+// A heredoc operator (`<<` or `<<-`) outside quotes; `<<<` is a here-string with no body.
+const HEREDOC = /(?<!<)<<(?!<)/;
+const QUOTED = /'[^']*'|"(?:\\[\s\S]|[^"\\])*"/g;
 const DEF = /^\s*(?:(?:pub|async|ex[p]ort|static|default)\s+)*(?:def|class|fn|func|struct|impl|enum|interface|type|ex[p]ort)\b|^#+\s/;
 // [p] keeps the directory scan from reading the keyword as a shell command; ^#+\s is a Markdown heading.
 const OUTLINE_MAX = 60;
@@ -41,8 +46,13 @@ const LIMIT = /^(haiku|sonnet|opus)=(\d+)$/;
 // The multiplier on a limit for each effort when token_effort_scale is on; an effort not listed, or none, counts as x1.
 const EFFORT_SCALE = new Map([["low", 0.5], ["medium", 1], ["high", 1.5], ["xhigh", 2], ["max", 3]]);
 
+/** The launcher as a shell command under a plugin root: `node` on `<root>/scripts/haikrew.mjs`, single-quoted so no part of the root is expanded. */
+function launcherCommand(root: string): string {
+  return `node '${root.split("'").join("'\\''")}/scripts/haikrew.mjs'`;
+}
+
 /**
- * Bash: deny a squeeze-pattern command and name `node "<root>/scripts/haikrew.mjs" squeeze --max-lines <n> [--wrap "<prefix>"] -- <command>`.
+ * Bash: deny a squeeze-pattern command and name `node '<root>/scripts/haikrew.mjs' squeeze --max-lines <n> [--wrap "<prefix>"] -- <command>`.
  */
 export function squeeze(cfg: SqueezeSettings, e: Input, root: string, next: Next): unknown {
   const command = String(e.command || "");
@@ -52,21 +62,23 @@ export function squeeze(cfg: SqueezeSettings, e: Input, root: string, next: Next
   }
   const wrap = cfg.wrap_prefix ? ` --wrap "${cfg.wrap_prefix}"` : "";
   return {
-    deny: `Run it through squeeze instead: node "${root}/scripts/haikrew.mjs" squeeze --max-lines ${cfg.max_lines}${wrap} -- ${command}`,
+    deny: `Run it through squeeze instead: ${launcherCommand(root)} squeeze --max-lines ${cfg.max_lines}${wrap} -- ${command}`,
   };
 }
 
 /**
- * Bash: the command with each command word `haikrew` replaced by `node "<root>/scripts/haikrew.mjs"`, so the launcher
+ * Bash: the command with each command word `haikrew` replaced by `node '<root>/scripts/haikrew.mjs'`, so the launcher
  * runs without a PATH entry. A command word opens a simple command: the start, or the word after `&&`, `||`, `;`, `|`,
  * `&`, a newline, a parenthesis or a backtick, past any `VAR=value` words. Quoted text, paths and other words stay as
- * written; an unclosed quote ends the rewrite, and the rest is returned as written.
+ * written. An unclosed quote ends the rewrite. A heredoc operator ends it at the newline that closes its line, so a
+ * heredoc body is never rewritten; the rest of the command is returned as written.
  */
 export function rewriteLauncher(command: string, root: string): string {
-  const launch = `node "${root}/scripts/haikrew.mjs"`;
+  const launch = launcherCommand(root);
   let out = "";
   let pos = 0;
   let start = true;
+  let heredoc = false;
   for (;;) {
     SHELL_TOKEN.lastIndex = pos;
     const m = SHELL_TOKEN.exec(command);
@@ -75,13 +87,17 @@ export function rewriteLauncher(command: string, root: string): string {
     const word = m[2];
     if (word === undefined) {
       start = true;
-    } else if (start && word === LAUNCHER) {
+      out += m[0];
+      if (heredoc && m[1] === "\n") break;
+      continue;
+    }
+    if (HEREDOC.test(word.replace(QUOTED, ""))) heredoc = true;
+    if (start && word === LAUNCHER) {
       start = false;
       out += m[0].slice(0, -LAUNCHER.length) + launch;
       continue;
-    } else {
-      start = start && ASSIGN.test(word);
     }
+    start = start && ASSIGN.test(word);
     out += m[0];
   }
   return out + command.slice(pos);

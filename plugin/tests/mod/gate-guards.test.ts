@@ -68,7 +68,7 @@ test("gate gives a nested agent the nested model, and refuses nesting when it is
 test("squeeze denies a squeeze-pattern command, bare or after cd", () => {
   const cfg = section<SqueezeSettings>("squeeze");
   const bare = squeeze(cfg, { command: "cargo test" }, ROOT, passThrough) as { deny: string };
-  expect(bare.deny).toBe(`Run it through squeeze instead: node "${ROOT}/scripts/haikrew.mjs" squeeze --max-lines 20 -- cargo test`);
+  expect(bare.deny).toBe(`Run it through squeeze instead: node '${ROOT}/scripts/haikrew.mjs' squeeze --max-lines 20 -- cargo test`);
   const after = squeeze(cfg, { command: "cd x && cargo test" }, ROOT, passThrough) as { deny: string };
   expect(after.deny).toMatch(/squeeze --max-lines 20 -- cd x && cargo test$/);
   const wrapped = squeeze({ ...cfg, wrap_prefix: "lock" }, { command: "make" }, ROOT, passThrough) as { deny: string };

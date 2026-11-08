@@ -6,7 +6,7 @@ import type { Input } from "../../src/mod/api.ts";
 import { defaults } from "../../src/schema.ts";
 
 const ROOT = "/plugins/haikrew";
-const LAUNCH = `node "${ROOT}/scripts/haikrew.mjs"`;
+const LAUNCH = `node '${ROOT}/scripts/haikrew.mjs'`;
 const rewrite = (command: string) => rewriteLauncher(command, ROOT);
 const passThrough = (e: Input) => ({ next: e });
 
@@ -46,21 +46,54 @@ test("haikrew inside quotes, paths, other words or after a non-command word is l
   }
 });
 
+test("a redirection to a file descriptor named haikrew is not a command position", () => {
+  expect(rewrite("echo hi >&haikrew")).toBe("echo hi >&haikrew");
+  expect(rewrite("echo hi <&haikrew")).toBe("echo hi <&haikrew");
+  expect(rewrite("echo hi >&haikrew; haikrew verify")).toBe(`echo hi >&haikrew; ${LAUNCH} verify`);
+});
+
+test("a heredoc body is never rewritten, and a launcher call before its operator still is", () => {
+  const body = "cat > notes.md <<'EOF'\nhaikrew verify\nEOF";
+  expect(rewrite(body)).toBe(body);
+  expect(rewrite(`haikrew verify; ${body}`)).toBe(`${LAUNCH} verify; ${body}`);
+  expect(rewrite("cat <<EOF && haikrew verify\nhaikrew verify\nEOF")).toBe(`cat <<EOF && ${LAUNCH} verify\nhaikrew verify\nEOF`);
+});
+
+test("a here-string has no body, so the next line is still rewritten", () => {
+  expect(rewrite("cat <<< x\nhaikrew verify")).toBe(`cat <<< x\n${LAUNCH} verify`);
+});
+
 test("an unclosed quote ends the rewrite and the rest is kept as written", () => {
   expect(rewrite('haikrew verify "x')).toBe(`${LAUNCH} verify "x`);
   expect(rewrite('echo "haikrew verify')).toBe('echo "haikrew verify');
 });
 
-test("a root with spaces is quoted, so the launcher path still runs", () => {
-  expect(rewriteLauncher("haikrew verify", "/Users/a b/haikrew")).toBe('node "/Users/a b/haikrew/scripts/haikrew.mjs" verify');
+test("the launcher path is single-quoted, so a root with shell syntax is never expanded", () => {
+  const cases: [string, string][] = [
+    ["/a$(id)b", "node '/a$(id)b/scripts/haikrew.mjs' verify"],
+    ['/a"b', `node '/a"b/scripts/haikrew.mjs' verify`],
+    ["/a'b", "node '/a'\\''b/scripts/haikrew.mjs' verify"],
+    ["/with space", "node '/with space/scripts/haikrew.mjs' verify"],
+  ];
+  for (const [root, want] of cases) {
+    const out = rewriteLauncher("haikrew verify", root);
+    expect(out).toBe(want);
+  }
 });
 
-test("squeeze sees a rewritten squeeze call, or an older bin/ one, as already squeezed", () => {
-  const cfg = { ...defaults().squeeze, patterns: [".*"] } as unknown as SqueezeSettings;
+test("squeeze sees a rewritten squeeze call as already squeezed, not squeezed twice", () => {
+  const all = { ...defaults().squeeze, patterns: [".*"] } as unknown as SqueezeSettings;
   const rewritten = rewrite("cd x && haikrew squeeze -- cargo test");
-  expect(squeeze(cfg, { command: rewritten }, ROOT, passThrough)).toEqual({ next: { command: rewritten } });
-  const spaced = 'node "/Users/a b/haikrew/scripts/haikrew.mjs" squeeze -- make';
-  expect(squeeze(cfg, { command: spaced }, ROOT, passThrough)).toEqual({ next: { command: spaced } });
-  const older = `node "${ROOT}/bin/haikrew.mjs" squeeze -- make`;
-  expect(squeeze(cfg, { command: older }, ROOT, passThrough)).toEqual({ next: { command: older } });
+  expect(squeeze(all, { command: rewritten }, ROOT, passThrough)).toEqual({ next: { command: rewritten } });
+  const plain = rewrite("haikrew squeeze -- cargo test");
+  expect(squeeze(defaults().squeeze as unknown as SqueezeSettings, { command: plain }, ROOT, passThrough))
+    .toEqual({ next: { command: plain } });
+  for (const command of [
+    "node '/a'\\''b/scripts/haikrew.mjs' squeeze -- make",
+    "node '/with space/scripts/haikrew.mjs' squeeze -- make",
+    'node "/Users/a b/haikrew/scripts/haikrew.mjs" squeeze -- make',
+    `node "${ROOT}/bin/haikrew.mjs" squeeze -- make`,
+  ]) {
+    expect(squeeze(all, { command }, ROOT, passThrough)).toEqual({ next: { command } });
+  }
 });
