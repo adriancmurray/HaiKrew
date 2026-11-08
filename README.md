@@ -144,6 +144,7 @@ Settings are stored in the mod's store and apply to every session. Edit them in 
 | `checks.seam_check` | `false` | Also submit the seam reminder as a prompt when parallel agents finish. |
 | `checks.token_limits` | `haiku=800000`, `sonnet=400000`, `opus=200000` | Warn when one subagent's new work passes its model's limit. |
 | `checks.token_effort_scale` | `true` | Scale token limits by effort, from 0.5x (low) to 3x (max). |
+| `checks.token_notes` | `true` | When a subagent passes its token limit, and again at 1.5x, note it in the main conversation with its name and id. |
 | `squeeze.enabled` | `true` | Route matching build and test commands through `haikrew squeeze`. |
 | `squeeze.max_lines` | `20` | Lines a squeezed summary prints. |
 | `read_guard.max_lines` | `600` | Whole-file reads of longer files return an outline and ask for a range. |

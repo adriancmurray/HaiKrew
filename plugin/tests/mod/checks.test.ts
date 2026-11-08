@@ -88,7 +88,7 @@ test("the schema takes model=limit entries for the token limits and rejects othe
 
 test("the token-limit note names the agent and its id, once over and once past 1.5x", () => {
   expect(tokenLimitNote("Marie_Curl", "a1b2", 412345, 400000, false)).toBe(
-    "HaiKrew: Marie_Curl (a1b2) is at 412k tokens, over its 400k limit. Retire it: ask it to commit, write a handoff and stop.");
+    "HaiKrew: Marie_Curl (a1b2) is at 412k tokens, over its 400k limit. Retire it: SendMessage it to commit, write a handoff and stop, or TaskStop it.");
   expect(tokenLimitNote("Marie_Curl", "a1b2", 600001, 400000, true)).toContain("at 600k tokens, past 1.5x its 400k limit.");
 });
 

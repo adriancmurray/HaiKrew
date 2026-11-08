@@ -217,7 +217,7 @@ export function tokenLimit(checks: Pick<ChecksSettings, "token_limits" | "token_
 export function tokenLimitNote(name: string, id: string, total: number, limit: number, high: boolean): string {
   const k = (n: number) => `${Math.round(n / 1000).toLocaleString("en-US")}k`;
   const over = high ? `past 1.5x its ${k(limit)} limit` : `over its ${k(limit)} limit`;
-  return `HaiKrew: ${name} (${id}) is at ${k(total)} tokens, ${over}. Retire it: ask it to commit, write a handoff and stop.`;
+  return `HaiKrew: ${name} (${id}) is at ${k(total)} tokens, ${over}. Retire it: SendMessage it to commit, write a handoff and stop, or TaskStop it.`;
 }
 
 /**
