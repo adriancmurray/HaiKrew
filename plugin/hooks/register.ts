@@ -1,8 +1,8 @@
 /**
  * HaiKrew mod entry point. Claude Code calls register(on) once when the mod loads.
  * agent.spawn gates subagent models and adds settings instructions, turn.step applies a subagent's effort and
- * counts its tokens for the token warning, tool.call guards git-hook bypasses, squeezes noisy Bash and guards large
- * Reads, and the SubagentStop hook records each finished subagent in the ledger and flags the end of a parallel batch.
+ * counts its tokens for the token warning, tool.call rewrites a bare `haikrew` to the launcher path, guards git-hook
+ * bypasses, squeezes noisy Bash and guards large Reads, and the SubagentStop hook records each finished subagent in the ledger and flags the end of a parallel batch.
  * Pure logic lives in src/mod. The validator forbids passing `$` across imports, so `$` is used only here and in
  * the hooks of src/mod/pane.ts (the pane and band) and src/mod/agents.ts (the agent tools).
  */
@@ -14,7 +14,7 @@ import type { DecisionRecord, DeciderSettings } from "../src/mod/decider.ts";
 import { tag as promptTag } from "../src/mod/select.ts";
 import { effortFor, gate, resolveModel } from "../src/mod/gate.ts";
 import type { Choice, GateSettings } from "../src/mod/gate.ts";
-import { callerType, hookGuard, isReadOnlyType, readGuard, readOnlyGuard, squeeze, tokenLimit, tokenLimitNote } from "../src/mod/guards.ts";
+import { callerType, hookGuard, isReadOnlyType, readGuard, readOnlyGuard, rewriteLauncher, squeeze, tokenLimit, tokenLimitNote } from "../src/mod/guards.ts";
 import type { ChecksSettings, GuardsSettings, ReadGuardSettings, SqueezeSettings } from "../src/mod/guards.ts";
 import { noteEffort, stepEffort } from "../src/mod/effort.ts";
 import { noteSeamStart, noteSeamStop } from "../src/mod/seam.ts";
@@ -189,14 +189,18 @@ export function register(on) {
     const id = typeof e.agentId === "string" ? e.agentId : "";
     const type = id ? await callerType(() => $.agent.list(), id) : "";
     const cwd = type ? await sessionCwd($) : "";
+    // The launcher rewrite comes first, so the guards and the claim judge the command that actually runs.
+    const command = String(e.command || "");
+    const rewritten = rewriteLauncher(command, $.plugin.root);
+    const call = rewritten === command ? e : { ...e, command: rewritten };
     // The guards decide first (each with a next that passes), so a command they refuse claims nothing.
-    const guarded = hookGuard(cfg.checks as unknown as ChecksSettings, e, () => null)
-      ?? readOnlyGuard(cfg.guards as unknown as GuardsSettings, type, e, cwd, () => null)
-      ?? squeeze(cfg.squeeze as unknown as SqueezeSettings, e, $.plugin.root, () => null);
+    const guarded = hookGuard(cfg.checks as unknown as ChecksSettings, call, () => null)
+      ?? readOnlyGuard(cfg.guards as unknown as GuardsSettings, type, call, cwd, () => null)
+      ?? squeeze(cfg.squeeze as unknown as SqueezeSettings, call, $.plugin.root, () => null);
     if (guarded) return guarded;
-    const refused = await claimWrite($, e, type, bashPaths(String(e.command || "")));
+    const refused = await claimWrite($, call, type, bashPaths(rewritten));
     if (refused) return refused;
-    return next(e);
+    return next(call);
   });
 
   on("tool.call", { tool: "Read" }, async ($, e, next) => {

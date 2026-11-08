@@ -1,5 +1,5 @@
 /**
- * Argument dispatch for bin/haikrew.mjs. Each subcommand calls one module function.
+ * Argument dispatch for scripts/haikrew.mjs. Each subcommand calls one module function.
  * Hooks, the ledger and the panel run inside the Claude Code mod (hooks/register.ts), not here.
  */
 import { execFileSync } from "node:child_process";

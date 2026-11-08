@@ -1,7 +1,7 @@
 /**
- * Tool guards, run on `tool.call`: a squeeze-pattern Bash command is denied with a pointer to
- * `haikrew squeeze`, a large text file read without a line range is denied with an outline, and a Bash
- * command that skips git hooks is denied.
+ * Tool guards, run on `tool.call`: a bare `haikrew` command word in Bash is rewritten to the launcher path, a
+ * squeeze-pattern Bash command is denied with a pointer to `haikrew squeeze`, a large text file read without a
+ * line range is denied with an outline, and a Bash command that skips git hooks is denied.
  * Deny-and-redirect, never allow, so the user's permission rules still judge any redirected command.
  */
 import { isObject } from "./api.ts";
@@ -20,8 +20,17 @@ export type ChecksSettings = { guard_hooks: boolean; seam_check: boolean; token_
 
 // Leading `cd X &&` or variable assignments such as `A=1 `, stripped repeatedly before pattern matching.
 const LEAD = /^\s*(?:cd\s+\S+\s*&&\s*|[A-Za-z_]\w*=\S*\s+)/;
-// A command that already runs through haikrew squeeze, bare or via python3/node on the bin path.
-const ALREADY = /^(?:(?:python3?|node)\s+)?["']?\S*haikrew(?:\.mjs)?["']?\s+squeeze\b/;
+// A command already run through haikrew squeeze: the bare launcher, or node (or python3) on its scripts/ path. bin/ is
+// the path before the launcher moved, so an older install's command still counts. The path may be quoted and hold spaces.
+const ALREADY = /^(?:(?:python3?|node)\s+)?(?:(?:"[^"]*|'[^']*|[^\s"']*)\/(?:scripts|bin)\/)?haikrew(?:\.mjs)?["']?\s+squeeze\b/;
+// The launcher's command word, as typed inside Claude Code.
+const LAUNCHER = "haikrew";
+// One shell token: a separator, or a word whose quotes and backslash escapes keep spaces and separators inside it.
+// ponytail: a sketch, not a shell parser. `{ }` groups and `$'...'` quoting are not recognised; the upgrade path is a
+// real shell-words tokenizer.
+const SHELL_TOKEN = /[ \t\r]*(?:(&&|\|\||[;&|()\n`])|((?:'[^']*'|"(?:\\[\s\S]|[^"\\])*"|\\[\s\S]?|[^\s;&|()`'"\\])+))/y;
+// A `VAR=value` word before the command word: the command word still follows it.
+const ASSIGN = /^[A-Za-z_]\w*=/;
 const DEF = /^\s*(?:(?:pub|async|ex[p]ort|static|default)\s+)*(?:def|class|fn|func|struct|impl|enum|interface|type|ex[p]ort)\b|^#+\s/;
 // [p] keeps the directory scan from reading the keyword as a shell command; ^#+\s is a Markdown heading.
 const OUTLINE_MAX = 60;
@@ -33,7 +42,7 @@ const LIMIT = /^(haiku|sonnet|opus)=(\d+)$/;
 const EFFORT_SCALE = new Map([["low", 0.5], ["medium", 1], ["high", 1.5], ["xhigh", 2], ["max", 3]]);
 
 /**
- * Bash: deny a squeeze-pattern command and name `node "<root>/bin/haikrew.mjs" squeeze --max-lines <n> [--wrap "<prefix>"] -- <command>`.
+ * Bash: deny a squeeze-pattern command and name `node "<root>/scripts/haikrew.mjs" squeeze --max-lines <n> [--wrap "<prefix>"] -- <command>`.
  */
 export function squeeze(cfg: SqueezeSettings, e: Input, root: string, next: Next): unknown {
   const command = String(e.command || "");
@@ -43,8 +52,39 @@ export function squeeze(cfg: SqueezeSettings, e: Input, root: string, next: Next
   }
   const wrap = cfg.wrap_prefix ? ` --wrap "${cfg.wrap_prefix}"` : "";
   return {
-    deny: `Run it through squeeze instead: node "${root}/bin/haikrew.mjs" squeeze --max-lines ${cfg.max_lines}${wrap} -- ${command}`,
+    deny: `Run it through squeeze instead: node "${root}/scripts/haikrew.mjs" squeeze --max-lines ${cfg.max_lines}${wrap} -- ${command}`,
   };
+}
+
+/**
+ * Bash: the command with each command word `haikrew` replaced by `node "<root>/scripts/haikrew.mjs"`, so the launcher
+ * runs without a PATH entry. A command word opens a simple command: the start, or the word after `&&`, `||`, `;`, `|`,
+ * `&`, a newline, a parenthesis or a backtick, past any `VAR=value` words. Quoted text, paths and other words stay as
+ * written; an unclosed quote ends the rewrite, and the rest is returned as written.
+ */
+export function rewriteLauncher(command: string, root: string): string {
+  const launch = `node "${root}/scripts/haikrew.mjs"`;
+  let out = "";
+  let pos = 0;
+  let start = true;
+  for (;;) {
+    SHELL_TOKEN.lastIndex = pos;
+    const m = SHELL_TOKEN.exec(command);
+    if (!m) break;
+    pos = SHELL_TOKEN.lastIndex;
+    const word = m[2];
+    if (word === undefined) {
+      start = true;
+    } else if (start && word === LAUNCHER) {
+      start = false;
+      out += m[0].slice(0, -LAUNCHER.length) + launch;
+      continue;
+    } else {
+      start = start && ASSIGN.test(word);
+    }
+    out += m[0];
+  }
+  return out + command.slice(pos);
 }
 
 /**

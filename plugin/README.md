@@ -26,7 +26,7 @@ A subagent launched without a `model` inherits the main model, so every default 
 - **`haiku-coder` agent**: implements a tightly written spec.
 - **`haiku-scout` agent**: answers one research question with a short cited brief.
 - **`crew-overseer` skill**: the overseer workflow: write the spec, dispatch Haiku, review by tier, verify.
-- **CLI** (`bin/haikrew.mjs`): `squeeze`, `verify`, `patterns check`.
+- **CLI** (`scripts/haikrew.mjs`): `squeeze`, `verify`, `patterns check`.
 
 ## What HaiKrew changes and touches
 
@@ -73,7 +73,7 @@ The marketplace is named `haikrew` and lists one plugin, `haikrew`, whose source
 
 ## CLI
 
-`bin/haikrew.mjs` runs anywhere Node 22.18 or later runs:
+`scripts/haikrew.mjs` runs anywhere Node 22.18 or later runs:
 
 - `squeeze [--max-lines N] [--wrap PREFIX] -- <cmd...>`: runs a command, prints a short verdict and keeps the full log on disk.
 - `verify`: runs `.haikrew/verify` if present, or an inferred build and test, and prints one `VERDICT:` line.

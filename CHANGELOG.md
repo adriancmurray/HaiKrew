@@ -3,6 +3,7 @@ HaiKrew is a Claude Code mod. It sets the model used for agent launches (the gat
 ## Unreleased
 
 - A subagent that passes its token limit is now named to the main conversation, not only toasted in the user's pane: a note in the same path as review notes, with the agent's name and id so the lead can message it and retire it (commit, hand off, stop). Once at the limit and once at 1.5x, per agent. Setting `checks.token_notes`, on by default.
+- The launcher moved from `plugin/bin/` to `plugin/scripts/` (#2), because claude.ai organization distribution rejects a plugin with a top-level `bin/` directory. Inside Claude Code the mod rewrites a bare `haikrew` in Bash commands, on the main thread and in subagents, to the launcher path, so `haikrew verify` and the other examples still run; the squeeze guard accepts the scripts and older bin paths. In a terminal, run `node <repo>/plugin/scripts/haikrew.mjs` or link `plugin/scripts/haikrew`.
 
 ## 0.6.14 — 2026-10-24
 

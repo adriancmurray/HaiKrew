@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/bin/haikrew.mjs\" late-failures >/dev/null 2>&1 &'",
+            "command": "sh -c 'node \"${CLAUDE_PLUGIN_ROOT}/scripts/haikrew.mjs\" late-failures >/dev/null 2>&1 &'",
             "timeout": 5
           }
         ]

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
-const BIN = fileURLToPath(new URL("../plugin/bin/haikrew.mjs", import.meta.url));
+const BIN = fileURLToPath(new URL("../plugin/scripts/haikrew.mjs", import.meta.url));
 const root = realpathSync(mkdtempSync(join(tmpdir(), "haikrew-patterns-")));
 after(() => {
   rmSync(root, { recursive: true, force: true });

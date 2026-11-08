@@ -165,7 +165,7 @@ Example: `"job:implement+lang:rust=sonnet@high"` runs Rust implementation specs 
 
 ## CLI
 
-The CLI runs anywhere Node 22.18 or later runs. The examples use `haikrew`, the launcher in `plugin/bin/`; `node plugin/bin/haikrew.mjs` is the same.
+The CLI runs anywhere Node 22.18 or later runs. The examples use `haikrew`. The launcher is `plugin/scripts/haikrew.mjs`, and `plugin/scripts/haikrew` is a shell wrapper for it that follows symlinks. Inside Claude Code, a bare `haikrew` in a Bash command is rewritten to `node "<plugin root>/scripts/haikrew.mjs"`, so the examples work as written. In a terminal, run `node <repo>/plugin/scripts/haikrew.mjs ...`, or add your own alias or a symlink to `plugin/scripts/haikrew`. The launcher sits in `scripts/`, not a top-level `bin/`, because claude.ai organization distribution rejects a plugin with a top-level `bin/` directory.
 
 | Command | What it does |
 |---|---|
