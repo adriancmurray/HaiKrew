@@ -34,7 +34,9 @@ import { checkHealth, healthLine } from "../src/mod/health.ts";
 import { flagLate, mergeLate, repoOf } from "../src/mod/late.ts";
 import type { LateFields, RunGit } from "../src/mod/late.ts";
 import { applyLateFile, parseLateFile, setLateOff } from "../src/mod/late-file.ts";
-import { registerAgentTools } from "../src/mod/agents.ts";
+import { dagrIo, registerAgentTools } from "../src/mod/agents.ts";
+import { dagrActive, dagrActivity, dagrCheckerVerdict, dagrSpawn, dagrStop } from "../src/mod/dagr-run.ts";
+import { dagrEnsure, dagrWire } from "../src/mod/dagr-wire.ts";
 import { bashPaths, checkWrite, claimBook, claimSpawn, editPaths, logConflicts, stopAgent } from "../src/mod/claims.ts";
 import type { BoardSettings } from "../src/mod/claims.ts";
 import type { Settings } from "../src/schema.ts";
@@ -77,6 +79,7 @@ export function register(on) {
       noteSpawn(passed, reply, Date.now(), choice.rule);
       $.ui.invalidate("ui.render"); // crew changed: the band and pane redraw
       const id = typeof reply?.agentId === "string" ? reply.agentId : "";
+
       if (id && snap) noteSnapshot(id, snap);
       if (id) {
         claimSpawn(claimBook, cfg.board as unknown as BoardSettings, {
@@ -86,6 +89,11 @@ export function register(on) {
         });
         const effort = effortFor(gateCfg, choice, String(reply.model ?? passed.model ?? ""));
         if (effort) noteEffort(id, effort);
+        dagrEnsure(Boolean(cfg.dagr.enabled), Number(cfg.dagr.debounce_ms), dagrIo($), cwd);
+        dagrWire(Boolean(cfg.dagr.enabled), Number(cfg.dagr.debounce_ms), dagrIo($), (now) => dagrSpawn(id, {
+          name: rowFor(id, now)?.name ?? id, type: String(passed.subagentType ?? ""), description: String(passed.description ?? ""),
+          model: String(reply.model ?? passed.model ?? ""), effort: effort || undefined,
+        }, now));
         if (record) noteDecision(id, record);
         noteSeamStart(id, cwd);
       }
@@ -117,6 +125,7 @@ export function register(on) {
     // A main-loop step: the main agent in the band is busy until this turn completes.
     if (!e.agentId && typeof e.turnId === "string" && noteMainStep(e.turnId)) $.ui.invalidate("ui.render");
     const stepped = stepEffort(e);
+    if (e.agentId) void dagrFrom($, (now) => dagrActivity(String(e.agentId), now, false));
     const stream = next(stepped);
     let chunk = await stream.next();
     try {
@@ -159,6 +168,7 @@ export function register(on) {
   on("tool.call", async ($, e, next) => {
     const now = Date.now();
     const id = typeof e.agentId === "string" ? e.agentId : "";
+    if (id) void dagrFrom($, (at) => dagrActivity(id, at, true));
     const before = id ? rowFor(id, now) : undefined;
     noteToolCall(e, now, false);
     const after = id ? rowFor(id, now) : undefined;
@@ -211,6 +221,8 @@ export function register(on) {
   });
 
   on("classic.SubagentStop", async ($, e, next) => {
+    const stoppedAt = Date.now();
+    let reviewRequested = false;
     let run: StopRun | null = null;
     let unattributed: string[] = [];
     try {
@@ -224,10 +236,18 @@ export function register(on) {
       // The ledger never blocks a subagent from finishing.
     }
     try {
-      await planReview($, e, run);
+      reviewRequested = await planReview($, e, run);
     } catch {
       // A review note never blocks a subagent from finishing either.
     }
+    void dagrFrom($, (now) => {
+      const id = String(e.agent_id ?? "");
+      const row = rowFor(id, now);
+      dagrStop(id, stoppedAt, now, {
+        name: row?.name ?? id, type: String(e.agent_type ?? ""), model: run?.model ?? row?.model ?? "",
+        selfVerdict: (run?.self_verdict ?? "none") as "pass" | "fail" | "blocked" | "none", reviewRequested,
+      });
+    });
     await releaseClaims($, String(e.agent_id ?? ""));
     noteStop(String(e.agent_id ?? ""), String(e.agent_type ?? ""), run?.self_verdict ?? null, Date.now(), run?.model ?? "");
     $.ui.invalidate("ui.render"); // crew changed: the band and pane redraw
@@ -423,8 +443,8 @@ async function recordStop($: Api, e: Record<string, unknown>, unattributed: stri
  * After the run is recorded: a checker's verdict line settles the run it names; any other finished agent (except a review
  * or check job) gets a review plan, and a tier above none stores a packet and tells the main conversation.
  */
-async function planReview($, e: Record<string, unknown>, run: StopRun | null): Promise<void> {
-  if (!run) return;
+async function planReview($, e: Record<string, unknown>, run: StopRun | null): Promise<boolean> {
+  if (!run) return false;
   const id = String(e.agent_id ?? "");
   const name = rowFor(id, Date.now())?.name ?? id;
   const checked = parseCheckerVerdict(run.report);
@@ -434,9 +454,10 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
       const marked = applyOrHold(readState(await $.store.get("ledger")), { name: checked.name, verdict: checked.verdict, checker: name, defects });
       await $.store.set("ledger", applyDefects(marked, { checkerId: id, checkedName: checked.name }, defects));
     });
-    return;
+    await dagrFrom($, (now) => dagrCheckerVerdict(id, checked.name, checked.verdict, now));
+    return false;
   }
-  if (run.job === "review" || run.job === "check") return;
+  if (run.job === "review" || run.job === "check") return false;
   const cfg = await loadSettings($);
   const state = readState(await $.store.get("ledger"));
   const stats = summary(state).by_key
@@ -454,7 +475,7 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
       await $.store.set("ledger", { ...cur, runs: cur.runs.map((r) => (r.agent_id === id ? { ...r, checker_skipped: true } : r)) });
     });
   }
-  if (plan.tier === "none") return;
+  if (plan.tier === "none") return false;
   const packet = buildPacket({ name, type: String(e.agent_type ?? "agent"), model: run.model, spec: specOf(id), report: run.report,
     paths, lines, testsPassed: testsClaim(run.report), plan, unattributed: run.unattributed });
   // Packets are keyed by the (session-unique) name; review_packet_ids maps agent id -> name so a lookup by id finds it first.
@@ -473,10 +494,10 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
   // file adds a path and no lines); the packet above still updates.
   const noted = notedLines(await $.store.get("review_noted"));
   const seen = noted[id];
-  if (seen && lines <= seen.lines && paths.length <= seen.paths) return;
+  if (seen && lines <= seen.lines && paths.length <= seen.paths) return true;
   // Without agent tools the reviewer cannot fetch the packet, so the note carries it.
   const text = reviewNote(name, plan, paths, lines, { toolsOn: toolsOn(cfg), packet: String(packet) });
-  if (!text) return;
+  if (!text) return true;
   try {
     // A plugin's append takes the row alone; the engine stamps its origin (this plugin) and door itself.
     await $.session.append({ message: { type: "user", content: [{ type: "text", text }] } });
@@ -488,6 +509,21 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
     });
   } catch {
     // A refused append only loses the note, and the next stop of this agent notes it again.
+  }
+  return true;
+}
+
+/**
+ * Feeds the dagr export from a hook, off the hook's reply path. Never throws. With no run started (the export was off
+ * at session start) it returns before reading settings, so the default costs the hot hooks nothing.
+ */
+async function dagrFrom($, observe: (now: number) => void): Promise<void> {
+  if (!dagrActive()) return;
+  try {
+    const dagr = (await loadSettings($)).dagr;
+    dagrWire(Boolean(dagr.enabled), Number(dagr.debounce_ms), dagrIo($), observe);
+  } catch {
+    // The export never costs a hook its reply.
   }
 }
 

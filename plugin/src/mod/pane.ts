@@ -11,7 +11,9 @@ import type { Crew, LiveAgent } from "./crew.ts";
 import { mergeRescanned, readState, rescanRun, tokenTotals } from "./ledger.ts";
 import { homeOf } from "./select.ts";
 import type { LedgerState, Run } from "./ledger.ts";
-import { AGENT_TOOLS, allowed } from "./agents.ts";
+import { AGENT_TOOLS, allowed, dagrIo } from "./agents.ts";
+import { dagrActive, dagrLiveStatus } from "./dagr-run.ts";
+import { dagrSession, dagrStart, dagrWire, sessionIdOf } from "./dagr-wire.ts";
 import { SCENE_KEY } from "./pane-crew.ts";
 import { agentTranscript } from "./pane-agent.ts";
 import type { AgentMessage } from "./pane-agent.ts";
@@ -57,6 +59,7 @@ export function registerPane(on: (...args: unknown[]) => void, name = "haikrew")
       });
     }
     const settings = await loadSettings($);
+    void dagrBegin($, e, settings);
     startUpdateCheck($, settings);
     if (allowed(settings, "status") === null) await registerTools($);
     if (settings.pane.open_on_start) await $.ui.open({ id: PANE, title: "HaiKrew" });
@@ -357,11 +360,41 @@ async function sessionUsage($: Api): Promise<Record<string, any>> {
   }
 }
 
+/** Starts a dagr run for this session when the export is on. Never throws. */
+async function dagrBegin($: Api, e: Api, settings: Settings): Promise<void> {
+  try {
+    dagrSession(sessionIdOf(e));
+    if (!settings.dagr.enabled) return;
+    let cwd = "";
+    try { cwd = String(await $.session.cwd()); } catch { /* no folder: the run stays inactive */ }
+    dagrStart(true, Number(settings.dagr.debounce_ms), dagrIo($), { id: sessionIdOf(e), cwd });
+  } catch {
+    // The export never costs session start its reply.
+  }
+}
+
+/** Feeds failed and killed agents from the live list to the dagr export. Never throws. */
+async function dagrLive($: Api, list: LiveAgent[]): Promise<void> {
+  try {
+    if (!dagrActive()) return;
+    const bad = list.filter((a) => a.status === "failed" || a.status === "killed");
+    if (bad.length === 0) return;
+    const dagr = (await loadSettings($)).dagr;
+    dagrWire(Boolean(dagr.enabled), Number(dagr.debounce_ms), dagrIo($), (now) => {
+      for (const a of bad) dagrLiveStatus(a.id, String(a.status), now);
+    });
+  } catch {
+    // The export never costs a render its list.
+  }
+}
+
 /** The live agent list, or none when the host refuses it. */
 async function liveAgents($: Api): Promise<LiveAgent[]> {
   try {
     const list = await $.agent.list();
-    return Array.isArray(list) ? list : [];
+    const agents: LiveAgent[] = Array.isArray(list) ? list : [];
+    void dagrLive($, agents);
+    return agents;
   } catch {
     return [];
   }
