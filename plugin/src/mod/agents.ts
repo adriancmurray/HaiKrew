@@ -18,6 +18,9 @@ import { isObject } from "./api.ts";
 import { applyChecked, byModel, readState, summary, tokenTotals } from "./ledger.ts";
 import type { LedgerState } from "./ledger.ts";
 import { buildRule, KINDS, MODELS, EFFORTS, ruleSentence } from "./rules.ts";
+import { dagrActive, dagrBindReview, dagrInlineVerdict } from "./dagr-run.ts";
+import { dagrWire } from "./dagr-wire.ts";
+import type { DagrIo } from "./dagr-wire.ts";
 
 type Api = Record<string, any>;
 type Answer = { ok: true; change: string; settings: Settings } | { ok: false; reason: string };
@@ -193,10 +196,37 @@ export function packetFor(packets: unknown, agent: string): string {
     : `No review packet for "${agent}". No agent has a packet yet.`;
 }
 
+/** The host calls the dagr export needs, as closures: `$` itself and `$.process` (CLI only) are never passed as values. */
+export function dagrIo($: Api): DagrIo {
+  return {
+    after: (ms, fn) => $.clock.after(ms, fn),
+    run: (argv, opts) => $.process.run(argv, opts),
+    root: String($.plugin.root),
+  };
+}
+
+/** Feeds the dagr export from a review tool call; settings are read here so a failure stays inside the try. */
+async function dagrReviewed($: Api, observe: (now: number) => void): Promise<void> {
+  if (!dagrActive()) return;
+  try {
+    const dagr = settingsFrom(await $.store.get("settings")).dagr;
+    dagrWire(Boolean(dagr.enabled), Number(dagr.debounce_ms), dagrIo($), observe);
+  } catch {
+    // The export never costs a tool call its reply.
+  }
+}
+
 /** review_packet reads the stored packet; record_verdict writes the main agent's verdict to the newest run of that name. */
 async function reviewTool(tool: string, input: Api, $: Api): Promise<{ deny: string } | { result: string }> {
   const agent = String(input.agent ?? "").trim();
-  if (tool === "review_packet") return { result: packetFor(await $.store.get("review_packets"), agent) };
+  if (tool === "review_packet") {
+    const packets = await $.store.get("review_packets");
+    const text = packetFor(packets, agent);
+    const caller = typeof input.agentId === "string" ? input.agentId : "";
+    const found = isObject(packets) && Object.keys(packets).some((n) => n.toLowerCase() === agent.toLowerCase());
+    if (found && caller) void dagrReviewed($, (now) => dagrBindReview(caller, agent, now));
+    return { result: text };
+  }
   const verdict = String(input.verdict ?? "");
   if (!agent) return { deny: "Name the agent, as the crew lists it." };
   if (verdict !== "pass" && verdict !== "fail") return { deny: 'The verdict is "pass" or "fail".' };
@@ -205,6 +235,7 @@ async function reviewTool(tool: string, input: Api, $: Api): Promise<{ deny: str
   // applyChecked returns the same state when no run matches; say so rather than report a verdict nobody recorded.
   if (next === state) return { deny: `No finished agent named "${agent}" in the ledger.` };
   await $.store.set("ledger", next);
+  void dagrReviewed($, (now) => dagrInlineVerdict(agent, verdict as "pass" | "fail", now));
   $.ui.toast(`HaiKrew: ${agent} marked ${verdict}`);
   $.ui.invalidate("ui.render");
   return { result: `Recorded ${verdict} for ${agent}.` };
