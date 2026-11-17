@@ -6,6 +6,13 @@ HaiKrew is a Claude Code mod (plugin) for token-efficient agent crews. A subagen
 
 Unofficial community plugin; not affiliated with Anthropic.
 
+### OpenAI Codex adaptation (WIP)
+
+An optional [Codex skill and routing adapter](codex/README.md) packages bounded
+helper dispatch, configurable model tiers, verification guidance and MacBook
+Minion integration. It is a standalone draft awaiting contributor review; the
+Claude plugin installation and runtime described below remain separate.
+
 ## Install
 
 Requirements:
