@@ -1,0 +1,4 @@
+interface:
+  display_name: "Haikrew"
+  short_description: "Codex crew routing, review, and verification"
+  default_prompt: "Use $haikrew to scope this coding task, delegate bounded work to Codex model tiers, and review and verify the result."

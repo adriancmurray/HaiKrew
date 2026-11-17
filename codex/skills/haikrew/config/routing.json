@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "routes": {
+    "bounded": {"model": "gpt-6-luna", "reasoning_effort": "medium"},
+    "routine": {"model": "gpt-6.1-sol", "reasoning_effort": "medium"},
+    "sensitive": {"model": "gpt-6-astra", "reasoning_effort": "high"}
+  }
+}
