@@ -19,6 +19,7 @@ function host(on: any): Host {
     h.opened.push(e.id);
     return { value: null };
   });
+  on("clock.after", async () => ({ value: null }));
   on("session.usage", async () => ({
     value: { context: { tokens: 1234, window: 200000, percent: 1 }, rateLimits: [] },
   }));
@@ -261,15 +262,17 @@ test("on the desktop the crew sits in the band above the prompt, unless turned o
   expect(JSON.stringify(await shown.drawn({}))).toContain("<svg");
   await shown.press({ key: "band-open" });
   expect(h.opened).toContain("haikrew");
-  // Turned off, HaiKrew passes the band on; with nothing beneath it in a test, the mount then has no drawing.
+  // Turned off, HaiKrew passes the band on: nothing beneath it in a test draws the band, so the mount either throws
+  // "no implementation for ui.render" or (newer engines) hands back an empty engine drawing. Either way, no band SVG.
   h.store.set("settings", { band: { show: false } });
   let passed = "";
   try {
-    await band();
+    passed = JSON.stringify(await (await band()).drawn({}));
   } catch (error) {
     passed = String(error);
   }
-  expect(passed).toContain("no implementation for ui.render");
+  expect(passed).not.toContain("<svg");
+  expect(passed.includes("no implementation for ui.render") || passed.includes('"type":"engine"')).toBe(true);
 });
 
 test("agent tools refuse while off, read when allowed, and never touch agent control or Allow Opus", async (ctx: any, on: any) => {

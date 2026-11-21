@@ -13,7 +13,7 @@ import { listMarkdown, splitLines } from "./squeeze.ts";
 
 const USAGE = "usage: haikrew squeeze [--max-lines N] [--wrap PREFIX] -- <cmd...> | verify | " +
   "patterns check [--dir PATH] [--max-files N] [--max-lines N] | analyze [--store PATH] | late-failures [--days N] | " +
-  "digest <transcript>";
+  "digest <transcript> | dagr-publish <json>";
 /** How long one git call may run before late-failures gives up on it. */
 const GIT_TIMEOUT_MS = 15000;
 /** The `patterns check` caps when no flag overrides them. */
@@ -50,6 +50,14 @@ export async function main(argv: string[]): Promise<number> {
     if (rest.length !== 1) return badArgs("digest");
     const { digestCmd } = await import("./digest.ts");
     return digestCmd(rest[0] as string);
+  }
+  if (cmd === "dagr-publish") {
+    if (rest.length !== 1) return badArgs("dagr-publish");
+    const { publishRun } = await import("./dagr-publish.ts");
+    const result = publishRun(process.cwd(), rest[0] as string);
+    if (result.ok) return 0;
+    process.stderr.write(`${result.reason}\n`);
+    return 1;
   }
   return usage();
 }

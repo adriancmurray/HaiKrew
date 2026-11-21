@@ -203,6 +203,16 @@ export const SCHEMA: Record<string, Section> = {
         help: "A passed run counts as a late failure when a commit within this many days touches its files and reads as a fix or revert." },
     },
   },
+  dagr: {
+    title: "dagr graph",
+    help: "Keep .dagr/haikrew.json current for dagr view. Terminal CLI only.",
+    fields: {
+      enabled: { label: "Export on", type: "bool", default: false,
+        help: "Write .dagr/haikrew.json in the session folder as the crew works. Off: nothing is written." },
+      debounce_ms: { label: "Quiet time (ms)", type: "int", default: 1500, min: 250, max: 10000,
+        help: "Wait this long after the last change before writing, so a busy crew is written at most this often." },
+    },
+  },
   agents: {
     title: "Agent control",
     help: "Let Claude and its agents use HaiKrew's tools: read status and the ledger, and, if allowed, change settings and rules. " +

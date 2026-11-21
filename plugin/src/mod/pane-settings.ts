@@ -7,6 +7,7 @@ import { SCHEMA, validate } from "../schema.ts";
 import type { Field, Settings } from "../schema.ts";
 import { specialEditor } from "./pane-rules.ts";
 import { healthLine } from "./health.ts";
+import { dagrStatus } from "./dagr-schedule.ts";
 import { title } from "./rules.ts";
 import { C, foldCard, hrow, onOff, textAndControls, txt, vcol, view } from "./ui.ts";
 import type { Actions, CardFrame, Ui } from "./ui.ts";
@@ -29,7 +30,7 @@ export const GROUPS = [
   { id: "routing", label: "Routing", sections: ["gate", "decider"] },
   { id: "guards", label: "Guards", sections: ["squeeze", "read_guard", "checks"] },
   { id: "widget", label: "Prompt widget", sections: ["band"] },
-  { id: "general", label: "General", sections: ["pane", "agents", "ledger"] },
+  { id: "general", label: "General", sections: ["pane", "agents", "ledger", "dagr"] },
 ] as const;
 
 export function settingsTab(ui: Ui, act: Actions, settings: Settings, cols: number): unknown[] {
@@ -88,6 +89,7 @@ function sectionCard(ui: Ui, act: Actions, settings: Settings, section: string, 
       textAndControls(ui, [txt(ui, { bold: true }, sec.title)], [toggle]),
       txt(ui, { dimColor: true }, off ? `${sec.help} Off: the settings below are kept and apply once it is on.` : sec.help),
       ...(section === "decider" && values.mode !== "off" && healthLine() ? [txt(ui, { color: C.warn }, healthLine())] : []),
+      ...(section === "dagr" && dagrStatus() ? [txt(ui, { color: C.warn }, dagrStatus())] : []),
     ]),
     ...fields.map(([key, field]) => fieldRow(act, ui, section, key, field, values[key], width, Boolean(settings.gate.allow_opus))),
   ]);
