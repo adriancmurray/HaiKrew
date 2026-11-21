@@ -495,7 +495,7 @@ async function planReview($, e: Record<string, unknown>, run: StopRun | null): P
   // nothing new: the stored packet holds the report and the test claim this stop lost.
   const seen = notedLines(await $.store.get("review_noted"))[id];
   const grew = !seen || lines > seen.lines || paths.length > seen.paths;
-  if (run.partial && !grew) return;
+  if (run.partial && !grew) return false;
   const own = state.runs.find((r) => r.agent_id === id);
   const bucket = checkerBucket(state.runs, run.job, run.lang, own ? sizeOf(own) : "");
   const plan = reviewPlan({ checkerBucket: bucket, mainModel: await sessionModel($), job: run.job, lang: run.lang, paths, lines, testsPassed: testsClaim(run.report), model: run.model, record, explored: wasExplored(id) },
